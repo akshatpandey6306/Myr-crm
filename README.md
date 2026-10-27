@@ -22,9 +22,12 @@ npm run build
 
 ## Activities & Tasks status
 
-The screen currently demonstrates task and activity creation, completion,
-search, status filtering, and due-date sorting using sample data held in
-client-side memory. Refreshing the page resets changes. There is no API,
-database persistence, authentication, or organization scoping yet; these need
-to be integrated with the shared backend foundations before the module is
-considered complete.
+The screen currently demonstrates activity creation, completion, search,
+status/assignee/related-record filters, due-date sorting, and local pagination
+using sample data held in client-side memory. Its sample fields and enum values
+follow the proposed activity contract. Refreshing the page resets changes.
+
+The API, database persistence, server-side pagination, soft deletion,
+authentication, and organization scoping are not implemented. The contract is
+still provisional pending team agreement on auth and tenancy; integrate those
+backend behaviors only after the shared conventions are confirmed.

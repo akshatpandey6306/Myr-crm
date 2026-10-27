@@ -3,86 +3,191 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
-type ItemType = "Task" | "Call" | "Meeting" | "Email";
-type Priority = "High" | "Medium" | "Low";
+type ActivityType = "task" | "call" | "meeting" | "note" | "email";
+type ActivityStatus = "open" | "in_progress" | "completed" | "cancelled";
+type Priority = "low" | "normal" | "high";
 
 type WorkItem = {
-  id: number;
+  id: string;
+  organizationId: string;
+  type: ActivityType;
   title: string;
-  type: ItemType;
-  dueDate: string;
+  description: string | null;
+  status: ActivityStatus;
   priority: Priority;
-  assignee: string;
-  relatedTo: string;
-  completed: boolean;
+  dueAt: string | null;
+  completedAt: string | null;
+  assignedToUserId: string | null;
+  relatedToType: string | null;
+  relatedToId: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
 };
+
+const demoUsers = [
+  { id: "user-alex", name: "You", initials: "AM" },
+  { id: "user-jordan", name: "Jordan Lee", initials: "JL" },
+];
+
+const demoRelatedRecords = [
+  { type: "company", id: "company-acme", name: "Acme Corporation" },
+  { type: "company", id: "company-northstar", name: "Northstar Labs" },
+  { type: "company", id: "company-brightline", name: "Brightline Studio" },
+  { type: "company", id: "company-monarch", name: "Monarch Group" },
+  { type: "company", id: "company-evergreen", name: "Evergreen Co." },
+  { type: "contact", id: "contact-sam", name: "Sam Rivera" },
+];
 
 const initialItems: WorkItem[] = [
   {
-    id: 1,
+    id: "activity-1",
+    organizationId: "demo-organization",
+    type: "task",
     title: "Send revised proposal",
-    type: "Task",
-    dueDate: "2026-10-27",
-    priority: "High",
-    assignee: "You",
-    relatedTo: "Acme Corporation",
-    completed: false,
+    description: null,
+    status: "open",
+    priority: "high",
+    dueAt: "2026-10-27T12:00:00.000Z",
+    completedAt: null,
+    assignedToUserId: "user-alex",
+    relatedToType: "company",
+    relatedToId: "company-acme",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-22T12:00:00.000Z",
+    updatedAt: "2026-10-22T12:00:00.000Z",
   },
   {
-    id: 2,
+    id: "activity-2",
+    organizationId: "demo-organization",
+    type: "call",
     title: "Follow up on product demo",
-    type: "Call",
-    dueDate: "2026-10-27",
-    priority: "Medium",
-    assignee: "You",
-    relatedTo: "Northstar Labs",
-    completed: false,
+    description: null,
+    status: "in_progress",
+    priority: "normal",
+    dueAt: "2026-10-27T14:00:00.000Z",
+    completedAt: null,
+    assignedToUserId: "user-alex",
+    relatedToType: "company",
+    relatedToId: "company-northstar",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-23T12:00:00.000Z",
+    updatedAt: "2026-10-24T12:00:00.000Z",
   },
   {
-    id: 3,
+    id: "activity-3",
+    organizationId: "demo-organization",
+    type: "task",
     title: "Review contract details",
-    type: "Task",
-    dueDate: "2026-10-25",
-    priority: "High",
-    assignee: "You",
-    relatedTo: "Brightline Studio",
-    completed: false,
+    description: null,
+    status: "open",
+    priority: "high",
+    dueAt: "2026-10-25T12:00:00.000Z",
+    completedAt: null,
+    assignedToUserId: "user-alex",
+    relatedToType: "company",
+    relatedToId: "company-brightline",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-20T12:00:00.000Z",
+    updatedAt: "2026-10-20T12:00:00.000Z",
   },
   {
-    id: 4,
+    id: "activity-4",
+    organizationId: "demo-organization",
+    type: "meeting",
     title: "Quarterly account check-in",
-    type: "Meeting",
-    dueDate: "2026-10-28",
-    priority: "Medium",
-    assignee: "Jordan Lee",
-    relatedTo: "Monarch Group",
-    completed: false,
+    description: null,
+    status: "open",
+    priority: "normal",
+    dueAt: "2026-10-28T15:00:00.000Z",
+    completedAt: null,
+    assignedToUserId: "user-jordan",
+    relatedToType: "company",
+    relatedToId: "company-monarch",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-23T12:00:00.000Z",
+    updatedAt: "2026-10-23T12:00:00.000Z",
   },
   {
-    id: 5,
+    id: "activity-5",
+    organizationId: "demo-organization",
+    type: "email",
     title: "Share onboarding resources",
-    type: "Email",
-    dueDate: "2026-10-30",
-    priority: "Low",
-    assignee: "You",
-    relatedTo: "Evergreen Co.",
-    completed: false,
+    description: null,
+    status: "open",
+    priority: "low",
+    dueAt: "2026-10-30T12:00:00.000Z",
+    completedAt: null,
+    assignedToUserId: "user-alex",
+    relatedToType: "company",
+    relatedToId: "company-evergreen",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-25T12:00:00.000Z",
+    updatedAt: "2026-10-25T12:00:00.000Z",
   },
   {
-    id: 6,
+    id: "activity-6",
+    organizationId: "demo-organization",
+    type: "note",
     title: "Prepare discovery questions",
-    type: "Task",
-    dueDate: "2026-10-26",
-    priority: "Low",
-    assignee: "You",
-    relatedTo: "Acme Corporation",
-    completed: true,
+    description: null,
+    status: "completed",
+    priority: "low",
+    dueAt: "2026-10-26T12:00:00.000Z",
+    completedAt: "2026-10-26T15:00:00.000Z",
+    assignedToUserId: "user-alex",
+    relatedToType: "company",
+    relatedToId: "company-acme",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-24T12:00:00.000Z",
+    updatedAt: "2026-10-26T15:00:00.000Z",
+  },
+  {
+    id: "activity-7",
+    organizationId: "demo-organization",
+    type: "call",
+    title: "Reschedule introduction call",
+    description: null,
+    status: "cancelled",
+    priority: "low",
+    dueAt: null,
+    completedAt: null,
+    assignedToUserId: "user-jordan",
+    relatedToType: "contact",
+    relatedToId: "contact-sam",
+    createdByUserId: "user-alex",
+    createdAt: "2026-10-21T12:00:00.000Z",
+    updatedAt: "2026-10-25T15:00:00.000Z",
   },
 ];
 
-const filters = ["All items", "Open", "Completed"] as const;
-type Filter = (typeof filters)[number];
+const activityTypes: ActivityType[] = ["task", "call", "meeting", "note", "email"];
+const statuses: ActivityStatus[] = ["open", "in_progress", "completed", "cancelled"];
+const priorities: Priority[] = ["low", "normal", "high"];
 const demoToday = "2026-10-27";
+const pageSizeOptions = [5, 10, 20];
+
+function formatLabel(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getUserName(userId: string | null) {
+  return demoUsers.find((user) => user.id === userId)?.name ?? "Unassigned";
+}
+
+function getUserInitials(userId: string | null) {
+  return demoUsers.find((user) => user.id === userId)?.initials ?? "—";
+}
+
+function getRelatedRecord(type: string | null, id: string | null) {
+  if (!type || !id) return null;
+  return demoRelatedRecords.find(
+    (record) => record.type === type && record.id === id,
+  );
+}
 
 function Icon({
   name,
@@ -126,9 +231,10 @@ function Icon({
   );
 }
 
-function formatDueDate(date: string, today: string) {
+function formatDueDate(date: string | null, today: string) {
+  if (!date) return "No due date";
   const todayDate = new Date(`${today}T12:00:00`);
-  const target = new Date(`${date}T12:00:00`);
+  const target = new Date(date);
   const isToday = target.toDateString() === todayDate.toDateString();
   const isTomorrow =
     target.toDateString() ===
@@ -143,54 +249,127 @@ function formatDueDate(date: string, today: string) {
   return target.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function isItemType(value: FormDataEntryValue | null): value is ItemType {
-  return value === "Task" || value === "Call" || value === "Meeting" || value === "Email";
+function isActivityType(value: FormDataEntryValue | null): value is ActivityType {
+  return typeof value === "string" && activityTypes.some((type) => type === value);
+}
+
+function isActivityStatus(value: string): value is ActivityStatus {
+  return statuses.some((status) => status === value);
 }
 
 function isPriority(value: FormDataEntryValue | null): value is Priority {
-  return value === "High" || value === "Medium" || value === "Low";
+  return typeof value === "string" && priorities.some((priority) => priority === value);
 }
 
 export default function Home() {
   const [items, setItems] = useState(initialItems);
-  const [filter, setFilter] = useState<Filter>("All items");
+  const [statusFilter, setStatusFilter] = useState<ActivityStatus | "all">("all");
+  const [assignedToFilter, setAssignedToFilter] = useState("all");
+  const [relatedTypeFilter, setRelatedTypeFilter] = useState("all");
+  const [relatedIdFilter, setRelatedIdFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(5);
   const [query, setQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [sortDescending, setSortDescending] = useState(false);
   const [formError, setFormError] = useState("");
+  const usersWithItems = demoUsers.filter((user) =>
+    items.some((item) => item.assignedToUserId === user.id),
+  );
+  const relatedTypes = Array.from(
+    new Set(
+      items
+        .map((item) => item.relatedToType)
+        .filter((type): type is string => type !== null),
+    ),
+  );
+  const relatedRecords = demoRelatedRecords.filter((record) =>
+    items.some(
+      (item) => item.relatedToType === record.type && item.relatedToId === record.id,
+    ),
+  );
 
-  const visibleItems = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     return items
       .filter((item) => {
-        if (filter === "Open" && item.completed) return false;
-        if (filter === "Completed" && !item.completed) return false;
+        if (statusFilter !== "all" && item.status !== statusFilter) return false;
+        if (
+          assignedToFilter !== "all" &&
+          item.assignedToUserId !== assignedToFilter
+        ) return false;
+        if (
+          relatedTypeFilter !== "all" &&
+          item.relatedToType !== relatedTypeFilter
+        ) return false;
+        if (relatedIdFilter !== "all" && item.relatedToId !== relatedIdFilter) {
+          return false;
+        }
         if (!normalizedQuery) return true;
 
-        return [item.title, item.type, item.assignee, item.relatedTo]
+        const relatedName = getRelatedRecord(
+          item.relatedToType,
+          item.relatedToId,
+        )?.name;
+        return [
+          item.title,
+          item.type,
+          item.status,
+          getUserName(item.assignedToUserId),
+          relatedName,
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
       })
-      .sort((a, b) =>
-        sortDescending
-          ? b.dueDate.localeCompare(a.dueDate)
-          : a.dueDate.localeCompare(b.dueDate),
-      );
-  }, [filter, items, query, sortDescending]);
+      .sort((a, b) => {
+        if (!a.dueAt) return b.dueAt ? 1 : 0;
+        if (!b.dueAt) return -1;
+        return sortDescending
+          ? b.dueAt.localeCompare(a.dueAt)
+          : a.dueAt.localeCompare(b.dueAt);
+      });
+  }, [
+    assignedToFilter,
+    items,
+    query,
+    relatedIdFilter,
+    relatedTypeFilter,
+    sortDescending,
+    statusFilter,
+  ]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / limit));
+  const currentPage = Math.min(page, totalPages);
+  const visibleItems = filteredItems.slice((currentPage - 1) * limit, currentPage * limit);
   const today = demoToday;
-  const openCount = items.filter((item) => !item.completed).length;
-  const overdueCount = items.filter(
-    (item) => !item.completed && item.dueDate < today,
+  const openCount = items.filter(
+    (item) => item.status === "open" || item.status === "in_progress",
   ).length;
-  const completedCount = items.filter((item) => item.completed).length;
+  const overdueCount = items.filter(
+    (item) =>
+      (item.status === "open" || item.status === "in_progress") &&
+      item.dueAt !== null &&
+      item.dueAt.slice(0, 10) < today,
+  ).length;
+  const completedCount = items.filter((item) => item.status === "completed").length;
 
-  function toggleCompleted(id: number) {
+  function setItemStatus(target: WorkItem, status: ActivityStatus) {
+    const now = new Date().toISOString();
     setItems((current) =>
       current.map((item) =>
-        item.id === id ? { ...item, completed: !item.completed } : item,
+        item.id === target.id
+          ? {
+              ...item,
+              status,
+              completedAt:
+                status === "completed"
+                  ? target.completedAt ?? now
+                  : null,
+              updatedAt: now,
+            }
+          : item,
       ),
     );
   }
@@ -201,32 +380,49 @@ export default function Home() {
     const title = String(formData.get("title") ?? "").trim();
     const type = formData.get("type");
     const priority = formData.get("priority");
-    const dueDate = formData.get("dueDate");
+    const dueDate = String(formData.get("dueAt") ?? "");
+    const assignedToUserId = String(formData.get("assignedToUserId") ?? "");
+    const relatedRecordValue = String(formData.get("relatedRecord") ?? "");
+    const selectedUser = demoUsers.find((user) => user.id === assignedToUserId);
+    const relatedRecord = relatedRecordValue
+      ? demoRelatedRecords.find(
+          (record) => `${record.type}:${record.id}` === relatedRecordValue,
+        )
+      : undefined;
 
     if (
       !title ||
-      !isItemType(type) ||
+      !isActivityType(type) ||
       !isPriority(priority) ||
-      typeof dueDate !== "string" ||
-      !dueDate
+      (assignedToUserId && !selectedUser) ||
+      (relatedRecordValue && !relatedRecord)
     ) {
-      setFormError("Enter a title and due date, then choose a valid type and priority.");
+      setFormError("Enter a title and choose valid activity details.");
       return;
     }
 
     setFormError("");
+    const now = new Date().toISOString();
     const newItem: WorkItem = {
-      id: Date.now(),
-      title,
+      id: `activity-${Date.now()}`,
+      organizationId: "demo-organization",
       type,
-      dueDate,
+      title,
+      description: String(formData.get("description") ?? "").trim() || null,
+      status: "open",
       priority,
-      assignee: "You",
-      relatedTo: String(formData.get("relatedTo") ?? "").trim() || "No linked record",
-      completed: false,
+      dueAt: dueDate ? new Date(`${dueDate}T12:00:00`).toISOString() : null,
+      completedAt: null,
+      assignedToUserId: selectedUser?.id ?? null,
+      relatedToType: relatedRecord?.type ?? null,
+      relatedToId: relatedRecord?.id ?? null,
+      createdByUserId: "user-alex",
+      createdAt: now,
+      updatedAt: now,
     };
 
     setItems((current) => [newItem, ...current]);
+    setPage(1);
     setIsCreateOpen(false);
     event.currentTarget.reset();
   }
@@ -344,7 +540,7 @@ export default function Home() {
             <div className="panel-heading">
               <div>
                 <h2>All activities</h2>
-                <p>Tasks, calls, meetings, and emails in one place.</p>
+                <p>Tasks, calls, meetings, notes, and emails in one place.</p>
               </div>
               <label className="search-field">
                 <Icon name="search" size={17} />
@@ -352,7 +548,10 @@ export default function Home() {
                   type="search"
                   placeholder="Search activities"
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setPage(1);
+                  }}
                   aria-label="Search activities"
                 />
                 <kbd>/</kbd>
@@ -360,20 +559,78 @@ export default function Home() {
             </div>
 
             <div className="list-toolbar">
-              <div className="filter-tabs" role="tablist" aria-label="Filter activities">
-                {filters.map((option) => (
-                  <button
-                    className={`filter-tab${filter === option ? " selected" : ""}`}
-                    key={option}
-                    type="button"
-                    role="tab"
-                    aria-selected={filter === option}
-                    onClick={() => setFilter(option)}
+              <div className="contract-filters" aria-label="Activity filters">
+                <label className="filter-select">
+                  <span>Status</span>
+                  <select
+                    value={statusFilter}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setStatusFilter(value === "all" || isActivityStatus(value) ? value : "all");
+                      setPage(1);
+                    }}
+                    aria-label="Filter by status"
                   >
-                    {option}
-                    {option === "All items" && <span>{items.length}</span>}
-                  </button>
-                ))}
+                    <option value="all">All statuses</option>
+                    {statuses.map((status) => (
+                      <option key={status} value={status}>{formatLabel(status)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-select">
+                  <span>Assignee</span>
+                  <select
+                    value={assignedToFilter}
+                    onChange={(event) => {
+                      setAssignedToFilter(event.target.value);
+                      setPage(1);
+                    }}
+                    aria-label="Filter by assignee"
+                  >
+                    <option value="all">All assignees</option>
+                    {usersWithItems.map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-select">
+                  <span>Related type</span>
+                  <select
+                    value={relatedTypeFilter}
+                    onChange={(event) => {
+                      setRelatedTypeFilter(event.target.value);
+                      setRelatedIdFilter("all");
+                      setPage(1);
+                    }}
+                    aria-label="Filter by related type"
+                  >
+                    <option value="all">All types</option>
+                    {relatedTypes.map((type) => (
+                      <option key={type} value={type}>{formatLabel(type)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-select">
+                  <span>Related record</span>
+                  <select
+                    value={relatedIdFilter}
+                    onChange={(event) => {
+                      setRelatedIdFilter(event.target.value);
+                      setPage(1);
+                    }}
+                    aria-label="Filter by related record"
+                  >
+                    <option value="all">All records</option>
+                    {relatedRecords
+                      .filter((record) =>
+                        relatedTypeFilter === "all" ||
+                        record.type === relatedTypeFilter,
+                      )
+                      .map((record) => (
+                        <option key={record.id} value={record.id}>{record.name}</option>
+                      ))}
+                  </select>
+                </label>
               </div>
               <button
                 className="sort-button"
@@ -402,39 +659,44 @@ export default function Home() {
                 </div>
               ) : (
                 visibleItems.map((item) => (
-                  <article className={`work-item${item.completed ? " is-complete" : ""}`} key={item.id}>
+                  <article className={`work-item${item.status === "completed" ? " is-complete" : ""}`} key={item.id}>
                     <button
-                      className={`completion-check${item.completed ? " checked" : ""}`}
+                      className={`completion-check${item.status === "completed" ? " checked" : ""}`}
                       type="button"
-                      onClick={() => toggleCompleted(item.id)}
-                      aria-label={item.completed ? `Mark ${item.title} as open` : `Complete ${item.title}`}
-                      aria-pressed={item.completed}
+                      onClick={() => setItemStatus(
+                        item,
+                        item.status === "completed" ? "open" : "completed",
+                      )}
+                      disabled={item.status === "cancelled"}
+                      aria-label={item.status === "completed" ? `Mark ${item.title} as open` : `Complete ${item.title}`}
+                      aria-pressed={item.status === "completed"}
                     >
-                      {item.completed && <Icon name="check" size={13} />}
+                      {item.status === "completed" && <Icon name="check" size={13} />}
                     </button>
                     <div className="item-main">
                       <div className="item-title-row">
                         <h3>{item.title}</h3>
-                        <span className={`type-pill type-${item.type.toLowerCase()}`}>{item.type}</span>
+                        <span className={`type-pill type-${item.type}`}>{formatLabel(item.type)}</span>
+                        <span className={`status-pill status-${item.status}`}>{formatLabel(item.status)}</span>
                       </div>
                       <div className="item-meta">
-                        <span className={`due-date${!item.completed && item.dueDate < today ? " overdue" : ""}`}>
+                        <span className={`due-date${(item.status === "open" || item.status === "in_progress") && item.dueAt !== null && item.dueAt.slice(0, 10) < today ? " overdue" : ""}`}>
                           <Icon name="calendar" size={14} />
-                          {formatDueDate(item.dueDate, today)}
+                          {formatDueDate(item.dueAt, today)}
                         </span>
                         <span className="meta-dot" />
-                        <span>{item.relatedTo}</span>
+                        <span>{getRelatedRecord(item.relatedToType, item.relatedToId)?.name ?? "No linked record"}</span>
                       </div>
                     </div>
                     <span className={`priority priority-${item.priority.toLowerCase()}`}>
                       <span />
-                      {item.priority}
+                      {formatLabel(item.priority)}
                     </span>
                     <div className="assignee">
-                      <span className={`assignee-avatar${item.assignee === "You" ? " self" : ""}`}>
-                        {item.assignee === "You" ? "AM" : "JL"}
+                      <span className={`assignee-avatar${item.assignedToUserId === "user-alex" ? " self" : ""}`}>
+                        {getUserInitials(item.assignedToUserId)}
                       </span>
-                      <span>{item.assignee}</span>
+                      <span>{getUserName(item.assignedToUserId)}</span>
                     </div>
                   </article>
                 ))
@@ -442,10 +704,39 @@ export default function Home() {
             </div>
 
             <footer className="list-footer">
-              <span>Showing <strong>{visibleItems.length}</strong> of <strong>{items.length}</strong> items</span>
-              <button type="button" disabled aria-label="Previous page">‹</button>
-              <span className="page-number">1</span>
-              <button type="button" disabled aria-label="Next page">›</button>
+              <span>
+                Showing <strong>{filteredItems.length ? (currentPage - 1) * limit + 1 : 0}</strong>–<strong>{Math.min(currentPage * limit, filteredItems.length)}</strong> of <strong>{filteredItems.length}</strong> items
+              </span>
+              <label className="page-size">
+                <span>Rows</span>
+                <select
+                  aria-label="Items per page"
+                  value={limit}
+                  onChange={(event) => {
+                    setLimit(Number(event.target.value));
+                    setPage(1);
+                  }}
+                >
+                  {pageSizeOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                aria-label="Previous page"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+              >‹</button>
+              <span className="page-number" aria-live="polite">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                aria-label="Next page"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              >›</button>
             </footer>
           </section>
           <p className="data-notice">
@@ -484,33 +775,57 @@ export default function Home() {
                 <span>Title <b>*</b></span>
                 <input name="title" type="text" placeholder="What needs to get done?" required autoFocus />
               </label>
+              <label className="form-field">
+                <span>Description</span>
+                <textarea name="description" rows={3} placeholder="Add helpful context (optional)" />
+              </label>
               <div className="form-row">
                 <label className="form-field">
                   <span>Type</span>
-                  <select name="type" defaultValue="Task">
-                    <option>Task</option>
-                    <option>Call</option>
-                    <option>Meeting</option>
-                    <option>Email</option>
+                  <select name="type" defaultValue="task">
+                    {activityTypes.map((type) => (
+                      <option key={type} value={type}>{formatLabel(type)}</option>
+                    ))}
                   </select>
                 </label>
                 <label className="form-field">
                   <span>Priority</span>
-                  <select name="priority" defaultValue="Medium">
-                    <option>High</option>
-                    <option>Medium</option>
-                    <option>Low</option>
+                  <select name="priority" defaultValue="normal">
+                    {priorities.map((priority) => (
+                      <option key={priority} value={priority}>{formatLabel(priority)}</option>
+                    ))}
                   </select>
                 </label>
               </div>
               <div className="form-row">
                 <label className="form-field">
-                  <span>Due date <b>*</b></span>
-                  <input name="dueDate" type="date" defaultValue={today} required />
+                  <span>Due date</span>
+                  <input name="dueAt" type="date" />
                 </label>
                 <label className="form-field">
-                  <span>Related to</span>
-                  <input name="relatedTo" type="text" placeholder="Company or contact" />
+                  <span>Assignee</span>
+                  <select name="assignedToUserId" defaultValue="user-alex">
+                    {demoUsers.map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                    <option value="">Unassigned</option>
+                  </select>
+                </label>
+              </div>
+              <div className="form-row">
+                <label className="form-field">
+                  <span>Related record</span>
+                  <select name="relatedRecord" defaultValue="">
+                    <option value="">No linked record</option>
+                    {demoRelatedRecords.map((record) => (
+                      <option
+                        key={record.id}
+                        value={`${record.type}:${record.id}`}
+                      >
+                        {formatLabel(record.type)}: {record.name}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </div>
               <div className="modal-actions">
