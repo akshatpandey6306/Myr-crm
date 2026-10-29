@@ -45,6 +45,12 @@ Set `API_PROXY_URL` on the web server if the API is not at
 `http://localhost:4000/api/v1`. Set `WEB_ORIGIN` to the web app origin when it
 differs from `http://localhost:3000`.
 
+`GET /api/v1/organizations/members` lists active members of the selected,
+verified organization. It returns each member's `id`, `name`, and organization
+`role`, without exposing email addresses. This endpoint provides member
+selection data; individual modules must still enforce their own assignment
+permissions and verify assignment targets belong to the active organization.
+
 The seed account is `maya@studionorth.co` with password `password123`; it and
 the sample leads/contacts are for local development only. Leads and contacts
 are persisted in PostgreSQL and scoped by the verified organization. Their

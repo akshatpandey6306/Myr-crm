@@ -97,8 +97,8 @@ in this workspace and is excluded from Git.
 The repository is in an early MVP foundation stage, not production-ready.
 
 - The web UI has dashboard and sample module pages plus sign-in/sign-up forms.
-- The NestJS API has health, authentication, organizations, leads, contacts,
-  companies, deals, and pipeline routes.
+- The NestJS API has health, authentication, organizations, organization-member
+  listing, leads, contacts, companies, deals, and pipeline routes.
 - PostgreSQL/Prisma persistence currently covers users, organizations,
   memberships, and expiring sessions. Signup creates the initial Owner
   membership atomically. Organization selection is checked against active
@@ -147,6 +147,9 @@ changed, checks actually run, and any important remaining limitation.
   by proxying same-origin `/api/v1` requests through Next.js. Sign-in, sign-up,
   and CRM requests now use the same API client; configure the server-side
   `API_PROXY_URL` instead of exposing a browser-local API URL.
+- **2026-10-29:** Added a verified-organization endpoint for listing active
+  members by ID, name, and role, without exposing email addresses. API docs and
+  unit tests cover tenant scoping and required organization context.
 
 ## Next session
 

@@ -24,6 +24,8 @@ The implementation uses PostgreSQL, Prisma ORM, UUID identifiers, password-based
 
 Current routes are `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`, `GET /api/v1/organizations`, and `POST /api/v1/organizations`. Bearer tokens are random 256-bit values; only their SHA-256 digests are stored, and sessions expire after seven days. Organization creation and the initial owner membership are created in a single nested Prisma transaction.
 
+`GET /api/v1/organizations/members` returns active members of the verified organization with their IDs, names, and roles. It provides selection data only; modules remain responsible for enforcing assignment permissions and validating assignment targets.
+
 ## Tenant-isolation requirements
 
 - Enforce membership and role checks in server-side authorization code, not only in the UI.

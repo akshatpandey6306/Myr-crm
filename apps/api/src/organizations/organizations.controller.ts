@@ -21,6 +21,31 @@ export class OrganizationsController {
     };
   }
 
+  @Get("members")
+  async listMembers(@Req() request: HttpRequest) {
+    const organizationId = this.organizationId(request);
+    const memberships = await this.prisma.membership.findMany({
+      where: {
+        organizationId,
+        status: "ACTIVE",
+        user: { status: "ACTIVE" },
+      },
+      select: {
+        userId: true,
+        role: true,
+        user: { select: { name: true } },
+      },
+      orderBy: [{ user: { name: "asc" } }, { userId: "asc" }],
+    });
+    return {
+      data: memberships.map(({ userId, role, user }) => ({
+        id: userId,
+        name: user.name,
+        role: role.toLowerCase(),
+      })),
+    };
+  }
+
   @SkipOrganizationContext()
   @Post()
   async create(@Req() request: HttpRequest, @Body() body: { name?: unknown }) {
@@ -49,5 +74,10 @@ export class OrganizationsController {
   private userId(request: HttpRequest) {
     if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
     return request.userId;
+  }
+
+  private organizationId(request: HttpRequest) {
+    if (!request.orgId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated organization context required" });
+    return request.orgId;
   }
 }
