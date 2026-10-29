@@ -1,16 +1,15 @@
 import type { NextConfig } from "next";
 
+const apiProxyUrl = (process.env.API_PROXY_URL || 'http://localhost:4000/api/v1').replace(/\/+$/, '');
+
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
+  async rewrites() {
+    return [
+      {
+        source: '/api/v1/:path*',
+        destination: `${apiProxyUrl}/:path*`,
       },
-    },
+    ];
   },
 };
 
