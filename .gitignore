@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+apps/api/generated/prisma/
+.env*
+!.env.example
+DEMO-CREDENTIALS.local.md
