@@ -428,7 +428,8 @@ export default function Home() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="activities-screen">
+      <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="Myr CRM home">
           <span className="brand-mark">m</span>
@@ -841,6 +842,7 @@ export default function Home() {
           </section>
         </div>
       )}
+      </div>
     </div>
   );
 }
