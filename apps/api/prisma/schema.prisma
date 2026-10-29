@@ -58,6 +58,42 @@ enum DealStatus {
   @@map("deal_status")
 }
 
+enum ActivityType {
+  TASK    @map("task")
+  CALL    @map("call")
+  MEETING @map("meeting")
+  NOTE    @map("note")
+  EMAIL   @map("email")
+
+  @@map("activity_type")
+}
+
+enum ActivityStatus {
+  OPEN        @map("open")
+  IN_PROGRESS @map("in_progress")
+  COMPLETED   @map("completed")
+  CANCELLED   @map("cancelled")
+
+  @@map("activity_status")
+}
+
+enum ActivityPriority {
+  LOW    @map("low")
+  NORMAL @map("normal")
+  HIGH   @map("high")
+
+  @@map("activity_priority")
+}
+
+enum RelatedRecordType {
+  LEAD    @map("lead")
+  CONTACT @map("contact")
+  COMPANY @map("company")
+  DEAL    @map("deal")
+
+  @@map("related_record_type")
+}
+
 model User {
   id           String       @id @default(uuid()) @db.Uuid
   email        String       @unique @db.VarChar(254)
@@ -83,6 +119,7 @@ model Organization {
   companies   Company[]
   pipelines   Pipeline[]
   deals       Deal[]
+  activities  Activity[]
 
   @@map("organizations")
 }
@@ -104,6 +141,8 @@ model Membership {
   companiesCreated Company[]      @relation("CompanyCreator")
   dealsOwned       Deal[]          @relation("DealOwner")
   dealsCreated     Deal[]          @relation("DealCreator")
+  activitiesAssigned Activity[]    @relation("ActivityAssignee")
+  activitiesCreated  Activity[]    @relation("ActivityCreator")
 
   @@unique([organizationId, userId])
   @@index([userId, status])
@@ -254,4 +293,32 @@ model Deal {
   @@index([organizationId, pipelineId, stageId, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
   @@map("deals")
+}
+
+model Activity {
+  id                 String            @id @default(uuid()) @db.Uuid
+  organizationId     String            @map("organization_id") @db.Uuid
+  type               ActivityType
+  title              String            @db.VarChar(160)
+  description        String?           @db.Text
+  status             ActivityStatus    @default(OPEN)
+  priority           ActivityPriority  @default(NORMAL)
+  dueAt              DateTime?         @map("due_at") @db.Timestamptz(3)
+  completedAt        DateTime?         @map("completed_at") @db.Timestamptz(3)
+  assignedToUserId   String?           @map("assigned_to_user_id") @db.Uuid
+  relatedToType      RelatedRecordType? @map("related_to_type")
+  relatedToId        String?           @map("related_to_id") @db.Uuid
+  createdByUserId    String            @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt         DateTime?         @map("archived_at") @db.Timestamptz(3)
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignee           Membership?       @relation("ActivityAssignee", fields: [organizationId, assignedToUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator            Membership       @relation("ActivityCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, archivedAt, dueAt])
+  @@index([organizationId, status, archivedAt])
+  @@index([organizationId, assignedToUserId, archivedAt])
+  @@index([organizationId, relatedToType, relatedToId])
+  @@map("activities")
 }

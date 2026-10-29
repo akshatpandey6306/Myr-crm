@@ -1,7 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import {
+  apiErrorMessage,
+  loadRelatedRecordOptions,
+} from "./activity-api";
+import type { RelatedRecordOption, RelatedRecordType } from "./activity-api";
+import { crmApiFetch } from "../../lib/api-client";
 
 type ActivityType = "task" | "call" | "meeting" | "note" | "email";
 type ActivityStatus = "open" | "in_progress" | "completed" | "cancelled";
@@ -18,153 +24,19 @@ type WorkItem = {
   dueAt: string | null;
   completedAt: string | null;
   assignedToUserId: string | null;
+  assignedToName: string | null;
   relatedToType: string | null;
   relatedToId: string | null;
+  relatedToName: string | null;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
 };
 
-const demoUsers = [
-  { id: "user-alex", name: "You", initials: "AM" },
-  { id: "user-jordan", name: "Jordan Lee", initials: "JL" },
-];
-
-const demoRelatedRecords = [
-  { type: "company", id: "company-acme", name: "Acme Corporation" },
-  { type: "company", id: "company-northstar", name: "Northstar Labs" },
-  { type: "company", id: "company-brightline", name: "Brightline Studio" },
-  { type: "company", id: "company-monarch", name: "Monarch Group" },
-  { type: "company", id: "company-evergreen", name: "Evergreen Co." },
-  { type: "contact", id: "contact-sam", name: "Sam Rivera" },
-];
-
-const initialItems: WorkItem[] = [
-  {
-    id: "activity-1",
-    organizationId: "demo-organization",
-    type: "task",
-    title: "Send revised proposal",
-    description: null,
-    status: "open",
-    priority: "high",
-    dueAt: "2026-10-27T12:00:00.000Z",
-    completedAt: null,
-    assignedToUserId: "user-alex",
-    relatedToType: "company",
-    relatedToId: "company-acme",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-22T12:00:00.000Z",
-    updatedAt: "2026-10-22T12:00:00.000Z",
-  },
-  {
-    id: "activity-2",
-    organizationId: "demo-organization",
-    type: "call",
-    title: "Follow up on product demo",
-    description: null,
-    status: "in_progress",
-    priority: "normal",
-    dueAt: "2026-10-27T14:00:00.000Z",
-    completedAt: null,
-    assignedToUserId: "user-alex",
-    relatedToType: "company",
-    relatedToId: "company-northstar",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-23T12:00:00.000Z",
-    updatedAt: "2026-10-24T12:00:00.000Z",
-  },
-  {
-    id: "activity-3",
-    organizationId: "demo-organization",
-    type: "task",
-    title: "Review contract details",
-    description: null,
-    status: "open",
-    priority: "high",
-    dueAt: "2026-10-25T12:00:00.000Z",
-    completedAt: null,
-    assignedToUserId: "user-alex",
-    relatedToType: "company",
-    relatedToId: "company-brightline",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-20T12:00:00.000Z",
-    updatedAt: "2026-10-20T12:00:00.000Z",
-  },
-  {
-    id: "activity-4",
-    organizationId: "demo-organization",
-    type: "meeting",
-    title: "Quarterly account check-in",
-    description: null,
-    status: "open",
-    priority: "normal",
-    dueAt: "2026-10-28T15:00:00.000Z",
-    completedAt: null,
-    assignedToUserId: "user-jordan",
-    relatedToType: "company",
-    relatedToId: "company-monarch",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-23T12:00:00.000Z",
-    updatedAt: "2026-10-23T12:00:00.000Z",
-  },
-  {
-    id: "activity-5",
-    organizationId: "demo-organization",
-    type: "email",
-    title: "Share onboarding resources",
-    description: null,
-    status: "open",
-    priority: "low",
-    dueAt: "2026-10-30T12:00:00.000Z",
-    completedAt: null,
-    assignedToUserId: "user-alex",
-    relatedToType: "company",
-    relatedToId: "company-evergreen",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-25T12:00:00.000Z",
-    updatedAt: "2026-10-25T12:00:00.000Z",
-  },
-  {
-    id: "activity-6",
-    organizationId: "demo-organization",
-    type: "note",
-    title: "Prepare discovery questions",
-    description: null,
-    status: "completed",
-    priority: "low",
-    dueAt: "2026-10-26T12:00:00.000Z",
-    completedAt: "2026-10-26T15:00:00.000Z",
-    assignedToUserId: "user-alex",
-    relatedToType: "company",
-    relatedToId: "company-acme",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-24T12:00:00.000Z",
-    updatedAt: "2026-10-26T15:00:00.000Z",
-  },
-  {
-    id: "activity-7",
-    organizationId: "demo-organization",
-    type: "call",
-    title: "Reschedule introduction call",
-    description: null,
-    status: "cancelled",
-    priority: "low",
-    dueAt: null,
-    completedAt: null,
-    assignedToUserId: "user-jordan",
-    relatedToType: "contact",
-    relatedToId: "contact-sam",
-    createdByUserId: "user-alex",
-    createdAt: "2026-10-21T12:00:00.000Z",
-    updatedAt: "2026-10-25T15:00:00.000Z",
-  },
-];
-
 const activityTypes: ActivityType[] = ["task", "call", "meeting", "note", "email"];
 const statuses: ActivityStatus[] = ["open", "in_progress", "completed", "cancelled"];
 const priorities: Priority[] = ["low", "normal", "high"];
-const demoToday = "2026-10-27";
+const relatedTypes: RelatedRecordType[] = ["lead", "contact", "company", "deal"];
 const pageSizeOptions = [5, 10, 20];
 
 function formatLabel(value: string) {
@@ -174,19 +46,13 @@ function formatLabel(value: string) {
     .join(" ");
 }
 
-function getUserName(userId: string | null) {
-  return demoUsers.find((user) => user.id === userId)?.name ?? "Unassigned";
-}
-
-function getUserInitials(userId: string | null) {
-  return demoUsers.find((user) => user.id === userId)?.initials ?? "—";
-}
-
-function getRelatedRecord(type: string | null, id: string | null) {
-  if (!type || !id) return null;
-  return demoRelatedRecords.find(
-    (record) => record.type === type && record.id === id,
-  );
+function getInitials(name: string | null) {
+  if (!name) return "—";
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function Icon({
@@ -261,8 +127,29 @@ function isPriority(value: FormDataEntryValue | null): value is Priority {
   return typeof value === "string" && priorities.some((priority) => priority === value);
 }
 
+type MemberOption = { id: string; name: string };
+
+function AssigneeField({ members }: { members: readonly MemberOption[] }) {
+  if (members.length === 0) {
+    return (
+      <div className="assignee-placeholder">
+        <span>Assigned to you by default</span>
+        <small>Team assignment will be available when the member directory is connected.</small>
+      </div>
+    );
+  }
+  return (
+    <select name="assignedToUserId" defaultValue="">
+      <option value="">Assign to me</option>
+      {members.map((member) => (
+        <option key={member.id} value={member.id}>{member.name}</option>
+      ))}
+    </select>
+  );
+}
+
 export default function Home() {
-  const [items, setItems] = useState(initialItems);
+  const [items, setItems] = useState<WorkItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<ActivityStatus | "all">("all");
   const [assignedToFilter, setAssignedToFilter] = useState("all");
   const [relatedTypeFilter, setRelatedTypeFilter] = useState("all");
@@ -271,79 +158,139 @@ export default function Home() {
   const [limit, setLimit] = useState(5);
   const [query, setQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [sortDescending, setSortDescending] = useState(false);
+  const [sortBy, setSortBy] = useState<"createdAt" | "dueAt">("createdAt");
+  const [sortDescending, setSortDescending] = useState(true);
   const [formError, setFormError] = useState("");
-  const usersWithItems = demoUsers.filter((user) =>
-    items.some((item) => item.assignedToUserId === user.id),
-  );
-  const relatedTypes = Array.from(
-    new Set(
-      items
-        .map((item) => item.relatedToType)
-        .filter((type): type is string => type !== null),
-    ),
-  );
-  const relatedRecords = demoRelatedRecords.filter((record) =>
-    items.some(
-      (item) => item.relatedToType === record.type && item.relatedToId === record.id,
-    ),
-  );
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const [relatedOptions, setRelatedOptions] = useState<RelatedRecordOption[]>([]);
+  const [relatedOptionsError, setRelatedOptionsError] = useState("");
+  const [createRelatedType, setCreateRelatedType] = useState<RelatedRecordType | "">("");
+  const [createRelatedOptions, setCreateRelatedOptions] = useState<RelatedRecordOption[]>([]);
+  const [createRelatedOptionsError, setCreateRelatedOptionsError] = useState("");
+  const currentPage = page;
+  const visibleItems = items;
+  const relatedRecords = relatedOptions;
+  const today = new Date().toISOString().slice(0, 10);
+  const members: MemberOption[] = [];
 
-  const filteredItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    return items
-      .filter((item) => {
-        if (statusFilter !== "all" && item.status !== statusFilter) return false;
-        if (
-          assignedToFilter !== "all" &&
-          item.assignedToUserId !== assignedToFilter
-        ) return false;
-        if (
-          relatedTypeFilter !== "all" &&
-          item.relatedToType !== relatedTypeFilter
-        ) return false;
-        if (relatedIdFilter !== "all" && item.relatedToId !== relatedIdFilter) {
-          return false;
-        }
-        if (!normalizedQuery) return true;
-
-        const relatedName = getRelatedRecord(
-          item.relatedToType,
-          item.relatedToId,
-        )?.name;
-        return [
-          item.title,
-          item.type,
-          item.status,
-          getUserName(item.assignedToUserId),
-          relatedName,
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      })
-      .sort((a, b) => {
-        if (!a.dueAt) return b.dueAt ? 1 : 0;
-        if (!b.dueAt) return -1;
-        return sortDescending
-          ? b.dueAt.localeCompare(a.dueAt)
-          : a.dueAt.localeCompare(b.dueAt);
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setError("");
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(limit),
+        sortBy,
+        sortOrder: sortDescending ? "desc" : "asc",
       });
+      if (query.trim()) params.set("q", query.trim());
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (assignedToFilter !== "all") params.set("assignedToUserId", assignedToFilter);
+      if (relatedTypeFilter !== "all") params.set("relatedToType", relatedTypeFilter);
+      if (relatedIdFilter !== "all" && relatedTypeFilter !== "all") {
+        params.set("relatedToId", relatedIdFilter);
+      }
+      try {
+        const response = await crmApiFetch(`/activities?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(apiErrorMessage(payload));
+        if (
+          !payload
+          || typeof payload !== "object"
+          || !("data" in payload)
+          || !Array.isArray(payload.data)
+          || !("meta" in payload)
+          || !payload.meta
+          || typeof payload.meta !== "object"
+        ) {
+          throw new Error("The CRM API returned an invalid activity list.");
+        }
+        const meta = payload.meta as { total?: unknown; totalPages?: unknown };
+        if (
+          typeof meta.total !== "number"
+          || typeof meta.totalPages !== "number"
+        ) {
+          throw new Error("The CRM API returned invalid activity pagination metadata.");
+        }
+        if (!cancelled) {
+          setItems(payload.data as WorkItem[]);
+          setTotal(meta.total);
+          setTotalPages(Math.max(1, meta.totalPages));
+        }
+      } catch (caught) {
+        if (cancelled || (caught instanceof Error && caught.name === "AbortError")) return;
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : "Could not load activities.");
+          setItems([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, query ? 220 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [
     assignedToFilter,
-    items,
+    limit,
+    page,
     query,
+    refresh,
     relatedIdFilter,
     relatedTypeFilter,
+    sortBy,
     sortDescending,
     statusFilter,
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / limit));
-  const currentPage = Math.min(page, totalPages);
-  const visibleItems = filteredItems.slice((currentPage - 1) * limit, currentPage * limit);
-  const today = demoToday;
+  useEffect(() => {
+    if (relatedTypeFilter === "all") {
+      setRelatedOptions([]);
+      setRelatedOptionsError("");
+      return;
+    }
+    const controller = new AbortController();
+    setRelatedOptionsError("");
+    loadRelatedRecordOptions(relatedTypeFilter as RelatedRecordType, controller.signal)
+      .then(setRelatedOptions)
+      .catch((cause: unknown) => {
+        if (cause instanceof Error && cause.name === "AbortError") return;
+        setRelatedOptionsError(cause instanceof Error ? cause.message : "Could not load related records.");
+        setRelatedOptions([]);
+      });
+    return () => controller.abort();
+  }, [relatedTypeFilter]);
+
+  useEffect(() => {
+    if (!isCreateOpen || !createRelatedType) {
+      setCreateRelatedOptions([]);
+      setCreateRelatedOptionsError("");
+      return;
+    }
+    const controller = new AbortController();
+    setCreateRelatedOptionsError("");
+    loadRelatedRecordOptions(createRelatedType, controller.signal)
+      .then(setCreateRelatedOptions)
+      .catch((cause: unknown) => {
+        if (cause instanceof Error && cause.name === "AbortError") return;
+        setCreateRelatedOptionsError(cause instanceof Error ? cause.message : "Could not load related records.");
+        setCreateRelatedOptions([]);
+      });
+    return () => controller.abort();
+  }, [createRelatedType, isCreateOpen]);
+
   const openCount = items.filter(
     (item) => item.status === "open" || item.status === "in_progress",
   ).length;
@@ -355,76 +302,91 @@ export default function Home() {
   ).length;
   const completedCount = items.filter((item) => item.status === "completed").length;
 
-  function setItemStatus(target: WorkItem, status: ActivityStatus) {
-    const now = new Date().toISOString();
-    setItems((current) =>
-      current.map((item) =>
-        item.id === target.id
-          ? {
-              ...item,
-              status,
-              completedAt:
-                status === "completed"
-                  ? target.completedAt ?? now
-                  : null,
-              updatedAt: now,
-            }
-          : item,
-      ),
-    );
+  async function setItemStatus(target: WorkItem, status: ActivityStatus) {
+    setError("");
+    try {
+      const response = await crmApiFetch(`/activities/${target.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(payload));
+      setNotice(status === "completed" ? `${target.title} completed.` : `${target.title} reopened.`);
+      setRefresh((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not update this activity.");
+    }
   }
 
-  function createItem(event: FormEvent<HTMLFormElement>) {
+  async function archiveItem(target: WorkItem) {
+    if (!window.confirm(`Archive ${target.title}? It will be removed from the active activity list.`)) return;
+    setError("");
+    try {
+      const response = await crmApiFetch(`/activities/${target.id}`, { method: "DELETE" });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(payload));
+      setNotice(`${target.title} was archived.`);
+      setRefresh((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not archive this activity.");
+    }
+  }
+
+  async function createItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const formData = new FormData(formElement);
     const title = String(formData.get("title") ?? "").trim();
     const type = formData.get("type");
     const priority = formData.get("priority");
     const dueDate = String(formData.get("dueAt") ?? "");
-    const assignedToUserId = String(formData.get("assignedToUserId") ?? "");
-    const relatedRecordValue = String(formData.get("relatedRecord") ?? "");
-    const selectedUser = demoUsers.find((user) => user.id === assignedToUserId);
-    const relatedRecord = relatedRecordValue
-      ? demoRelatedRecords.find(
-          (record) => `${record.type}:${record.id}` === relatedRecordValue,
-        )
-      : undefined;
+    const assignedToUserId = String(formData.get("assignedToUserId") ?? "").trim();
+    const relatedToTypeValue = String(formData.get("relatedToType") ?? "");
+    const relatedToId = String(formData.get("relatedToId") ?? "");
+    const relatedToType = relatedToTypeValue ? relatedToTypeValue : null;
 
     if (
       !title ||
       !isActivityType(type) ||
       !isPriority(priority) ||
-      (assignedToUserId && !selectedUser) ||
-      (relatedRecordValue && !relatedRecord)
+      (Boolean(relatedToType) !== Boolean(relatedToId))
     ) {
       setFormError("Enter a title and choose valid activity details.");
       return;
     }
 
     setFormError("");
-    const now = new Date().toISOString();
-    const newItem: WorkItem = {
-      id: `activity-${Date.now()}`,
-      organizationId: "demo-organization",
-      type,
-      title,
-      description: String(formData.get("description") ?? "").trim() || null,
-      status: "open",
-      priority,
-      dueAt: dueDate ? new Date(`${dueDate}T12:00:00`).toISOString() : null,
-      completedAt: null,
-      assignedToUserId: selectedUser?.id ?? null,
-      relatedToType: relatedRecord?.type ?? null,
-      relatedToId: relatedRecord?.id ?? null,
-      createdByUserId: "user-alex",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    setItems((current) => [newItem, ...current]);
-    setPage(1);
-    setIsCreateOpen(false);
-    event.currentTarget.reset();
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {
+        type,
+        title,
+        description: String(formData.get("description") ?? "").trim() || null,
+        priority,
+        dueAt: dueDate ? `${dueDate}T12:00:00.000Z` : null,
+        relatedToType,
+        relatedToId: relatedToId || null,
+      };
+      if (assignedToUserId) body.assignedToUserId = assignedToUserId;
+      const response = await crmApiFetch("/activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(payload));
+      setNotice("Activity created.");
+      setPage(1);
+      setRefresh((value) => value + 1);
+      setIsCreateOpen(false);
+      setCreateRelatedType("");
+      formElement.reset();
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : "Could not create this activity.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -439,7 +401,7 @@ export default function Home() {
         <div className="workspace-label">WORKSPACE</div>
         <button className="workspace-switcher" type="button">
           <span className="workspace-avatar">A</span>
-          <span className="workspace-name">Acme Workspace</span>
+          <span className="workspace-name">Active organization</span>
           <span className="switcher-chevron">⌄</span>
         </button>
 
@@ -461,10 +423,10 @@ export default function Home() {
             <Icon name="chevron" size={16} />
           </div>
           <button className="profile" type="button">
-            <span className="profile-avatar">AM</span>
+            <span className="profile-avatar">CRM</span>
             <span className="profile-copy">
-              <strong>Alex Morgan</strong>
-              <small>Admin</small>
+              <strong>Signed-in member</strong>
+              <small>CRM workspace</small>
             </span>
             <span className="profile-menu">•••</span>
           </button>
@@ -479,13 +441,13 @@ export default function Home() {
             <strong>Activities &amp; Tasks</strong>
           </div>
           <div className="topbar-actions">
-            <span className="demo-badge"><span /> Demo data</span>
+            <span className="demo-badge"><span /> CRM data</span>
             <button
               className="avatar-small"
               type="button"
-              aria-label="Open Alex Morgan profile"
+              aria-label="Signed-in member profile"
             >
-              AM
+              CRM
             </button>
           </div>
         </header>
@@ -517,7 +479,7 @@ export default function Home() {
                 <span>Open items</span>
                 <strong>{openCount}</strong>
               </div>
-              <span className="stat-note">Across your workspace</span>
+              <span className="stat-note">On this page</span>
             </article>
             <article className="stat-card">
               <div className="stat-icon amber"><Icon name="calendar" /></div>
@@ -525,7 +487,7 @@ export default function Home() {
                 <span>Overdue</span>
                 <strong>{overdueCount}</strong>
               </div>
-              <span className="stat-note">Needs your attention</span>
+              <span className="stat-note">On this page</span>
             </article>
             <article className="stat-card">
               <div className="stat-icon green"><Icon name="check" /></div>
@@ -533,9 +495,12 @@ export default function Home() {
                 <span>Completed</span>
                 <strong>{completedCount}</strong>
               </div>
-              <span className="stat-note">In this sample list</span>
+              <span className="stat-note">On this page</span>
             </article>
           </section>
+
+          {error && <div className="activities-error" role="alert">{error}</div>}
+          {notice && <div className="activities-notice" role="status">{notice}</div>}
 
           <section className="work-panel" aria-label="Activities and tasks">
             <div className="panel-heading">
@@ -589,9 +554,7 @@ export default function Home() {
                     aria-label="Filter by assignee"
                   >
                     <option value="all">All assignees</option>
-                    {usersWithItems.map((user) => (
-                      <option key={user.id} value={user.id}>{user.name}</option>
-                    ))}
+                    <option value="me">My activities</option>
                   </select>
                 </label>
                 <label className="filter-select">
@@ -615,6 +578,7 @@ export default function Home() {
                   <span>Related record</span>
                   <select
                     value={relatedIdFilter}
+                    disabled={relatedTypeFilter === "all"}
                     onChange={(event) => {
                       setRelatedIdFilter(event.target.value);
                       setPage(1);
@@ -623,39 +587,50 @@ export default function Home() {
                   >
                     <option value="all">All records</option>
                     {relatedRecords
-                      .filter((record) =>
-                        relatedTypeFilter === "all" ||
-                        record.type === relatedTypeFilter,
-                      )
                       .map((record) => (
                         <option key={record.id} value={record.id}>{record.name}</option>
                       ))}
                   </select>
                 </label>
+                {relatedOptionsError && <span className="filter-error" role="alert">{relatedOptionsError}</span>}
               </div>
               <button
                 className="sort-button"
                 type="button"
-                aria-label={`Sort by due date ${sortDescending ? "ascending" : "descending"}`}
-                onClick={() => setSortDescending((descending) => !descending)}
+                aria-label={`Sort by ${sortBy === "dueAt" ? "due date" : "created date"} ${sortDescending ? "descending" : "ascending"}`}
+                onClick={() => {
+                  if (sortBy !== "dueAt") {
+                    setSortBy("dueAt");
+                    setSortDescending(false);
+                  } else {
+                    setSortDescending((descending) => !descending);
+                  }
+                }}
               >
                 <Icon name="calendar" size={16} />
-                Due date
-                <span className="sort-chevron">{sortDescending ? "↑" : "↓"}</span>
+                {sortBy === "dueAt" ? "Due date" : "Newest"}
+                <span className="sort-chevron">{sortDescending ? "↓" : "↑"}</span>
               </button>
             </div>
 
             <div className="item-list">
-              {visibleItems.length === 0 ? (
+              {loading ? (
+                <div className="empty-state" role="status">
+                  <strong>Loading activities…</strong>
+                </div>
+              ) : visibleItems.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-icon"><Icon name="search" size={22} /></div>
-                  <strong>No activities found</strong>
-                  <span>Try a different search or create a new item.</span>
+                  <strong>{error ? "Activities could not be loaded" : "No activities found"}</strong>
+                  <span>{error ? "Check your connection and try again." : "Try a different search or create a new item."}</span>
                   <button type="button" onClick={() => {
-                    setFormError("");
-                    setIsCreateOpen(true);
+                    if (error) setRefresh((value) => value + 1);
+                    else {
+                      setFormError("");
+                      setIsCreateOpen(true);
+                    }
                   }}>
-                    Create an activity
+                    {error ? "Retry" : "Create an activity"}
                   </button>
                 </div>
               ) : (
@@ -664,7 +639,7 @@ export default function Home() {
                     <button
                       className={`completion-check${item.status === "completed" ? " checked" : ""}`}
                       type="button"
-                      onClick={() => setItemStatus(
+                      onClick={() => void setItemStatus(
                         item,
                         item.status === "completed" ? "open" : "completed",
                       )}
@@ -686,7 +661,7 @@ export default function Home() {
                           {formatDueDate(item.dueAt, today)}
                         </span>
                         <span className="meta-dot" />
-                        <span>{getRelatedRecord(item.relatedToType, item.relatedToId)?.name ?? "No linked record"}</span>
+                        <span>{item.relatedToName ?? (item.relatedToType ? formatLabel(item.relatedToType) : "No linked record")}</span>
                       </div>
                     </div>
                     <span className={`priority priority-${item.priority.toLowerCase()}`}>
@@ -694,11 +669,19 @@ export default function Home() {
                       {formatLabel(item.priority)}
                     </span>
                     <div className="assignee">
-                      <span className={`assignee-avatar${item.assignedToUserId === "user-alex" ? " self" : ""}`}>
-                        {getUserInitials(item.assignedToUserId)}
+                      <span className={`assignee-avatar${item.assignedToUserId ? " self" : ""}`}>
+                        {getInitials(item.assignedToName)}
                       </span>
-                      <span>{getUserName(item.assignedToUserId)}</span>
+                      <span>{item.assignedToName ?? "Unassigned"}</span>
                     </div>
+                    <button
+                      className="activity-archive"
+                      type="button"
+                      aria-label={`Archive ${item.title}`}
+                      onClick={() => void archiveItem(item)}
+                    >
+                      Archive
+                    </button>
                   </article>
                 ))
               )}
@@ -706,7 +689,7 @@ export default function Home() {
 
             <footer className="list-footer">
               <span>
-                Showing <strong>{filteredItems.length ? (currentPage - 1) * limit + 1 : 0}</strong>–<strong>{Math.min(currentPage * limit, filteredItems.length)}</strong> of <strong>{filteredItems.length}</strong> items
+                Showing <strong>{total ? (currentPage - 1) * limit + 1 : 0}</strong>–<strong>{Math.min(currentPage * limit, total)}</strong> of <strong>{total}</strong> items
               </span>
               <label className="page-size">
                 <span>Rows</span>
@@ -741,14 +724,17 @@ export default function Home() {
             </footer>
           </section>
           <p className="data-notice">
-            This screen uses sample data for the initial UI. Changes are temporary and will reset when you refresh.
+            Activities are loaded from your selected organization. Access and changes are enforced by the CRM API.
           </p>
         </div>
       </main>
 
       {isCreateOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setIsCreateOpen(false);
+          if (event.target === event.currentTarget) {
+            setIsCreateOpen(false);
+            setCreateRelatedType("");
+          }
         }}>
           <section
             className="create-modal"
@@ -805,37 +791,51 @@ export default function Home() {
                 </label>
                 <label className="form-field">
                   <span>Assignee</span>
-                  <select name="assignedToUserId" defaultValue="user-alex">
-                    {demoUsers.map((user) => (
-                      <option key={user.id} value={user.id}>{user.name}</option>
-                    ))}
-                    <option value="">Unassigned</option>
-                  </select>
+                  <AssigneeField members={members} />
                 </label>
               </div>
               <div className="form-row">
                 <label className="form-field">
-                  <span>Related record</span>
-                  <select name="relatedRecord" defaultValue="">
+                  <span>Related record type</span>
+                  <select
+                    name="relatedToType"
+                    value={createRelatedType}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setCreateRelatedType(
+                        value === "" || relatedTypes.includes(value as RelatedRecordType)
+                          ? value as RelatedRecordType | ""
+                          : "",
+                      );
+                    }}
+                  >
                     <option value="">No linked record</option>
-                    {demoRelatedRecords.map((record) => (
-                      <option
-                        key={record.id}
-                        value={`${record.type}:${record.id}`}
-                      >
-                        {formatLabel(record.type)}: {record.name}
-                      </option>
+                    {relatedTypes.map((type) => (
+                      <option key={type} value={type}>{formatLabel(type)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Related record</span>
+                  <select name="relatedToId" defaultValue="" required={Boolean(createRelatedType)} disabled={!createRelatedType}>
+                    <option value="">Select a record</option>
+                    {createRelatedOptions.map((record) => (
+                      <option key={record.id} value={record.id}>{record.name}</option>
                     ))}
                   </select>
                 </label>
               </div>
+              {createRelatedOptionsError && <p className="form-error" role="alert">{createRelatedOptionsError}</p>}
               <div className="modal-actions">
-                <button className="secondary-button" type="button" onClick={() => setIsCreateOpen(false)}>
+                <button className="secondary-button" type="button" onClick={() => {
+                  setIsCreateOpen(false);
+                  setCreateRelatedType("");
+                }}>
                   Cancel
                 </button>
-                <button className="primary-button" type="submit">
+                <button className="primary-button" type="submit" disabled={saving}>
                   <Icon name="plus" size={16} />
-                  Create item
+                  {saving ? "Creating…" : "Create item"}
                 </button>
               </div>
             </form>

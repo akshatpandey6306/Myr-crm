@@ -54,31 +54,51 @@ This document records Developer 1's interim authorization matrix for the five ro
 Do not implement this matrix until both developers agree on the scope and decisions above.
 
 
-## Module 9 Activities & Tasks — Developer 2 proposal
+## Module 9 Activities & Tasks — implementation proposal
 
-**Status: Proposed by Developer 2; confirm before treating as the shared contract.**
-
-Developer 2 reports that their Activities & Tasks screen is on local main with uncommitted changes, currently uses demo data, and has no backend routes or dedicated branch/PR. Coordinate integration after a branch or PR is available; do not assume the work is present in this Codespace checkout.
+**Status: Provisional implementation on `feature/activities-tasks`; not an
+agreed shared contract.** Review with the shared-contract owner before merging
+or relying on its role and deletion policy.
 
 ### Fields and values
 
-- Fields: id, organizationId, type, title, description, status, priority, dueAt, completedAt, assignedToUserId, relatedToType, relatedToId, createdByUserId, createdAt, updatedAt.
-- title is required. description, dueAt, assignedToUserId, relatedToType, and relatedToId are optional/nullable.
-- Server-managed fields: id, organizationId, createdByUserId, completedAt, createdAt, and updatedAt.
-- type: task | call | meeting | note | email; status: open | in_progress | completed | cancelled; priority: low | normal | high. Map the current UI's Medium priority to normal; Developer 2 offers to add note support to the UI.
-- Related-record type and ID must be supplied together or both null. The server verifies the related record belongs to the user's organization.
+- Fields: `id`, `organizationId`, `type`, `title`, `description`, `status`,
+  `priority`, `dueAt`, `completedAt`, `assignedToUserId`, `relatedToType`,
+  `relatedToId`, `createdByUserId`, `createdAt`, and `updatedAt`. Responses
+  also include assignee, creator, and related-record display names.
+- `title` is required. `description`, `dueAt`, `assignedToUserId`,
+  `relatedToType`, and `relatedToId` are optional/nullable.
+- The server controls organization, creator, completion, and audit timestamps.
+- `type`: `task | call | meeting | note | email`; `status`:
+  `open | in_progress | completed | cancelled`; `priority`: `low | normal | high`.
+- Related-record type and ID must be provided together or both null. Related
+  records and assignment targets are validated within the active organization.
 
 ### Proposed API behavior
 
-- GET/POST /api/activities and GET/PATCH/DELETE /api/activities/:id.
-- PATCH accepts only user-editable fields; organization and audit fields remain server-controlled.
-- Set completedAt when status becomes completed and clear it when reopened.
-- Require authentication and verified organization membership. Resolve organization scope on the server; validate related records and assignment targets within that organization.
-- Use the agreed JSON error shape: { "error": { "code": "...", "message": "...", "details": ... } }, with standard HTTP status codes.
+- `GET/POST /api/v1/activities` and
+  `GET/PATCH/DELETE /api/v1/activities/:id`.
+- Uses the shared bearer session and `x-organization-id` selector; the API
+  verifies membership and scopes every operation to the selected organization.
+- Lists accept `q`, `type`, `status`, `priority`, `assignedToUserId`,
+  `relatedToType`, `relatedToId`, `page`, `pageSize`, `sortBy`, and
+  `sortOrder`. Pagination defaults to page 1 / pageSize 25 (maximum 100);
+  sorting supports `createdAt` and `dueAt`.
+- Responses use `{ data: ... }` for a single record and
+  `{ data: [...], meta: { page, pageSize, total, totalPages } }` for lists.
+  Errors use `{ error: { code, message, details } }`.
+- Set `completedAt` when status becomes completed and clear it when reopened.
 
-### Open questions before implementation
+### Decisions awaiting agreement
 
-1. Does DELETE permanently delete an activity or soft-delete/archive it?
-2. Are pagination and filters included in the initial list route? If so, agree the parameter names, defaults, limits, and response metadata.
+1. `DELETE` currently soft-archives the activity. Confirm archive versus
+   permanent deletion.
+2. The implementation provisionally mirrors the interim role matrix: Owner,
+   Admin, and Sales Manager have organization-wide read/write/assign/archive
+   access; Sales Representatives can read and update assigned activities and
+   create activities assigned to themselves, but cannot reassign or archive;
+   Read-only Users can read. Confirm or revise these rules.
+3. Member selection is deferred until a shared organization-member endpoint
+   exists; the UI currently assigns new activities to the signed-in member.
 
-Keep this contract provisional until these two questions and the shared auth/tenancy integration point are confirmed.
+Do not treat the provisional role or deletion behavior as an agreed policy.

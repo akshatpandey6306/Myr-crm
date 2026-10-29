@@ -111,10 +111,13 @@ The repository is in an early MVP foundation stage, not production-ready.
   record references. Company and deal CRUD is soft-archived, and pipelines
   support basic management of names and stages. The Companies and Deals
   screens use the API and are responsive.
-- Activities are available at `/activities` as a client-side sample screen.
-  It supports creation, completion, search, filters, sorting, and pagination,
-  but has no API, durable persistence, authentication, or organization scoping.
-  Coordinate the shared contract before integrating those behaviors.
+- Activities are available at `/activities` and use the authenticated CRM API
+  for organization-scoped persistence, related-record links, filtering, sorting,
+  and pagination. The initial API proposal is documented in
+  [`apps/api/README.md`](apps/api/README.md). Archive behavior and role
+  permissions remain provisional pending agreement with the shared-contract
+  owner; member selection is deferred until an organization-member endpoint is
+  available.
 - Password-reset, email-verification, invitation, rate-limit, secure-cookie or
   refresh-token, and full permission-administration flows remain outstanding.
 - Organization-specific role policy and the shared Developer 2 contracts still
@@ -156,6 +159,12 @@ changed, checks actually run, and any important remaining limitation.
   Activities sample UI to `/activities` so it no longer replaces the shared
   dashboard. The Activities screen remains demo-only pending shared API,
   authentication, tenancy, and contract coordination.
+- **2026-10-29:** Added a persisted, tenant-scoped Activities API and connected
+  the `/activities` screen through `crmApiFetch`, including linked-record
+  validation, API-backed filters and pagination, and completion/archive
+  actions. Prisma schema validation/generation, API and web typechecks, API
+  tests, UI tests, and builds passed. Archive semantics and role permissions
+  are still proposals for review; the organization-member picker is deferred.
 
 ## Next session
 

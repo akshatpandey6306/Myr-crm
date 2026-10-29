@@ -11,10 +11,11 @@ import { PrismaModule } from "./prisma/prisma.module.js";
 import { CompaniesController } from "./companies/companies.controller.js";
 import { DealsController } from "./deals/deals.controller.js";
 import { PipelinesController } from "./pipelines/pipelines.controller.js";
+import { ActivitiesController } from "./activities/activities.controller.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
-  controllers: [AuthController, OrganizationsController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController],
+  controllers: [AuthController, OrganizationsController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: OrgGuard },

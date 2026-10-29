@@ -75,6 +75,45 @@ sorting. Deal fields include `name`, `value`, `closeDate`, `status`,
 `companyId`, `pipelineId`, and `stageId`; the API verifies company, pipeline,
 and stage membership in the active organization. Deletion archives a deal.
 
+## Activities and tasks — proposed contract
+
+The Activities screen at `/activities` uses `GET /api/v1/activities`,
+`POST /api/v1/activities`, `GET /api/v1/activities/:id`,
+`PATCH /api/v1/activities/:id`, and `DELETE /api/v1/activities/:id`.
+Requests use the shared bearer session and `x-organization-id`; the API verifies
+active membership and scopes records to that organization.
+
+Activity fields are `id`, `organizationId`, `type`, `title`, `description`,
+`status`, `priority`, `dueAt`, `completedAt`, `assignedToUserId`,
+`relatedToType`, `relatedToId`, `createdByUserId`, `createdAt`, and
+`updatedAt`. Responses also include `assignedToName`, `relatedToName`, and
+`createdByName`. Types are `task`, `call`, `meeting`, `note`, and `email`;
+statuses are `open`, `in_progress`, `completed`, and `cancelled`; priorities
+are `low`, `normal`, and `high`. The server controls organization, creator, and
+timestamps. A completed status sets `completedAt`; reopening clears it.
+
+The list accepts `q`, `type`, `status`, `priority`, `assignedToUserId`,
+`relatedToType`, `relatedToId`, `page`, `pageSize`, `sortBy`, and `sortOrder`.
+Pagination defaults to page 1 and pageSize 25 (maximum 100). Sort fields are
+`createdAt` and `dueAt`; sort order is `asc` or `desc`. Lists return
+`{ data: [...], meta: { page, pageSize, total, totalPages } }`; single-record
+routes return `{ data: ... }`; errors use
+`{ error: { code, message, details } }`. Related-record type and ID must be
+provided together, and active lead, contact, company, and deal references are
+validated against the selected organization. Assignees must be active members
+of that organization. Until the member-directory endpoint is available, the UI
+defaults new activities to the signed-in member and does not offer a member
+picker.
+
+**Open for shared-contract agreement:** `DELETE` currently soft-archives an
+activity, matching the existing CRM records. The implementation provisionally
+uses the interim role matrix: Owner, Admin, and Sales Manager can read, create,
+update, assign, and archive organization activities; Sales Representatives can
+read and update assigned activities and create activities assigned to
+themselves, but cannot reassign or archive; Read-only Users can read. Confirm
+or revise both archive semantics and role rules before treating these as the
+shared policy.
+
 ## Leads preview
 
 Leads are scoped to the authenticated user's active organization. Requests use
