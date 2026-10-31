@@ -1,7 +1,8 @@
-import { BadRequestException, Body, Controller, Delete, Get, Inject, NotFoundException, Param, Patch, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Inject, Logger, NotFoundException, Param, Patch, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { assignedOwnerFilter, requireRecordArchive, requireRecordWrite } from "../auth/record-permissions.js";
+import { AutomationsService } from "../automations/automations.service.js";
 
 const sources = ["website", "referral", "linkedin", "other"] as const;
 const statuses = ["new", "contacted", "qualified", "disqualified"] as const;
@@ -16,7 +17,12 @@ const statusToDatabase: Record<LeadStatusValue, DbLeadStatus> = { new: "NEW", co
 
 @Controller("leads")
 export class LeadsController {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(LeadsController.name);
+
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AutomationsService) private readonly automations: AutomationsService,
+  ) {}
 
   @Get()
   async list(
@@ -74,19 +80,32 @@ export class LeadsController {
     const company = this.requiredText(body?.company, "company", 160);
     const source = this.enumValue(body?.source, sources, "source");
     const status = this.enumValue(body?.status ?? "new", statuses, "status");
-    const lead = await this.prisma.lead.create({
-      data: {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const createdLead = await tx.lead.create({
+        data: {
+          organizationId,
+          name,
+          company,
+          source: sourceToDatabase[source],
+          status: statusToDatabase[status],
+          ownerUserId: userId,
+          createdByUserId: userId,
+        },
+        include: { owner: { include: { user: { select: { name: true } } } } },
+      });
+      const generatedActivityIds = await this.automations.runForLead(tx, {
         organizationId,
-        name,
-        company,
-        source: sourceToDatabase[source],
-        status: statusToDatabase[status],
-        ownerUserId: userId,
-        createdByUserId: userId,
-      },
-      include: { owner: { include: { user: { select: { name: true } } } } },
+        actorUserId: userId,
+        leadId: createdLead.id,
+        leadName: createdLead.name,
+        leadOwnerUserId: createdLead.ownerUserId,
+        status: createdLead.status,
+        event: "lead_created",
+      });
+      return { lead: createdLead, generatedActivityIds: generatedActivityIds ?? [] };
     });
-    return { data: this.present(lead) };
+    await this.auditGeneratedActivities(result.generatedActivityIds, organizationId, userId);
+    return { data: this.present(result.lead) };
   }
 
   @Get(":id")
@@ -103,7 +122,7 @@ export class LeadsController {
   @Patch(":id")
   async update(@Req() request: HttpRequest, @Param("id") id: string, @Body() body: Record<string, unknown>) {
     requireRecordWrite(request);
-    const organizationId = this.organizationId(request);
+    const { organizationId, userId } = this.context(request);
     const patch: { name?: string; company?: string; source?: DbLeadSource; status?: DbLeadStatus } = {};
     if ("name" in (body ?? {})) patch.name = this.requiredText(body.name, "name", 120);
     if ("company" in (body ?? {})) patch.company = this.requiredText(body.company, "company", 160);
@@ -111,11 +130,45 @@ export class LeadsController {
     if ("status" in (body ?? {})) patch.status = statusToDatabase[this.enumValue(body.status, statuses, "status")];
     if (Object.keys(patch).length === 0) throw new BadRequestException({ code: "validation_error", message: "Provide at least one editable lead field" });
     const ownerUserId = assignedOwnerFilter(request);
-    const result = await this.prisma.lead.updateMany({ where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) }, data: patch });
-    if (result.count === 0) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
-    const lead = await this.prisma.lead.findFirst({ where: { id, organizationId, ...(ownerUserId ? { ownerUserId } : {}) }, include: { owner: { include: { user: { select: { name: true } } } } } });
-    if (!lead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
-    return { data: this.present(lead) };
+    const result = await this.prisma.$transaction(async (tx) => {
+      const where = { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) };
+      const before = await tx.lead.findFirst({ where });
+      if (!before) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
+      const result = await tx.lead.updateMany({ where, data: patch });
+      if (result.count === 0) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
+      const updatedLead = await tx.lead.findFirst({
+        where,
+        include: { owner: { include: { user: { select: { name: true } } } } },
+      });
+      if (!updatedLead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
+      if (patch.status && before.status !== patch.status) {
+        const generatedActivityIds = await this.automations.runForLead(tx, {
+          organizationId,
+          actorUserId: userId,
+          leadId: updatedLead.id,
+          leadName: updatedLead.name,
+          leadOwnerUserId: updatedLead.ownerUserId,
+          status: updatedLead.status,
+          event: "lead_status_changed",
+        });
+        return { lead: updatedLead, generatedActivityIds: generatedActivityIds ?? [] };
+      }
+      return { lead: updatedLead, generatedActivityIds: [] as string[] };
+    });
+    await this.auditGeneratedActivities(result.generatedActivityIds, organizationId, userId);
+    return { data: this.present(result.lead) };
+  }
+
+  private async auditGeneratedActivities(activityIds: string[], organizationId: string, actorUserId: string) {
+    for (const resourceId of activityIds) {
+      try {
+        await this.prisma.auditLog.create({
+          data: { organizationId, actorUserId, action: "CREATE", resourceType: "activity", resourceId },
+        });
+      } catch (cause) {
+        this.logger.error("Could not persist audit event for automation-generated activity", cause instanceof Error ? cause.stack : undefined);
+      }
+    }
   }
 
   @Delete(":id")

@@ -58,52 +58,143 @@ enum DealStatus {
   @@map("deal_status")
 }
 
+enum ActivityType {
+  TASK    @map("task")
+  CALL    @map("call")
+  MEETING @map("meeting")
+  NOTE    @map("note")
+  EMAIL   @map("email")
+
+  @@map("activity_type")
+}
+
+enum ActivityStatus {
+  OPEN        @map("open")
+  IN_PROGRESS @map("in_progress")
+  COMPLETED   @map("completed")
+  CANCELLED   @map("cancelled")
+
+  @@map("activity_status")
+}
+
+enum ActivityPriority {
+  LOW    @map("low")
+  NORMAL @map("normal")
+  HIGH   @map("high")
+
+  @@map("activity_priority")
+}
+
+enum RelatedRecordType {
+  LEAD    @map("lead")
+  CONTACT @map("contact")
+  COMPANY @map("company")
+  DEAL    @map("deal")
+
+  @@map("related_record_type")
+}
+
+enum AutomationTrigger {
+  LEAD_CREATED        @map("lead_created")
+  LEAD_STATUS_CHANGED @map("lead_status_changed")
+
+  @@map("automation_trigger")
+}
+
+enum EmailDeliveryStatus {
+  NOT_CONFIGURED @map("not_configured")
+  QUEUED         @map("queued")
+  SENT           @map("sent")
+  FAILED         @map("failed")
+
+  @@map("email_delivery_status")
+}
+
+enum NotificationType {
+  ACTIVITY_ASSIGNED @map("activity_assigned")
+  ACTIVITY_COMPLETED @map("activity_completed")
+
+  @@map("notification_type")
+}
+
+enum AuditAction {
+  CREATE  @map("create")
+  UPDATE  @map("update")
+  ARCHIVE @map("archive")
+
+  @@map("audit_action")
+}
+
+enum EmailTokenPurpose {
+  PASSWORD_RESET     @map("password_reset")
+  EMAIL_VERIFICATION @map("email_verification")
+
+  @@map("email_token_purpose")
+}
+
 model User {
-  id           String       @id @default(uuid()) @db.Uuid
-  email        String       @unique @db.VarChar(254)
-  name         String       @db.VarChar(120)
-  passwordHash String       @map("password_hash") @db.VarChar(255)
-  status       UserStatus   @default(ACTIVE)
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships  Membership[]
-  sessions     Session[]
+  id              String       @id @default(uuid()) @db.Uuid
+  email           String       @unique @db.VarChar(254)
+  name            String       @db.VarChar(120)
+  passwordHash    String       @map("password_hash") @db.VarChar(255)
+  status          UserStatus   @default(ACTIVE)
+  emailVerifiedAt DateTime?    @map("email_verified_at") @db.Timestamptz(3)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  memberships     Membership[]
+  sessions        Session[]
+  emailTokens     EmailToken[]
 
   @@map("users")
 }
 
 model Organization {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String       @db.VarChar(160)
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships Membership[]
-  leads       Lead[]
-  contacts    Contact[]
-  companies   Company[]
-  pipelines   Pipeline[]
-  deals       Deal[]
+  id              String                   @id @default(uuid()) @db.Uuid
+  name            String                   @db.VarChar(160)
+  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  memberships     Membership[]
+  leads           Lead[]
+  contacts        Contact[]
+  companies       Company[]
+  pipelines       Pipeline[]
+  deals           Deal[]
+  activities      Activity[]
+  emailMessages   EmailMessage[]
+  automationRules AutomationRule[]
+  automationRuns  AutomationRun[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  settings        OrganizationSettings?
+  invitations     OrganizationInvitation[]
 
   @@map("organizations")
 }
 
 model Membership {
-  id             String           @id @default(uuid()) @db.Uuid
-  userId         String           @map("user_id") @db.Uuid
-  organizationId String           @map("organization_id") @db.Uuid
-  role           MembershipRole   @default(SALES_REP)
-  status         MembershipStatus @default(ACTIVE)
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  leadsOwned     Lead[]           @relation("LeadOwner")
-  leadsCreated   Lead[]           @relation("LeadCreator")
-  contactsOwned  Contact[]        @relation("ContactOwner")
-  contactsCreated Contact[]       @relation("ContactCreator")
-  companiesOwned Company[]        @relation("CompanyOwner")
-  companiesCreated Company[]      @relation("CompanyCreator")
-  dealsOwned       Deal[]          @relation("DealOwner")
-  dealsCreated     Deal[]          @relation("DealCreator")
+  id                     String                   @id @default(uuid()) @db.Uuid
+  userId                 String                   @map("user_id") @db.Uuid
+  organizationId         String                   @map("organization_id") @db.Uuid
+  role                   MembershipRole           @default(SALES_REP)
+  status                 MembershipStatus         @default(ACTIVE)
+  createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadsOwned             Lead[]                   @relation("LeadOwner")
+  leadsCreated           Lead[]                   @relation("LeadCreator")
+  contactsOwned          Contact[]                @relation("ContactOwner")
+  contactsCreated        Contact[]                @relation("ContactCreator")
+  companiesOwned         Company[]                @relation("CompanyOwner")
+  companiesCreated       Company[]                @relation("CompanyCreator")
+  dealsOwned             Deal[]                   @relation("DealOwner")
+  dealsCreated           Deal[]                   @relation("DealCreator")
+  activitiesAssigned     Activity[]               @relation("ActivityAssignee")
+  activitiesCreated      Activity[]               @relation("ActivityCreator")
+  emailsSent             EmailMessage[]           @relation("EmailMessageSender")
+  automationRulesCreated AutomationRule[]         @relation("AutomationRuleCreator")
+  notificationsReceived  Notification[]           @relation("NotificationRecipient")
+  auditLogsAuthored      AuditLog[]               @relation("AuditLogActor")
+  invitationsSent        OrganizationInvitation[] @relation("InvitationSender")
 
   @@unique([organizationId, userId])
   @@index([userId, status])
@@ -125,22 +216,67 @@ model Session {
   @@map("sessions")
 }
 
-model Lead {
-  id             String      @id @default(uuid()) @db.Uuid
-  organizationId String      @map("organization_id") @db.Uuid
-  name           String      @db.VarChar(120)
-  company        String      @db.VarChar(160)
-  source         LeadSource
-  status         LeadStatus  @default(NEW)
-  ownerUserId    String      @map("owner_user_id") @db.Uuid
-  createdByUserId String     @map("created_by_user_id") @db.Uuid
-  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
-  archivedAt     DateTime?   @map("archived_at") @db.Timestamptz(3)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner          Membership  @relation("LeadOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
-  creator        Membership  @relation("LeadCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+model EmailToken {
+  id         String            @id @default(uuid()) @db.Uuid
+  userId     String            @map("user_id") @db.Uuid
+  tokenHash  String            @unique @map("token_hash") @db.Char(64)
+  purpose    EmailTokenPurpose
+  expiresAt  DateTime          @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime?         @map("consumed_at") @db.Timestamptz(3)
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId, purpose, expiresAt])
+  @@map("email_tokens")
+}
+
+model OrganizationInvitation {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  email           String         @db.VarChar(254)
+  role            MembershipRole
+  tokenHash       String         @unique @map("token_hash") @db.Char(64)
+  invitedByUserId String         @map("invited_by_user_id") @db.Uuid
+  expiresAt       DateTime       @map("expires_at") @db.Timestamptz(3)
+  acceptedAt      DateTime?      @map("accepted_at") @db.Timestamptz(3)
+  revokedAt       DateTime?      @map("revoked_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter         Membership     @relation("InvitationSender", fields: [organizationId, invitedByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, email, expiresAt])
+  @@index([organizationId, createdAt])
+  @@map("organization_invitations")
+}
+
+model RateLimitBucket {
+  keyHash         String   @id @map("key_hash") @db.Char(64)
+  windowStartedAt DateTime @map("window_started_at") @db.Timestamptz(3)
+  attempts        Int      @default(0)
+  expiresAt       DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("rate_limit_buckets")
+}
+
+model Lead {
+  id              String          @id @default(uuid()) @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid
+  name            String          @db.VarChar(120)
+  company         String          @db.VarChar(160)
+  source          LeadSource
+  status          LeadStatus      @default(NEW)
+  ownerUserId     String          @map("owner_user_id") @db.Uuid
+  createdByUserId String          @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt      DateTime?       @map("archived_at") @db.Timestamptz(3)
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           Membership      @relation("LeadOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator         Membership      @relation("LeadCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  automationRuns  AutomationRun[]
+
+  @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
   @@index([organizationId, status, archivedAt])
   @@index([organizationId, source, archivedAt])
@@ -149,22 +285,24 @@ model Lead {
 }
 
 model Contact {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  name           String       @db.VarChar(120)
-  email          String       @db.VarChar(254)
-  phone          String?      @db.VarChar(40)
-  title          String?      @db.VarChar(120)
-  company        String?      @db.VarChar(160)
-  ownerUserId    String       @map("owner_user_id") @db.Uuid
-  createdByUserId String      @map("created_by_user_id") @db.Uuid
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  archivedAt     DateTime?    @map("archived_at") @db.Timestamptz(3)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner          Membership   @relation("ContactOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
-  creator        Membership   @relation("ContactCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  name            String         @db.VarChar(120)
+  email           String         @db.VarChar(254)
+  phone           String?        @db.VarChar(40)
+  title           String?        @db.VarChar(120)
+  company         String?        @db.VarChar(160)
+  ownerUserId     String         @map("owner_user_id") @db.Uuid
+  createdByUserId String         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt      DateTime?      @map("archived_at") @db.Timestamptz(3)
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           Membership     @relation("ContactOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator         Membership     @relation("ContactCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  emailMessages   EmailMessage[]
 
+  @@unique([organizationId, id])
   @@unique([organizationId, email])
   @@index([organizationId, archivedAt, createdAt])
   @@index([organizationId, ownerUserId, archivedAt])
@@ -195,13 +333,13 @@ model Company {
 }
 
 model Pipeline {
-  id             String         @id @default(uuid()) @db.Uuid
-  organizationId String         @map("organization_id") @db.Uuid
-  name           String         @db.VarChar(120)
-  isDefault      Boolean        @default(false) @map("is_default")
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  name           String          @db.VarChar(120)
+  isDefault      Boolean         @default(false) @map("is_default")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   stages         PipelineStage[]
   deals          Deal[]
 
@@ -212,14 +350,14 @@ model Pipeline {
 }
 
 model PipelineStage {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  pipelineId     String       @map("pipeline_id") @db.Uuid
-  name           String       @db.VarChar(80)
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  pipelineId     String   @map("pipeline_id") @db.Uuid
+  name           String   @db.VarChar(80)
   position       Int
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  pipeline       Pipeline     @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Cascade)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  pipeline       Pipeline @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Cascade)
   deals          Deal[]
 
   @@unique([organizationId, pipelineId, id])
@@ -229,29 +367,166 @@ model PipelineStage {
 }
 
 model Deal {
-  id              String       @id @default(uuid()) @db.Uuid
-  organizationId  String       @map("organization_id") @db.Uuid
-  name            String       @db.VarChar(160)
-  value           Decimal      @default(0) @db.Decimal(12, 2)
-  closeDate       DateTime?    @map("close_date") @db.Date
-  status          DealStatus   @default(OPEN)
-  companyId       String?      @map("company_id") @db.Uuid
-  pipelineId      String       @map("pipeline_id") @db.Uuid
-  stageId         String       @map("stage_id") @db.Uuid
-  ownerUserId     String       @map("owner_user_id") @db.Uuid
-  createdByUserId String       @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  archivedAt      DateTime?    @map("archived_at") @db.Timestamptz(3)
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  company         Company?     @relation(fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
-  pipeline        Pipeline     @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Restrict)
+  id              String        @id @default(uuid()) @db.Uuid
+  organizationId  String        @map("organization_id") @db.Uuid
+  name            String        @db.VarChar(160)
+  value           Decimal       @default(0) @db.Decimal(12, 2)
+  closeDate       DateTime?     @map("close_date") @db.Date
+  status          DealStatus    @default(OPEN)
+  companyId       String?       @map("company_id") @db.Uuid
+  pipelineId      String        @map("pipeline_id") @db.Uuid
+  stageId         String        @map("stage_id") @db.Uuid
+  ownerUserId     String        @map("owner_user_id") @db.Uuid
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt      DateTime?     @map("archived_at") @db.Timestamptz(3)
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company         Company?      @relation(fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
+  pipeline        Pipeline      @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Restrict)
   stage           PipelineStage @relation(fields: [organizationId, pipelineId, stageId], references: [organizationId, pipelineId, id], onDelete: Restrict)
-  owner           Membership   @relation("DealOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
-  creator         Membership   @relation("DealCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  owner           Membership    @relation("DealOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator         Membership    @relation("DealCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
 
   @@index([organizationId, archivedAt, createdAt])
   @@index([organizationId, pipelineId, stageId, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
   @@map("deals")
+}
+
+model Activity {
+  id               String             @id @default(uuid()) @db.Uuid
+  organizationId   String             @map("organization_id") @db.Uuid
+  type             ActivityType
+  title            String             @db.VarChar(160)
+  description      String?            @db.Text
+  status           ActivityStatus     @default(OPEN)
+  priority         ActivityPriority   @default(NORMAL)
+  dueAt            DateTime?          @map("due_at") @db.Timestamptz(3)
+  completedAt      DateTime?          @map("completed_at") @db.Timestamptz(3)
+  assignedToUserId String?            @map("assigned_to_user_id") @db.Uuid
+  relatedToType    RelatedRecordType? @map("related_to_type")
+  relatedToId      String?            @map("related_to_id") @db.Uuid
+  createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt       DateTime?          @map("archived_at") @db.Timestamptz(3)
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignee         Membership?        @relation("ActivityAssignee", fields: [organizationId, assignedToUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator          Membership         @relation("ActivityCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  notifications    Notification[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, archivedAt, dueAt])
+  @@index([organizationId, status, archivedAt])
+  @@index([organizationId, assignedToUserId, archivedAt])
+  @@index([organizationId, relatedToType, relatedToId])
+  @@map("activities")
+}
+
+model Notification {
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  recipientUserId String           @map("recipient_user_id") @db.Uuid
+  activityId      String           @map("activity_id") @db.Uuid
+  type            NotificationType
+  title           String           @db.VarChar(160)
+  body            String           @db.VarChar(500)
+  readAt          DateTime?        @map("read_at") @db.Timestamptz(3)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipient       Membership       @relation("NotificationRecipient", fields: [organizationId, recipientUserId], references: [organizationId, userId], onDelete: Cascade)
+  activity        Activity         @relation(fields: [organizationId, activityId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId, recipientUserId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  actorUserId    String       @map("actor_user_id") @db.Uuid
+  action         AuditAction
+  resourceType   String       @map("resource_type") @db.VarChar(48)
+  resourceId     String?      @map("resource_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          Membership   @relation("AuditLogActor", fields: [organizationId, actorUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+model OrganizationSettings {
+  organizationId String       @id @map("organization_id") @db.Uuid
+  currency       String       @default("USD") @db.Char(3)
+  timezone       String       @default("UTC") @db.VarChar(64)
+  weekStartsOn   Int          @default(1) @map("week_starts_on")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+model EmailMessage {
+  id              String              @id @default(uuid()) @db.Uuid
+  organizationId  String              @map("organization_id") @db.Uuid
+  contactId       String              @map("contact_id") @db.Uuid
+  createdByUserId String              @map("created_by_user_id") @db.Uuid
+  recipientName   String              @map("recipient_name") @db.VarChar(120)
+  recipientEmail  String              @map("recipient_email") @db.VarChar(254)
+  subject         String              @db.VarChar(255)
+  body            String              @db.Text
+  deliveryStatus  EmailDeliveryStatus @default(NOT_CONFIGURED) @map("delivery_status")
+  sentAt          DateTime?           @map("sent_at") @db.Timestamptz(3)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact         Contact             @relation(fields: [organizationId, contactId], references: [organizationId, id], onDelete: Restrict)
+  creator         Membership          @relation("EmailMessageSender", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, contactId, createdAt])
+  @@index([organizationId, createdByUserId, createdAt])
+  @@map("email_messages")
+}
+
+model AutomationRule {
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  name             String            @db.VarChar(120)
+  trigger          AutomationTrigger
+  triggerStatus    LeadStatus?       @map("trigger_status")
+  activityTitle    String            @map("activity_title") @db.VarChar(160)
+  activityPriority ActivityPriority  @default(NORMAL) @map("activity_priority")
+  dueInDays        Int               @default(1) @map("due_in_days")
+  enabled          Boolean           @default(true)
+  createdByUserId  String            @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt       DateTime?         @map("archived_at") @db.Timestamptz(3)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator          Membership        @relation("AutomationRuleCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  runs             AutomationRun[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, archivedAt, enabled])
+  @@map("automation_rules")
+}
+
+model AutomationRun {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  ruleId         String         @map("rule_id") @db.Uuid
+  leadId         String         @map("lead_id") @db.Uuid
+  activityId     String         @map("activity_id") @db.Uuid
+  ranAt          DateTime       @default(now()) @map("ran_at") @db.Timestamptz(3)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule           AutomationRule @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Cascade)
+  lead           Lead           @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([ruleId, leadId])
+  @@index([organizationId, ranAt])
+  @@map("automation_runs")
 }

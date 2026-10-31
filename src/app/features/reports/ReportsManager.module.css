@@ -1,0 +1,214 @@
+.feature {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.heading h1 {
+  margin: 4px 0 0;
+  font-size: 32px;
+  line-height: 1.15;
+}
+
+.heading button {
+  flex: 0 0 auto;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric,
+.reportPanel {
+  min-width: 0;
+  border: 1px solid #e3e7e5;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.metric {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.metric > span {
+  color: #64716d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.metric strong {
+  overflow: hidden;
+  color: #17231f;
+  font-size: 24px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+}
+
+.metric small {
+  color: #75817d;
+  font-size: 11px;
+}
+
+.reportGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.reportPanel {
+  padding: 18px;
+}
+
+.panelHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #edf0ef;
+}
+
+.panelHeading p {
+  margin: 0 0 5px;
+  color: #25866b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.panelHeading h2 {
+  margin: 0;
+  color: #17231f;
+  font-size: 17px;
+}
+
+.panelHeading > span {
+  color: #78837f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.breakdown {
+  display: grid;
+  gap: 16px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.breakdown li {
+  display: grid;
+  gap: 8px;
+}
+
+.rowLabel {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #46534e;
+  font-size: 12px;
+}
+
+.rowLabel strong {
+  color: #18251f;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #edf2ef;
+}
+
+.track > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: #278b6a;
+}
+
+.reportPanel:nth-child(2) .track > span {
+  background: #cf794f;
+}
+
+.reportPanel:nth-child(3) .track > span {
+  background: #427cb8;
+}
+
+.empty {
+  margin: 20px 0 4px;
+  color: #75817d;
+  font-size: 13px;
+}
+
+.timestamp {
+  margin: -8px 0 0;
+  color: #75817d;
+  font-size: 11px;
+  text-align: right;
+}
+
+@media (max-width: 1100px) {
+  .metricGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .heading {
+    align-items: flex-start;
+  }
+
+  .heading h1 {
+    font-size: 27px;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reportGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .metric {
+    gap: 7px;
+    padding: 12px;
+  }
+
+  .metric strong {
+    font-size: clamp(18px, 6vw, 23px);
+  }
+
+  .metric small {
+    font-size: 10px;
+  }
+
+  .heading {
+    flex-direction: column;
+  }
+
+  .heading button {
+    width: 100%;
+  }
+}

@@ -72,9 +72,9 @@ export default function PipelineDistributionChart({ items }: { items: PipelineDa
   let cumulative = 0;
 
   return <div className="pipeline-visualization">
-    <div className="pipeline-visualization-heading"><span>STAGE DISTRIBUTION</span><div className="view-toggle" aria-label="Pipeline chart style"><button type="button" className={view === 'pie' ? 'active' : ''} aria-pressed={view === 'pie'} onClick={() => setView('pie')}>3D pie</button><button type="button" className={view === 'bars' ? 'active' : ''} aria-pressed={view === 'bars'} onClick={() => setView('bars')}>Bars</button></div></div>
+    <div className="pipeline-visualization-heading"><span>VALUE BY DEAL STATUS</span><div className="view-toggle" aria-label="Deal value chart style"><button type="button" className={view === 'pie' ? 'active' : ''} aria-pressed={view === 'pie'} onClick={() => setView('pie')}>3D pie</button><button type="button" className={view === 'bars' ? 'active' : ''} aria-pressed={view === 'bars'} onClick={() => setView('bars')}>Bars</button></div></div>
     <div className={`pipeline-visualization-body${view === 'bars' ? ' is-bars' : ''}`}>
-      {view === 'pie' ? <div className="pipeline-pie-wrap"><svg className="pipeline-pie-3d" viewBox="0 0 160 132" role="img" aria-label={`3D pie chart showing pipeline share by stage: ${items.map((item) => `${item.label} ${((item.value / total) * 100).toFixed(1)} percent`).join(', ')}`}>
+      {view === 'pie' ? <div className="pipeline-pie-wrap"><svg className="pipeline-pie-3d" viewBox="0 0 160 132" role="img" aria-label={`3D pie chart showing deal value by status: ${items.map((item) => `${item.label} ${total ? ((item.value / total) * 100).toFixed(1) : 0} percent`).join(', ')}`}>
         <defs>{items.map((item, index) => <linearGradient key={item.label} id={`pipeline-stage-gradient-${index}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor={lighten(item.color)} /><stop offset="58%" stopColor={item.color} /><stop offset="100%" stopColor={darken(item.color)} /></linearGradient>)}</defs>
         {sides.map((side) => <path key={side.key} d={side.d} fill={side.color} />)}
         {items.map((item, index) => {
@@ -84,13 +84,13 @@ export default function PipelineDistributionChart({ items }: { items: PipelineDa
           const lx = rounded(centerX + radiusX * 0.57 * Math.cos((middle * Math.PI) / 180));
           const ly = rounded(centerY + radiusY * 0.58 * Math.sin((middle * Math.PI) / 180) - 1);
           cumulative += item.value;
-          return <g key={item.label}><path d={slicePath(start, sweep)} fill={`url(#pipeline-stage-gradient-${index})`} stroke="rgba(255,255,255,.9)" strokeWidth="1.7" /><text x={lx} y={ly} textAnchor="middle" dominantBaseline="central" className="pipeline-pie-percent">{((item.value / total) * 100).toFixed(0)}%</text></g>;
+          return <g key={item.label}><path d={slicePath(start, sweep)} fill={`url(#pipeline-stage-gradient-${index})`} stroke="rgba(255,255,255,.9)" strokeWidth="1.7" /><text x={lx} y={ly} textAnchor="middle" dominantBaseline="central" className="pipeline-pie-percent">{total ? ((item.value / total) * 100).toFixed(0) : 0}%</text></g>;
         })}
-      </svg><span className="pie-chart-caption">Share of total pipeline</span></div> : <div className="pipeline-bars-view" role="img" aria-label={`Bar chart of pipeline value by stage: ${items.map((item) => `${item.label} ${item.value.toLocaleString()}`).join(', ')}`}>
-        <div className="pipeline-bars-axis"><span>STAGE</span><div><i>$0</i><i>{`$${Math.round(maximum / 20000) * 10}k`}</i><i>{`$${Math.round(maximum / 1000)}k`}</i></div><span>VALUE</span></div>
-        {items.map((item) => <div className="pipeline-bar-row" key={item.label}><span>{item.label}<small>{((item.value / total) * 100).toFixed(1)}%</small></span><div className="pipeline-bar-track"><i style={{ width: `${maximum ? (item.value / maximum) * 100 : 0}%`, background: item.color }} /></div><b>{`$${(item.value / 1000).toFixed(1)}k`}</b></div>)}
+      </svg><span className="pie-chart-caption">Share of total deal value</span></div> : <div className="pipeline-bars-view" role="img" aria-label={`Bar chart of deal value by status: ${items.map((item) => `${item.label} ${item.value.toLocaleString()}`).join(', ')}`}>
+        <div className="pipeline-bars-axis"><span>STATUS</span><div><i>$0</i><i>{`$${Math.round(maximum / 20000) * 10}k`}</i><i>{`$${Math.round(maximum / 1000)}k`}</i></div><span>VALUE</span></div>
+        {items.map((item) => <div className="pipeline-bar-row" key={item.label}><span>{item.label}<small>{total ? ((item.value / total) * 100).toFixed(1) : 0}%</small></span><div className="pipeline-bar-track"><i style={{ width: `${maximum ? (item.value / maximum) * 100 : 0}%`, background: item.color }} /></div><b>{`$${(item.value / 1000).toFixed(1)}k`}</b></div>)}
       </div>}
-      <div className="pipeline-pie-legend">{items.map((item) => <div className="pipeline-pie-legend-row" key={item.label}><i style={{ backgroundColor: item.color }} /><span>{item.label}</span><b>{`$${(item.value / 1000).toFixed(1)}k`}</b><small>{((item.value / total) * 100).toFixed(1)}%</small></div>)}</div>
+      <div className="pipeline-pie-legend">{items.map((item) => <div className="pipeline-pie-legend-row" key={item.label}><i style={{ backgroundColor: item.color }} /><span>{item.label}</span><b>{`$${(item.value / 1000).toFixed(1)}k`}</b><small>{total ? ((item.value / total) * 100).toFixed(1) : 0}%</small></div>)}</div>
     </div>
   </div>;
 }

@@ -19,23 +19,25 @@ export default function ProfileMenu() {
   const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
-    const token = sessionStorage.getItem('myr.session');
     const storedUser = parseUser(sessionStorage.getItem('myr.user'));
-    if (!token) return;
-    setSignedIn(true);
     if (storedUser) setUser(storedUser);
     crmApiFetch('/auth/me')
       .then((response) => response.ok ? response.json() : null)
-      .then((payload) => { if (payload?.user) { setUser(payload.user); sessionStorage.setItem('myr.user', JSON.stringify(payload.user)); } })
+      .then((payload) => {
+        if (payload?.user) {
+          setSignedIn(true);
+          setUser(payload.user);
+          sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
+        } else {
+          setSignedIn(false);
+          sessionStorage.removeItem('myr.user');
+        }
+      })
       .catch(() => undefined);
   }, []);
 
   async function signOut() {
-    const token = sessionStorage.getItem('myr.session');
-    if (token) {
-      try { await crmApiFetch('/auth/logout', { method: 'POST' }); } catch { /* local sign-out still clears this browser session */ }
-    }
-    sessionStorage.removeItem('myr.session');
+    try { await crmApiFetch('/auth/logout', { method: 'POST' }); } catch { /* local sign-out still clears this browser session */ }
     sessionStorage.removeItem('myr.user');
     sessionStorage.removeItem('myr.organization');
     window.location.assign('/sign-in');

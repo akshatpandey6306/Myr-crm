@@ -1,49 +1,82 @@
 # Identity and Tenant Isolation Contract
 
-**Status: Implemented foundation; remaining policy decisions documented below**
+**Status: Implemented foundation; Activities & Tasks MVP contract adopted (2026-10-31)**
 
-This contract defines the shared foundation for authentication, organization membership, and tenant-owned CRM data. Developer 1 is proceeding with the mandatory PostgreSQL/Prisma stack while Developer 2 is unavailable. Remaining role-policy decisions are still open and must be reviewed before those permissions are enforced.
+This contract defines authentication, organization membership, and tenant-owned
+CRM data. The Owner-approved interim role policy is enforced for the MVP.
+Activities & Tasks follows the adopted contract in
+[`role-permission-proposal.md`](role-permission-proposal.md); other module
+contracts may still require review.
 
-## Proposed data model
+## Data model
 
-- `User` represents one authenticated person. Authentication-provider identities map to this user; provider credentials are not used as tenant identifiers.
+- `User` represents one authenticated person; organization roles belong to
+  memberships, not global users.
 - `Organization` is the tenant boundary.
-- `OrganizationMembership` joins a user to an organization and stores that user's organization-scoped role. A user may belong to multiple organizations.
-- A membership is unique per `(organizationId, userId)`. Organization creation and the creator's initial owner membership are committed atomically.
-- Every tenant-owned record, including leads, contacts, companies, deals, and pipelines, carries a non-null `organizationId`.
-
-The implementation uses PostgreSQL, Prisma ORM, UUID identifiers, password-based authentication, and organization-scoped fixed roles. Password-reset, verification, invitation, and role-administration flows are not part of this first persistence slice.
+- A membership is unique per `(organizationId, userId)`. Organization creation
+  and the creator's initial Owner membership are committed atomically.
+- Tenant-owned CRM records carry a non-null `organizationId`.
+- PostgreSQL/Prisma persist password hashes, one-use email-token hashes,
+  expiring invitation-token hashes, sessions, and shared rate-limit buckets.
+- A partial unique index enforces at most one active Owner per organization.
 
 ## Authentication and API boundary
 
-- The server derives `userId` from a verified authentication session. Request bodies, query parameters, and client state are never proof of identity.
-- Organization selection may be sent as an organization ID in the route or request context, but the server verifies the authenticated user's membership on every request.
-- Tenant-scoped queries and writes include the verified `organizationId`; a record ID alone is never sufficient authorization.
-- The initial identity API should expose the authenticated user and their organizations, and allow an authenticated user to create an organization. Creation also creates the caller's owner membership in the same transaction.
-- Responses must not expose credentials, session secrets, or another organization's membership data.
+- The server derives `userId` from a verified server-side session. Request
+  bodies, query parameters, and client state are never proof of identity.
+- Browser authentication uses a seven-day HttpOnly, SameSite=Lax session
+  cookie, Secure in production. Only the SHA-256 digest is persisted; the raw
+  session value is not returned in JSON or browser storage.
+- Password reset and email verification use expiring, single-use tokens whose
+  hashes are stored. Password resets revoke every active session for the user.
+- Unsafe requests validate the configured `WEB_ORIGIN`; production
+  cookie-authenticated mutations require the expected Origin.
+- Authentication and invitation endpoints use PostgreSQL-backed rate limits.
+- Production email uses SMTP. Development-only one-time links are logged
+  locally when SMTP is not configured.
+- Organization selection may be sent as an ID in the request context, but the
+  API verifies active membership on every protected request.
+- Tenant-scoped queries and writes include the verified organization; a record
+  ID alone is never sufficient authorization.
+- Responses do not expose credentials, session secrets, or another
+  organization's membership data.
 
-Current routes are `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`, `GET /api/v1/organizations`, and `POST /api/v1/organizations`. Bearer tokens are random 256-bit values; only their SHA-256 digests are stored, and sessions expire after seven days. Organization creation and the initial owner membership are created in a single nested Prisma transaction.
+Authentication routes include signup/login/logout/me, password-reset
+request/confirm, and email-verification resend/confirm. Owner/Admin member
+management, invitations, and assignee directory routes are documented in
+[`../../apps/api/README.md`](../../apps/api/README.md).
 
 ## Tenant-isolation requirements
 
-- Enforce membership and role checks in server-side authorization code, not only in the UI.
-- Apply organization scope to reads, updates, deletes, relationship lookups, and bulk operations.
-- Validate that related records belong to the same organization before linking them.
-- Derive the organization scope from the verified membership context; do not trust a client-supplied `organizationId` as authorization.
-- Add database constraints and indexes for tenant-scoped uniqueness where applicable, for example `(organizationId, email)` when CRM contact emails are unique within an organization.
-- Use a consistent not-found/forbidden policy for inaccessible tenant records and test it across API routes.
+- Enforce membership and role checks in server-side authorization code, not
+  only in the UI.
+- Apply organization scope to reads, updates, archives, relationship lookups,
+  search, pagination, and bulk operations.
+- Validate that related records and assignment targets belong to the same
+  organization before linking them.
+- Derive organization scope from the verified membership context; a
+  client-supplied `organizationId` is only a selector.
+- Add database constraints and indexes for tenant-scoped uniqueness where
+  applicable.
+- Use consistent not-found/forbidden handling for inaccessible tenant records
+  and test it across API routes.
 
-## Required tests for the first implementation slice
+## Required tests
 
-- Unauthenticated requests cannot read or mutate identity or organization data.
-- A user can access organizations where they have an active membership and cannot access another tenant's data by substituting its ID.
-- Organization creation creates the organization and owner membership atomically; failure leaves neither partially created.
+- Unauthenticated requests cannot read or mutate protected identity or
+  organization data.
+- A user can access organizations where they have an active membership and
+  cannot access another tenant by substituting its ID.
+- Organization creation creates the organization and Owner membership
+  atomically.
 - Revoked or removed membership blocks subsequent requests.
-- Tenant-scoped relationship validation rejects linking records from different organizations.
+- Tenant-scoped relationship validation rejects cross-organization links.
+- Session cookies are HttpOnly and never exposed in JSON; cross-origin unsafe
+  requests are rejected.
+- Password reset consumes a token once and revokes existing sessions.
+- Role administration preserves the active-Owner invariant.
 
-## Decisions needed before implementation
+## Remaining review items
 
-1. Review role semantics with Developer 2 when available, especially whether representatives can view only assigned records.
-2. Decide on secure-cookie/refresh-token lifecycle and CSRF strategy before replacing the current browser bearer-token flow.
-3. Add login/reset rate limits, password reset, email verification policy, and audit events.
-4. Migrate remaining tenant-owned CRM models (companies, pipelines, deals, and activities) to PostgreSQL with composite tenant constraints and isolation tests.
+- Select a production SMTP provider and configure credentials/TLS; delivery is
+  synchronous and currently has no retry queue.

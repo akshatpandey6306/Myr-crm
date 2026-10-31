@@ -1,11 +1,9 @@
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '/api/v1').replace(/\/+$/, '');
 
-/** Add the current bearer token and active tenant to an API request. */
+/** Add the active tenant to an API request; authentication uses the HttpOnly session cookie. */
 export function crmApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   if (typeof window !== 'undefined') {
-    const token = window.sessionStorage.getItem('myr.session');
-    if (token) headers.set('Authorization', `Bearer ${token}`);
     const savedOrganization = window.sessionStorage.getItem('myr.organization');
     if (savedOrganization) {
       try {
@@ -15,5 +13,5 @@ export function crmApiFetch(path: string, init: RequestInit = {}): Promise<Respo
     }
   }
   const route = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${API_BASE_URL}${route}`, { ...init, headers });
+  return fetch(`${API_BASE_URL}${route}`, { ...init, headers, credentials: 'same-origin' });
 }
