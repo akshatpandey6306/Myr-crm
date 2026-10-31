@@ -21,9 +21,10 @@ export default function WorkspaceSwitcher() {
 
   useEffect(() => {
     const token = sessionStorage.getItem('myr.session');
+    const storedUser = sessionStorage.getItem('myr.user');
     const saved = parseOrganization(sessionStorage.getItem('myr.organization'));
     if (saved) setActive(saved);
-    if (!token) return;
+    if (!token && !storedUser) return;
     setSignedIn(true);
     crmApiFetch('/auth/me')
       .then((response) => response.ok ? response.json() : null)
@@ -38,5 +39,5 @@ export default function WorkspaceSwitcher() {
       }).catch(() => undefined);
   }, []);
 
-  return <div className="workspace-control"><button className="workspace-switcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span className="workspace-avatar">{active.name.slice(0, 1).toUpperCase()}</span><span className="workspace-copy"><strong>{active.name}</strong><small>{signedIn ? 'Your workspace' : 'Preview workspace'}</small></span><span className="switcher-chevron">⌄</span></button>{open && <div className="workspace-menu" role="menu"><span className="workspace-menu-title">YOUR WORKSPACES</span>{organizations.length ? organizations.map((organization) => <button type="button" role="menuitem" key={organization.id} className={organization.id === active.id ? 'selected' : ''} onClick={() => { setActive(organization); sessionStorage.setItem('myr.organization', JSON.stringify(organization)); setOpen(false); }}><span>{organization.name.slice(0, 1).toUpperCase()}</span>{organization.name}{organization.id === active.id && <b>✓</b>}</button>) : <p>{signedIn ? 'No workspaces are available for this account.' : 'Sign in to see your workspaces.'}</p>}{!signedIn && <a href="/sign-in">Sign in to your account →</a>}</div>}</div>;
+  return <div className="workspace-control"><button className="workspace-switcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span className="workspace-avatar">{active.name.slice(0, 1).toUpperCase()}</span><span className="workspace-copy"><strong>{active.name}</strong><small>{signedIn ? 'Your workspace' : 'Preview workspace'}</small></span><span className="switcher-chevron">⌄</span></button>{open && <div className="workspace-menu" role="menu"><span className="workspace-menu-title">YOUR WORKSPACES</span>{organizations.length ? organizations.map((organization) => <button type="button" role="menuitem" key={organization.id} className={organization.id === active.id ? 'selected' : ''} onClick={() => { if (organization.id !== active.id) { setActive(organization); sessionStorage.setItem('myr.organization', JSON.stringify(organization)); window.location.assign(window.location.pathname); } setOpen(false); }}><span>{organization.name.slice(0, 1).toUpperCase()}</span>{organization.name}{organization.id === active.id && <b>✓</b>}</button>) : <p>{signedIn ? 'No workspaces are available for this account.' : 'Sign in to see your workspaces.'}</p>}{!signedIn && <a href="/sign-in">Sign in to your account →</a>}</div>}</div>;
 }

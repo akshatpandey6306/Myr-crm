@@ -1,8 +1,11 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
 import { randomBytes, scryptSync } from "node:crypto";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
+dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? "" });
 const prisma = new PrismaClient({ adapter });
 
@@ -14,23 +17,74 @@ function hashPassword(password: string): string {
 
 async function main() {
   const email = "maya@studionorth.co";
+  const subscriptionStartedAt = new Date();
+  const subscriptionEndsAt = new Date(subscriptionStartedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.upsert({
       where: { email },
       update: {},
       create: { id: "00000000-0000-4000-8000-000000000001", email, name: "Maya Chen", passwordHash: hashPassword("password123") },
     });
+    await tx.user.upsert({
+      where: { email: "admin@myrcrm.local" },
+      update: {},
+      create: {
+        email: "admin@myrcrm.local",
+        name: "Myr Test Admin",
+        passwordHash: hashPassword("MyrAdmin123!"),
+      },
+    });
     await tx.organization.upsert({
       where: { id: "11111111-1111-4111-8111-111111111111" },
-      update: {},
-      create: { id: "11111111-1111-4111-8111-111111111111", name: "Studio North" },
+      update: {
+        status: "ACTIVE",
+        subscriptionPlan: "growth",
+        subscriptionStatus: "ACTIVE",
+        subscriptionStartedAt,
+        subscriptionEndsAt,
+        billingProvider: "test",
+      },
+      create: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Studio North",
+        subscriptionPlan: "growth",
+        subscriptionStatus: "ACTIVE",
+        subscriptionStartedAt,
+        subscriptionEndsAt,
+        billingProvider: "test",
+      },
     });
     await tx.membership.upsert({
       where: { organizationId_userId: { organizationId: "11111111-1111-4111-8111-111111111111", userId: user.id } },
       update: {},
       create: { userId: user.id, organizationId: "11111111-1111-4111-8111-111111111111", role: "OWNER" },
     });
-    const organizationId = "11111111-1111-4111-8111-111111111111";
+    const pendingUser = await tx.user.upsert({
+      where: { email: "pending@myrcrm.local" },
+      update: {},
+      create: {
+        id: "00000000-0000-4000-8000-000000000002",
+        email: "pending@myrcrm.local",
+        name: "Pending Demo",
+        passwordHash: hashPassword("PendingDemo123!"),
+      },
+    });
+    const pendingOrganizationId = "11111111-1111-4111-8111-111111111112";
+    await tx.organization.upsert({
+      where: { id: pendingOrganizationId },
+      update: {},
+      create: { id: pendingOrganizationId, name: "Pending Demo Workspace" },
+    });
+    await tx.membership.upsert({
+      where: { organizationId_userId: { organizationId: pendingOrganizationId, userId: pendingUser.id } },
+      update: {},
+      create: { userId: pendingUser.id, organizationId: pendingOrganizationId, role: "OWNER" },
+    });
+        const expiredUser = await tx.user.upsert({ where: { email: "expired@myrcrm.local" }, update: {}, create: { id: "00000000-0000-4000-8000-000000000003", email: "expired@myrcrm.local", name: "Expired Demo", passwordHash: hashPassword("ExpiredDemo123!") } });
+    const expiredOrgId = "11111111-1111-4111-8111-111111111113";
+    await tx.organization.upsert({ where: { id: expiredOrgId }, update: { subscriptionStatus: "EXPIRED", subscriptionEndsAt: new Date(Date.now() - 24*60*60*1000) }, create: { id: expiredOrgId, name: "Expired Demo Workspace", subscriptionStatus: "EXPIRED", subscriptionPlan: "starter", subscriptionStartedAt: new Date(Date.now()-3*24*60*60*1000), subscriptionEndsAt: new Date(Date.now()-24*60*60*1000), billingProvider: "test" } });
+    await tx.membership.upsert({ where: { organizationId_userId: { organizationId: expiredOrgId, userId: expiredUser.id } }, update: {}, create: { userId: expiredUser.id, organizationId: expiredOrgId, role: "OWNER" } });
+const organizationId = "11111111-1111-4111-8111-111111111111";
     const demoLeads = [
       { id: "22222222-2222-4222-8222-222222222201", name: "Olivia Rhye", company: "Northstar Labs", source: "WEBSITE" as const, status: "QUALIFIED" as const },
       { id: "22222222-2222-4222-8222-222222222202", name: "Phoenix Baker", company: "Forma Studio", source: "REFERRAL" as const, status: "CONTACTED" as const },

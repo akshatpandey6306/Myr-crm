@@ -36,7 +36,10 @@ The web app provides `/sign-in` and `/sign-up`. The API exposes `POST
 and `GET /api/v1/auth/me`. Signup creates an owner membership for the new
 workspace and persists the user, organization, owner membership, and session in
 PostgreSQL. Sessions store only a SHA-256 token digest and expire after seven
-days. `GET /api/v1/organizations` lists the caller's active memberships and
+days. Browser sign-in sets an HttpOnly, SameSite=Lax session cookie; bearer
+tokens remain supported for existing API clients. Cookie-authenticated
+mutations require the configured `WEB_ORIGIN`. `GET /api/v1/organizations`
+lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as owner.
 Organization IDs in `x-organization-id` select a tenant only after the API
 verifies the caller's active membership. The Next.js app proxies browser
@@ -45,11 +48,59 @@ Set `API_PROXY_URL` on the web server if the API is not at
 `http://localhost:4000/api/v1`. Set `WEB_ORIGIN` to the web app origin when it
 differs from `http://localhost:3000`.
 
+New workspaces start with a pending subscription and cannot access CRM data
+until a plan is active. Set `BILLING_TEST_MODE=true` for local development to
+let workspace owners start one no-charge, 2-day test trial. This setting is
+ignored in production. The internal control panel lists each workspace owner
+and subscription, and platform admins can activate a manual 30-day plan, expire
+a plan, or suspend workspace access. Razorpay checkout and webhooks are not
+connected yet; configure and verify the Razorpay integration before accepting
+real payments.
+
 `GET /api/v1/organizations/members` lists active members of the selected,
 verified organization. It returns each member's `id`, `name`, and organization
 `role`, without exposing email addresses. This endpoint provides member
 selection data; individual modules must still enforce their own assignment
 permissions and verify assignment targets belong to the active organization.
+
+## Activities
+
+ and  manage tenant-scoped activities. Fields: type (task, call, meeting, note, email), title, description, status (open, in_progress, completed, cancelled), priority (low, normal, high), dueAt, assignedToUserId, relatedToType, relatedToId. Related records and assignment targets are validated against the active organization. completedAt is set when status becomes completed and cleared when reopened.
+
+## Internal control panel
+
+Set `PLATFORM_ADMIN_EMAILS` to a comma-separated allowlist of internal staff
+emails on the API server. The authenticated account must be active and match
+this allowlist to access `/control-panel`. The web UI is at `/control-panel`;
+it lists workspace owners, member counts, subscription plans, and end dates.
+Internal staff can manually activate a 30-day plan, expire a subscription, and
+suspend or restore workspace access. A suspended organization is blocked by
+the API organization guard, including for members with otherwise valid
+sessions. Keep the allowlist restricted to trusted internal accounts.
+
+An expired workspace can be reactivated from the control panel with any
+available plan. Selecting a plan and activating it starts a new manual
+30-day subscription; changing an active workspace's plan also starts a new
+30-day period. These manual changes do not charge customers.
+
+For local testing only, `npm run db:seed` creates
+`admin@myrcrm.local` with password `MyrAdmin123!`. Add
+`PLATFORM_ADMIN_EMAILS=admin@myrcrm.local` to your local `.env`, restart the
+API, then sign in and open `/control-panel`. This seeded credential is public
+test data: never use it outside a local development database or allowlist it
+in a shared or production environment.
+
+The billing API offers Starter, Growth, and Business plan definitions and a
+local-only 2-day test trial. Trial activation grants CRM access without
+collecting payment. Razorpay checkout, signature verification, and webhooks
+still need to be implemented and tested before real payments can activate
+subscriptions.
+
+`GET /api/v1/dashboard/summary` returns organization-scoped lead and deal
+metrics, open deal value by pipeline stage, and the five most recently created
+open deals. Sales Representatives see only records they own. Activity history
+and upcoming tasks are provided by the Activities module and are not included
+in this response.
 
 The seed account is `maya@studionorth.co` with password `password123`; it and
 the sample leads/contacts are for local development only. Leads and contacts
@@ -83,9 +134,10 @@ and stage membership in the active organization. Deletion archives a deal.
 
 ## Leads preview
 
-Leads are scoped to the authenticated user's active organization. Requests use
-the bearer token established by sign-in; `x-organization-id` may select an
-organization only when the user is a member of it. The list endpoint accepts
+Leads are scoped to the authenticated user's active organization. Browser
+requests use the HttpOnly session cookie; bearer tokens remain supported, and
+`x-organization-id` may select an organization only when the user is a member
+of it. The list endpoint accepts
 `q`, `source`, `status`, `page`, `pageSize`, `sortBy`, and `sortOrder`. Create,
 update, and archive use
 `POST /api/v1/leads`, `PATCH /api/v1/leads/:id`, and

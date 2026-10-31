@@ -26,6 +26,22 @@ Current routes are `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`, `POST 
 
 `GET /api/v1/organizations/members` returns active members of the verified organization with their IDs, names, and roles. It provides selection data only; modules remain responsible for enforcing assignment permissions and validating assignment targets.
 
+Browser authentication uses an HttpOnly, SameSite=Lax cookie with a seven-day lifetime. Cookie-authenticated mutations require the configured web origin; bearer tokens remain supported for compatible clients. Sign-out revokes the active session and clears the browser cookie. Login throttling, password reset, and email verification remain outstanding. The selected throttling direction is persistent PostgreSQL-backed state, avoiding a new Redis dependency; a trusted client-IP source must be established at the ingress before enabling per-IP limits.
+
+## Internal workspace access control
+
+Organizations have an `active` or `suspended` status. The internal control
+panel is available only to active users whose normalized email appears in the
+API server's `PLATFORM_ADMIN_EMAILS` allowlist. The API enforces that check on
+every control-panel route; a missing or empty allowlist denies access.
+Suspending an organization blocks its members from tenant-protected CRM routes
+through the organization guard. Restoring it re-enables access without changing
+membership roles or user accounts.
+
+Subscription plans, payment checkout, payment webhooks, and payment-verified
+workspace activation are not part of this phase. Do not treat workspace status
+as evidence that a subscription was paid.
+
 ## Tenant-isolation requirements
 
 - Enforce membership and role checks in server-side authorization code, not only in the UI.
@@ -46,6 +62,5 @@ Current routes are `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`, `POST 
 ## Decisions needed before implementation
 
 1. Review role semantics with Developer 2 when available, especially whether representatives can view only assigned records.
-2. Decide on secure-cookie/refresh-token lifecycle and CSRF strategy before replacing the current browser bearer-token flow.
-3. Add login/reset rate limits, password reset, email verification policy, and audit events.
-4. Migrate remaining tenant-owned CRM models (companies, pipelines, deals, and activities) to PostgreSQL with composite tenant constraints and isolation tests.
+2. Implement PostgreSQL-backed login throttling and establish a trusted ingress client-IP source. Password reset and email verification remain deferred until an email provider is configured; audit events also remain outstanding.
+3. Coordinate Activities API schema, permissions, and persistence with Developer 2 before adding that module's tenant-owned models.

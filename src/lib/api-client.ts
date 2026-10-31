@@ -15,5 +15,5 @@ export function crmApiFetch(path: string, init: RequestInit = {}): Promise<Respo
     }
   }
   const route = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${API_BASE_URL}${route}`, { ...init, headers });
+  return fetch(`${API_BASE_URL}${route}`, { ...init, credentials: init.credentials ?? 'same-origin', headers });
 }

@@ -1,3 +1,22 @@
+enum OrganizationStatus {
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+
+  @@map("organization_status")
+}
+
+
+enum SubscriptionStatus {
+  PENDING   @map("pending")
+  TRIAL     @map("trial")
+  ACTIVE    @map("active")
+  EXPIRED   @map("expired")
+  CANCELLED @map("cancelled")
+
+  @@map("subscription_status")
+}
+
+
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -63,26 +82,41 @@ model User {
   email        String       @unique @db.VarChar(254)
   name         String       @db.VarChar(120)
   passwordHash String       @map("password_hash") @db.VarChar(255)
-  status       UserStatus   @default(ACTIVE)
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  status                     UserStatus   @default(ACTIVE)
+  emailVerifiedAt            DateTime?    @map("email_verified_at") @db.Timestamptz(3)
+  emailVerificationTokenHash String?     @map("email_verification_token_hash") @db.VarChar(64)
+  emailVerificationExpiresAt DateTime?    @map("email_verification_expires_at") @db.Timestamptz(3)
+  passwordResetTokenHash     String?     @map("password_reset_token_hash") @db.VarChar(64)
+  passwordResetExpiresAt    DateTime?    @map("password_reset_expires_at") @db.Timestamptz(3)
+  createdAt                  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships  Membership[]
-  sessions     Session[]
+  memberships          Membership[]
+  sessions             Session[]
+  createdInvitations    Invitation[] @relation("InvitationCreator")
 
   @@map("users")
 }
 
 model Organization {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String       @db.VarChar(160)
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  id          String             @id @default(uuid()) @db.Uuid
+  name        String             @db.VarChar(160)
+  status      OrganizationStatus @default(ACTIVE)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships Membership[]
+  memberships            Membership[]
+  invitations            Invitation[]
+  subscriptionPlan       String?            @map("subscription_plan") @db.VarChar(32)
+  subscriptionStatus     SubscriptionStatus @default(PENDING) @map("subscription_status")
+  subscriptionStartedAt  DateTime?           @map("subscription_started_at") @db.Timestamptz(3)
+  subscriptionEndsAt     DateTime?           @map("subscription_ends_at") @db.Timestamptz(3)
+  billingProvider        String?             @map("billing_provider") @db.VarChar(32)
+  razorpaySubscriptionId String?             @map("razorpay_subscription_id") @db.VarChar(128)
   leads       Lead[]
   contacts    Contact[]
   companies   Company[]
   pipelines   Pipeline[]
   deals       Deal[]
+  activities  Activity[]
 
   @@map("organizations")
 }
@@ -100,8 +134,10 @@ model Membership {
   leadsCreated   Lead[]           @relation("LeadCreator")
   contactsOwned  Contact[]        @relation("ContactOwner")
   contactsCreated Contact[]       @relation("ContactCreator")
-  companiesOwned Company[]        @relation("CompanyOwner")
+  activitiesCreated Activity[]     @relation("ActivityCreator")
+  activitiesAssigned Activity[]    @relation("ActivityAssignee")
   companiesCreated Company[]      @relation("CompanyCreator")
+  companiesOwned Company[]        @relation("CompanyOwner")
   dealsOwned       Deal[]          @relation("DealOwner")
   dealsCreated     Deal[]          @relation("DealCreator")
 
@@ -124,6 +160,25 @@ model Session {
   @@index([expiresAt])
   @@map("sessions")
 }
+model Invitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  email           String           @db.VarChar(254)
+  role            MembershipRole   @default(SALES_REP)
+  tokenHash       String           @unique @map("token_hash") @db.Char(64)
+  expiresAt       DateTime         @map("expires_at") @db.Timestamptz(3)
+  acceptedAt      DateTime?        @map("accepted_at") @db.Timestamptz(3)
+  createdByUserId String           @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, email])
+  @@index([expiresAt])
+  @@map("invitations")
+}
+
+
 
 model Lead {
   id             String      @id @default(uuid()) @db.Uuid
@@ -254,4 +309,74 @@ model Deal {
   @@index([organizationId, pipelineId, stageId, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
   @@map("deals")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  actorEmail     String?  @map("actor_email") @db.VarChar(254)
+  action         String   @db.VarChar(120)
+  targetType     String   @map("target_type") @db.VarChar(80)
+  targetId       String?  @map("target_id") @db.VarChar(128)
+  reason         String?  @db.VarChar(500)
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@map("audit_logs")
+}
+
+
+enum ActivityType {
+  TASK    @map("task")
+  CALL    @map("call")
+  MEETING @map("meeting")
+  NOTE    @map("note")
+  EMAIL   @map("email")
+
+  @@map("activity_type")
+}
+
+enum ActivityStatus {
+  OPEN        @map("open")
+  IN_PROGRESS @map("in_progress")
+  COMPLETED   @map("completed")
+  CANCELLED   @map("cancelled")
+
+  @@map("activity_status")
+}
+
+enum ActivityPriority {
+  LOW    @map("low")
+  NORMAL @map("normal")
+  HIGH   @map("high")
+
+  @@map("activity_priority")
+}
+
+model Activity {
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @map("organization_id") @db.Uuid
+  type            ActivityType      @default(TASK)
+  title           String            @db.VarChar(160)
+  description     String?           @db.Text
+  status          ActivityStatus    @default(OPEN)
+  priority        ActivityPriority  @default(NORMAL)
+  dueAt           DateTime?         @map("due_at") @db.Timestamptz(3)
+  completedAt     DateTime?         @map("completed_at") @db.Timestamptz(3)
+  assignedToUserId String?          @map("assigned_to_user_id") @db.Uuid
+  relatedToType   String?           @map("related_to_type") @db.VarChar(32)
+  relatedToId     String?           @map("related_to_id") @db.Uuid
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator         Membership        @relation("ActivityCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  assignee        Membership?       @relation("ActivityAssignee", fields: [organizationId, assignedToUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, assignedToUserId, status])
+  @@map("activities")
 }

@@ -21,13 +21,15 @@ describe("AuthController signup", () => {
       },
     };
     const controller = new AuthController(prisma as never);
+    let setCookie = "";
+    const httpResponse = { setHeader: (name: string, value: string) => { if (name === "Set-Cookie") setCookie = value; } };
 
-    const response = await controller.signup({
+    const signupResponse = await controller.signup({
       name: "Maya Chen",
       email: "Maya@Example.com",
       password: "password123",
       organizationName: "Northwind",
-    });
+    }, httpResponse as never);
 
     const data = createArgs?.data as {
       memberships: {
@@ -60,8 +62,9 @@ describe("AuthController signup", () => {
     assert.match(data.passwordHash, /^scrypt\$/);
     assert.equal(data.sessions.create.tokenHash.length, 64);
     assert.ok(data.sessions.create.expiresAt.getTime() > Date.now());
-    assert.equal(response.organization.id, "org-a");
-    assert.equal(response.token.length, 43);
-    assert.notEqual(data.sessions.create.tokenHash, response.token);
+    assert.equal(signupResponse.organization.id, "org-a");
+    assert.equal(signupResponse.token.length, 43);
+    assert.notEqual(data.sessions.create.tokenHash, signupResponse.token);
+    assert.match(setCookie, /^myr\.session=[A-Za-z0-9_-]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
   });
 });

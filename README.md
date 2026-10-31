@@ -98,11 +98,14 @@ The repository is in an early MVP foundation stage, not production-ready.
 
 - The web UI has dashboard and sample module pages plus sign-in/sign-up forms.
 - The NestJS API has health, authentication, organizations, organization-member
-  listing, leads, contacts, companies, deals, and pipeline routes.
+  listing, internal control-panel, billing/subscription, dashboard summary, leads, contacts,
+  companies, deals, and pipeline routes.
 - PostgreSQL/Prisma persistence currently covers users, organizations,
-  memberships, and expiring sessions. Signup creates the initial Owner
-  membership atomically. Organization selection is checked against active
-  membership on protected API requests.
+  memberships, subscriptions, and expiring sessions. Signup creates the initial
+  Owner membership and an unlicensed workspace atomically. Subscription status
+  and expiry are checked along with organization membership on protected API
+  requests. Local test mode offers one no-charge 2-day trial; Razorpay checkout
+  is not connected yet.
 - Leads, contacts, companies, deals, and pipelines persist in PostgreSQL.
   Their queries, updates, and archives are organization-scoped; membership and
   composite foreign keys prevent cross-organization owner/creator and related
@@ -110,10 +113,27 @@ The repository is in an early MVP foundation stage, not production-ready.
   support basic management of names and stages. The Companies and Deals
   screens use the API and are responsive. Activities still have no API or
   durable persistence.
-- Password-reset, email-verification, invitation, rate-limit, secure-cookie or
-  refresh-token, and full permission-administration flows remain outstanding.
+- The dashboard metrics, pipeline distribution, and recent open deals use a
+  tenant-scoped API summary. Recent activity and upcoming tasks remain
+  placeholders for the Activities module.
+- Browser authentication now uses an HttpOnly, SameSite=Lax session cookie while
+  bearer tokens remain supported for API clients. Password reset,
+  email-verification, invitation, rate-limiting, refresh-token, and full
+  permission-administration flows remain outstanding.
 - Organization-specific role policy and the shared Developer 2 contracts still
   need review when that developer is available.
+- Internal platform administrators can view customer workspaces and suspend or
+  restore CRM access, review onboarding owners and subscription dates, and
+  manually activate or expire plans. Configure `PLATFORM_ADMIN_EMAILS` in the
+  API environment. The local seed creates `admin@myrcrm.local` /
+  `MyrAdmin123!` for testing only; never use or allowlist this account outside
+  a local development database.
+- Workspaces without an active subscription are redirected to plan selection,
+  and subscription expiry is enforced by protected API routes. Local
+  `BILLING_TEST_MODE=true` allows one no-charge 2-day test trial, with a
+  header expiry warning during its final day. Razorpay checkout, verification, and
+  webhooks are not connected, so the displayed plan prices are not being
+  charged.
 
 ## Change log
 
@@ -150,6 +170,37 @@ changed, checks actually run, and any important remaining limitation.
 - **2026-10-29:** Added a verified-organization endpoint for listing active
   members by ID, name, and role, without exposing email addresses. API docs and
   unit tests cover tenant scoping and required organization context.
+- **2026-10-29:** Added a tenant-scoped dashboard summary for lead/deal metrics,
+  open deal values by stage, and recent open deals. Replaced demo dashboard
+  CRM records with API data and made unimplemented Activities sections explicit
+  placeholders. Hardened the API error filter to avoid returning internal
+  server exception details. API tests, typechecks, and frontend/API builds pass.
+- **2026-10-29:** Added HttpOnly, SameSite=Lax browser session cookies on
+  signup/login and cookie-based authentication/logout while retaining bearer
+  token compatibility for other clients.
+- **2026-10-29:** Fixed Deals UI error reporting for non-JSON API/proxy failures
+  and confirmed pipeline, company, deals, dashboard, and member API requests
+  through the same-origin proxy with local credentials.
+- **2026-10-29:** Added an internal workspace control panel, a server-side
+  allowlist guard, and organization suspension enforced on protected CRM API
+  requests. Added subscription plan selection, server-side access/expiry
+  enforcement, a local test trial, admin plan controls, and an expiry warning.
+  Razorpay checkout and payment-verified activation remain pending.
+- **2026-10-29:** Added a local-only seeded platform admin account for testing.
+  Provision it with `npm run db:seed` and add its email to the local
+  `PLATFORM_ADMIN_EMAILS` setting.
+- **2026-10-29:** Made expired workspaces explicitly reactivatable on a
+  selected plan and refreshed the admin console with workspace metrics,
+  search, status filters, clearer renewal actions, and responsive styling.
+  Frontend typecheck and all 53 API tests passed.
+- **2026-10-29:** Shortened the local test trial to two days, moved the expiry
+  warning to the final day, and clarified that admin plan controls apply to
+  customer workspaces. Replaced the admin console's misleading CRM return link
+  with sign-out. Frontend typecheck and 12 focused billing/admin tests passed.
+
+- **2026-10-30:** Enhanced the internal control panel with per-workspace member viewing, plan cancellation, refresh, confirmation prompts, and more resilient API error handling. API and web typechecks and builds pass.
+- **2026-10-30:** Added tenant-scoped activities API (list/create/read/update/delete), validation of related records and assignment targets, completedAt lifecycle handling, and API unit coverage.
+- **2026-10-30:** Added a platform audit log model, service, admin-only read endpoint, and audit recording for workspace onboarding, suspension/restoration, and subscription changes.
 
 ## Next session
 

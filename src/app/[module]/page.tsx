@@ -13,6 +13,7 @@ import NightingaleChart from '../components/NightingaleChart';
 import RadarStageChart from '../components/RadarStageChart';
 import type { DistributionDatum } from '../components/chart-types';
 import MobileNavigation from '../components/MobileNavigation';
+import { SubscriptionExpiryBanner, WorkspaceAccessGate } from '../components/WorkspaceAccessGate';
 import LeadsManager from '../features/leads/LeadsManager';
 import ContactsManager from '../features/contacts/ContactsManager';
 import CompaniesManager from '../features/companies/CompaniesManager';
@@ -97,6 +98,7 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   }
 
   return (
+    <WorkspaceAccessGate>
     <main className="app-shell">
       <aside className="sidebar">
         <Link className="brand" href="/" aria-label="Myr CRM home"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
@@ -109,7 +111,7 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
       </aside>
 
       <section className="main-panel">
-        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
+        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><SubscriptionExpiryBanner /><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
         <div className="content module-content">
           {data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
           <section className="welcome-row module-welcome"><div><p className="date-label">WORKSPACE / {data.title.toUpperCase()}</p><h1>{data.title}</h1><p className="welcome-copy">{data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
@@ -127,5 +129,6 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
         {showCreate && <CreateRecordDialog title={singular} columns={data.columns} onClose={() => setShowCreate(false)} onCreate={addRecord} />}
       </section>
     </main>
+    </WorkspaceAccessGate>
   );
 }

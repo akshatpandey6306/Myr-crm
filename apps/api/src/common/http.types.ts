@@ -2,6 +2,7 @@ export type HttpRequest = {
   headers: Record<string, string | string[] | undefined>;
   params: Record<string, string | undefined>;
   path: string;
+  method?: string;
   userId?: string;
   token?: string;
   orgId?: string;
@@ -11,4 +12,5 @@ export type HttpRequest = {
 export type HttpResponse = {
   status(code: number): HttpResponse;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
 };

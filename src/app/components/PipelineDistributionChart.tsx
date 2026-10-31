@@ -74,7 +74,7 @@ export default function PipelineDistributionChart({ items }: { items: PipelineDa
   return <div className="pipeline-visualization">
     <div className="pipeline-visualization-heading"><span>STAGE DISTRIBUTION</span><div className="view-toggle" aria-label="Pipeline chart style"><button type="button" className={view === 'pie' ? 'active' : ''} aria-pressed={view === 'pie'} onClick={() => setView('pie')}>3D pie</button><button type="button" className={view === 'bars' ? 'active' : ''} aria-pressed={view === 'bars'} onClick={() => setView('bars')}>Bars</button></div></div>
     <div className={`pipeline-visualization-body${view === 'bars' ? ' is-bars' : ''}`}>
-      {view === 'pie' ? <div className="pipeline-pie-wrap"><svg className="pipeline-pie-3d" viewBox="0 0 160 132" role="img" aria-label={`3D pie chart showing pipeline share by stage: ${items.map((item) => `${item.label} ${((item.value / total) * 100).toFixed(1)} percent`).join(', ')}`}>
+      {total === 0 ? <p className="muted-copy">No open pipeline value to display.</p> : view === 'pie' ? <div className="pipeline-pie-wrap"><svg className="pipeline-pie-3d" viewBox="0 0 160 132" role="img" aria-label={`3D pie chart showing pipeline share by stage: ${items.map((item) => `${item.label} ${((item.value / total) * 100).toFixed(1)} percent`).join(', ')}`}>
         <defs>{items.map((item, index) => <linearGradient key={item.label} id={`pipeline-stage-gradient-${index}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor={lighten(item.color)} /><stop offset="58%" stopColor={item.color} /><stop offset="100%" stopColor={darken(item.color)} /></linearGradient>)}</defs>
         {sides.map((side) => <path key={side.key} d={side.d} fill={side.color} />)}
         {items.map((item, index) => {
