@@ -17,8 +17,8 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.upsert({
       where: { email },
-      update: {},
-      create: { id: "00000000-0000-4000-8000-000000000001", email, name: "Maya Chen", passwordHash: hashPassword("password123") },
+      update: { emailVerifiedAt: new Date() },
+      create: { id: "00000000-0000-4000-8000-000000000001", email, name: "Maya Chen", passwordHash: hashPassword("password123"), emailVerifiedAt: new Date() },
     });
     await tx.organization.upsert({
       where: { id: "11111111-1111-4111-8111-111111111111" },

@@ -17,11 +17,18 @@ import LeadsManager from '../features/leads/LeadsManager';
 import ContactsManager from '../features/contacts/ContactsManager';
 import CompaniesManager from '../features/companies/CompaniesManager';
 import DealsManager from '../features/deals/DealsManager';
+import AutomationsManager from '../features/automation/AutomationsManager';
+import EmailsManager from '../features/email/EmailsManager';
+import ReportsManager from '../features/reports/ReportsManager';
+import AuditLogsManager from '../features/audit-logs/AuditLogsManager';
+import SettingsManager from '../features/settings/SettingsManager';
+import MembersManager from '../features/team/MembersManager';
 
 const navigation = [
   ['Overview', '/'], ['Leads', '/leads'], ['Contacts', '/contacts'],
   ['Companies', '/companies'], ['Deals', '/deals'], ['Activities', '/activities'],
-  ['Automation', '/automation'], ['Reports', '/reports'],
+  ['Automation', '/automation'], ['Email', '/email'], ['Reports', '/reports'],
+  ['Audit Logs', '/audit-logs'], ['Settings', '/settings'], ['Team', '/team'],
 ];
 
 const dealStages = [
@@ -43,7 +50,11 @@ const records: Record<string, { title: string; label: string; columns: string[];
   deals: { title: 'Deals', label: 'Track opportunities and keep your pipeline moving forward.', columns: ['DEAL', 'COMPANY', 'STAGE', 'VALUE', 'CLOSE DATE'], metric: '48 open deals', rows: [['Enterprise plan', 'Northstar Labs', 'Proposal', '$24,000', 'Nov 14'], ['Annual subscription', 'Forma Studio', 'Negotiation', '$18,500', 'Nov 08'], ['Team workspace', 'Greenway Co.', 'Qualified', '$12,800', 'Nov 21'], ['CRM migration', 'Kinfield Group', 'Discovery', '$9,200', 'Dec 02']] },
   activities: { title: 'Activities', label: 'Calls, meetings, and follow-ups to keep every deal on track.', columns: ['ACTIVITY', 'RELATED TO', 'TYPE', 'DUE', 'STATUS'], metric: '5 due today', rows: [['Follow up with Olivia', 'Northstar Labs', 'Call', 'Today · 10:30 AM', 'Open'], ['Send proposal', 'Northstar Labs', 'Email', 'Today · 1:00 PM', 'Open'], ['Review Q4 pipeline', 'Workspace', 'Task', 'Tomorrow · 9:00 AM', 'In progress'], ['Product walkthrough', 'Forma Studio', 'Meeting', 'Oct 30 · 2:00 PM', 'Scheduled']] },
   automation: { title: 'Automation', label: 'Give your team more time for the conversations that matter.', columns: ['WORKFLOW', 'TRIGGER', 'LAST RUN', 'COMPLETED', 'STATUS'], metric: '3 active workflows', rows: [['New lead follow-up', 'Lead created', '12 min ago', '128', 'Active'], ['Deal stage alert', 'Stage changed', '1 hour ago', '42', 'Active'], ['Weekly pipeline digest', 'Every Monday', 'Yesterday', '16', 'Active'], ['Inactive contact reminder', 'No activity · 30d', 'Oct 25', '9', 'Paused']] },
+  email: { title: 'Email', label: 'Compose contact emails and review outbox delivery status.', columns: ['RECIPIENT', 'SUBJECT', 'STATUS'], metric: '0 saved emails', rows: [] },
   reports: { title: 'Reports', label: 'A clear view of team performance and business momentum.', columns: ['REPORT', 'OWNER', 'LAST UPDATED', 'SCHEDULE', ''], metric: '4 reports ready', rows: [['Pipeline overview', 'Maya Chen', 'Today · 9:12 AM', 'Weekly', 'Open'], ['Lead conversion', 'Jordan Lee', 'Yesterday', 'Monthly', 'Open'], ['Team activity', 'Alex Morgan', 'Oct 25', 'Weekly', 'Open'], ['Revenue forecast', 'Maya Chen', 'Oct 24', 'Monthly', 'Open']] },
+  'audit-logs': { title: 'Audit Logs', label: 'Review changes made across this workspace.', columns: ['ACTOR', 'ACTION', 'RECORD', 'RECORD ID', 'WHEN'], metric: 'Workspace history', rows: [] },
+  settings: { title: 'Settings', label: 'Manage workspace identity and regional preferences.', columns: ['SETTING', 'VALUE'], metric: 'Workspace preferences', rows: [] },
+  team: { title: 'Team', label: 'Manage organization members, invitations, and access roles.', columns: [], metric: 'Workspace access', rows: [] },
 };
 
 export default function ModulePage({ params }: { params: Promise<{ module: string }> }) {
@@ -54,7 +65,7 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   const [moduleRows, setModuleRows] = useState<string[][]>([]);
   const { module: moduleName } = use(params);
   const data = records[moduleName] || records.leads;
-  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Reports: 'report' }[data.title] || 'record';
+  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
   useEffect(() => {
     const saved = sessionStorage.getItem(`myr.preview.${moduleName}`);
     setModuleRows(saved ? JSON.parse(saved) as string[][] : data.rows);
@@ -103,15 +114,15 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
         <WorkspaceSwitcher />
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : '⌁'}</span><span>{label}</span>{label === 'Leads' && <span className="nav-count">24</span>}{label === 'Activities' && <span className="nav-count">5</span>}</Link>)}
+          {navigation.map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span>{label === 'Leads' && <span className="nav-count">24</span>}{label === 'Activities' && <span className="nav-count">5</span>}</Link>)}
         </nav>
         <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✳</div><strong>Need a hand?</strong><p>Visit our help center to get started.</p><HelpPopover /></div><ProfileMenu /></div>
       </aside>
 
       <section className="main-panel">
-        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
+        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals', 'Email', 'Reports', 'Audit Logs', 'Settings', 'Team'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
         <div className="content module-content">
-          {data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
+          {data.title === 'Automation' ? <AutomationsManager /> : data.title === 'Email' ? <EmailsManager /> : data.title === 'Reports' ? <ReportsManager /> : data.title === 'Audit Logs' ? <AuditLogsManager /> : data.title === 'Settings' ? <SettingsManager /> : data.title === 'Team' ? <MembersManager /> : data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
           <section className="welcome-row module-welcome"><div><p className="date-label">WORKSPACE / {data.title.toUpperCase()}</p><h1>{data.title}</h1><p className="welcome-copy">{data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
           {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
           <div className="demo-notice"><span className="notice-dot" /> This is a UI preview with sample data. Records are not connected to a database yet.</div>

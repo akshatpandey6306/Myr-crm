@@ -126,6 +126,10 @@ function makeApi() {
     const url = new URL(path, "https://crm.test");
     const method = init.method ?? "GET";
 
+    if (url.pathname === "/auth/me") {
+      return jsonResponse({ organizations: [{ id: "org-a", role: "owner" }] });
+    }
+
     if (url.pathname === "/activities" && method === "GET") {
       const params = url.searchParams;
       const query = params.get("q")?.toLowerCase();
@@ -251,7 +255,7 @@ describe("Activities & Tasks", () => {
     const api = makeApi();
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: /create new/i }));
+    await user.click(await screen.findByRole("button", { name: /create new/i }));
     const dialog = screen.getByRole("dialog", { name: "Create a new item" });
     await user.type(within(dialog).getByLabelText(/title/i), "Call new customer");
     await user.selectOptions(within(dialog).getByLabelText("Type"), "note");

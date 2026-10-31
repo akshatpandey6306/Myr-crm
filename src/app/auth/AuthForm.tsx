@@ -10,6 +10,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
   const isSignup = mode === 'signup';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -28,7 +29,10 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         const message = payload?.error?.message ?? payload?.message ?? 'We could not sign you in. Check your details and try again.';
         throw new Error(Array.isArray(message) ? message.join(', ') : message);
       }
-      sessionStorage.setItem('myr.session', payload.token);
+      if (isSignup) {
+        setSuccess(payload.message ?? 'Check your email to verify your account before signing in.');
+        return;
+      }
       sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
       if (payload.organization) sessionStorage.setItem('myr.organization', JSON.stringify(payload.organization));
       window.location.assign('/');
@@ -55,9 +59,11 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
           <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
           <div className="auth-password-label"><label htmlFor="auth-password">Password</label>{!isSignup && <Link href="/sign-up">Need an account?</Link>}</div>
           <div className="auth-password-wrap"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isSignup ? 'new-password' : 'current-password'} placeholder={isSignup ? 'At least 8 characters' : 'Enter your password'} minLength={8} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? 'Hide' : 'Show'}</button></div>
-          {error && <div className="auth-error" role="alert">{error}</div>}
-          <button className="auth-submit" type="submit" disabled={busy}>{busy ? <><span className="auth-spinner" /> {isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>
+          {error && <div className="auth-error" role="alert">{error}{error.includes('Verify your email') && <> <Link href="/verify-email">Resend verification email</Link></>}</div>}
+          {success && <div className="auth-success" role="status">{success} <Link href="/sign-in">Go to sign in</Link></div>}
+          <button className="auth-submit" type="submit" disabled={busy || Boolean(success)}>{busy ? <><span className="auth-spinner" /> {isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>
         </form>
+        {!isSignup && <p className="auth-switch"><Link href="/forgot-password">Forgot your password?</Link></p>}
         <p className="auth-switch">{isSignup ? 'Already have an account?' : 'New to Myr?'} <Link href={isSignup ? '/sign-in' : '/sign-up'}>{isSignup ? 'Sign in' : 'Create an account'}</Link></p>
         <p className="auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
       </div><span className="auth-copyright">© 2026 Myr CRM · Secure workspace access</span></section>

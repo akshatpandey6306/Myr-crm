@@ -1,17 +1,18 @@
 # Developer 1 Role and Permission Proposal
 
-**Status: Developer 1 interim policy; review with Developer 2 when available**
+**Status: Owner-approved interim policy (2026-10-30); review with Developer 2
+when available**
 
-This document records Developer 1's interim authorization matrix for the five roles named in the master CRM prompt. Developer 2 is unavailable, so the owner is using this policy for the persisted lead and contact APIs pending review. All access is limited to the active organization and enforced by the API; hiding a button in the frontend is not authorization.
+This document records the Owner-approved interim authorization matrix for the five roles named in the master CRM prompt. It is enforced by the API for the MVP while Developer 2's module-specific contracts remain pending review. All access is limited to the active organization; hiding a button in the frontend is not authorization.
 
 ## Scope definitions
 
 - **All records** means all records belonging to the member's organization.
-- **Assigned records** means records assigned to the member. A member may create a record and assign it to themselves or another authorized organization member.
+- **Assigned records** means records assigned to the member. Sales Representatives create records assigned to themselves; Owners, Admins, and Sales Managers may assign records to active organization members.
 - Organization IDs supplied by clients do not grant access. The server resolves the active organization from the authenticated user and verified membership.
 - A related company, contact, lead, deal, pipeline, stage, or activity must belong to the same organization as the request context.
 
-## Proposed matrix
+## Approved interim matrix
 
 | Capability | Organization Owner | Admin | Sales Manager | Sales Representative | Read-only User |
 |---|---|---|---|---|---|
@@ -21,6 +22,8 @@ This document records Developer 1's interim authorization matrix for the five ro
 | Archive sales records | All | All | All | No | No |
 | Assign sales records to members | Yes | Yes | Yes | No | No |
 | Configure pipelines and stages | Yes | Yes | Yes | No | No |
+| Read automation rules and run history | Yes | Yes | Yes | Yes | Yes |
+| Manage automation rules | Yes | Yes | Yes | No | No |
 | View and manage member accounts | Yes | Yes, except Owner | No | No | No |
 | Invite members | Yes | Yes | No | No | No |
 | Change organization settings | Yes | Yes | No | No | No |
@@ -44,21 +47,20 @@ This document records Developer 1's interim authorization matrix for the five ro
 5. Audit role changes, invitations, member deactivation, ownership changes, and organization-setting changes. Exclude credentials, tokens, and secrets from audit data.
 6. Verify cross-organization read, update, archive, assignment, and relationship attempts before release.
 
-## Decisions for team review
+## Approved interim decisions
 
 - Interim choice: Sales Representatives can view and update only records assigned to them. New records are assigned to their creator; assignment management is a follow-up API.
 - Interim choice: Sales Managers can configure pipelines and stages.
 - Interim choice: Owners, Admins, and Sales Managers may archive sales records.
-- Confirm whether additional fine-grained permissions are required for the MVP.
-
-Do not implement this matrix until both developers agree on the scope and decisions above.
+- Additional fine-grained permissions may be proposed during cross-developer
+  review; until then the matrix above is the enforced MVP policy.
 
 
 ## Module 9 Activities & Tasks — implementation proposal
 
-**Status: Provisional implementation on `feature/activities-tasks`; not an
-agreed shared contract.** Review with the shared-contract owner before merging
-or relying on its role and deletion policy.
+**Status: Adopted MVP contract (2026-10-31).** This module follows the
+Owner-approved interim role matrix below and uses soft archive, consistent with
+other CRM records.
 
 ### Fields and values
 
@@ -74,11 +76,11 @@ or relying on its role and deletion policy.
 - Related-record type and ID must be provided together or both null. Related
   records and assignment targets are validated within the active organization.
 
-### Proposed API behavior
+### API behavior
 
 - `GET/POST /api/v1/activities` and
   `GET/PATCH/DELETE /api/v1/activities/:id`.
-- Uses the shared bearer session and `x-organization-id` selector; the API
+- Uses the shared HttpOnly session cookie and `x-organization-id` selector; the API
   verifies membership and scopes every operation to the selected organization.
 - Lists accept `q`, `type`, `status`, `priority`, `assignedToUserId`,
   `relatedToType`, `relatedToId`, `page`, `pageSize`, `sortBy`, and
@@ -89,16 +91,12 @@ or relying on its role and deletion policy.
   Errors use `{ error: { code, message, details } }`.
 - Set `completedAt` when status becomes completed and clear it when reopened.
 
-### Decisions awaiting agreement
+### Permissions and assignment
 
-1. `DELETE` currently soft-archives the activity. Confirm archive versus
-   permanent deletion.
-2. The implementation provisionally mirrors the interim role matrix: Owner,
-   Admin, and Sales Manager have organization-wide read/write/assign/archive
-   access; Sales Representatives can read and update assigned activities and
-   create activities assigned to themselves, but cannot reassign or archive;
-   Read-only Users can read. Confirm or revise these rules.
-3. Member selection is deferred until a shared organization-member endpoint
-   exists; the UI currently assigns new activities to the signed-in member.
-
-Do not treat the provisional role or deletion behavior as an agreed policy.
+- Owner, Admin, and Sales Manager can read, create, update, assign, unassign,
+  and archive activities across the organization.
+- Sales Representatives can read and update assigned activities and create
+  activities assigned to themselves. They cannot reassign or archive.
+- Read-only Users can read activities.
+- Assignment targets must be active members of the selected organization.
+  Reassignment sends the new assignee a notification.

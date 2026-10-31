@@ -127,20 +127,24 @@ function isPriority(value: FormDataEntryValue | null): value is Priority {
   return typeof value === "string" && priorities.some((priority) => priority === value);
 }
 
+function isStatus(value: FormDataEntryValue | null): value is ActivityStatus {
+  return typeof value === "string" && statuses.some((status) => status === value);
+}
+
 type MemberOption = { id: string; name: string };
 
-function AssigneeField({ members }: { members: readonly MemberOption[] }) {
+function AssigneeField({ members, selectedId }: { members: readonly MemberOption[]; selectedId?: string | null }) {
   if (members.length === 0) {
     return (
       <div className="assignee-placeholder">
         <span>Assigned to you by default</span>
-        <small>Team assignment will be available when the member directory is connected.</small>
+        <small>Team assignment is available to organization managers.</small>
       </div>
     );
   }
   return (
-    <select name="assignedToUserId" defaultValue="">
-      <option value="">Assign to me</option>
+    <select name="assignedToUserId" defaultValue={selectedId ?? ""}>
+      <option value="">{selectedId === undefined ? "Assign to me" : "Unassigned"}</option>
       {members.map((member) => (
         <option key={member.id} value={member.id}>{member.name}</option>
       ))}
@@ -151,6 +155,8 @@ function AssigneeField({ members }: { members: readonly MemberOption[] }) {
 export default function Home() {
   const [items, setItems] = useState<WorkItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<ActivityStatus | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<ActivityType | "all">("all");
+  const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
   const [assignedToFilter, setAssignedToFilter] = useState("all");
   const [relatedTypeFilter, setRelatedTypeFilter] = useState("all");
   const [relatedIdFilter, setRelatedIdFilter] = useState("all");
@@ -158,6 +164,7 @@ export default function Home() {
   const [limit, setLimit] = useState(5);
   const [query, setQuery] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
   const [sortBy, setSortBy] = useState<"createdAt" | "dueAt">("createdAt");
   const [sortDescending, setSortDescending] = useState(true);
   const [formError, setFormError] = useState("");
@@ -171,13 +178,62 @@ export default function Home() {
   const [relatedOptions, setRelatedOptions] = useState<RelatedRecordOption[]>([]);
   const [relatedOptionsError, setRelatedOptionsError] = useState("");
   const [createRelatedType, setCreateRelatedType] = useState<RelatedRecordType | "">("");
+  const [createRelatedId, setCreateRelatedId] = useState("");
   const [createRelatedOptions, setCreateRelatedOptions] = useState<RelatedRecordOption[]>([]);
   const [createRelatedOptionsError, setCreateRelatedOptionsError] = useState("");
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [organizationRole, setOrganizationRole] = useState("");
+  const [memberOptionsError, setMemberOptionsError] = useState("");
   const currentPage = page;
   const visibleItems = items;
   const relatedRecords = relatedOptions;
   const today = new Date().toISOString().slice(0, 10);
-  const members: MemberOption[] = [];
+  const canWrite = organizationRole !== "" && organizationRole !== "read_only";
+  const canArchive = ["owner", "admin", "sales_manager"].includes(organizationRole);
+  const canAssign = canArchive && members.length > 0;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    async function loadMembers() {
+      try {
+        const meResponse = await crmApiFetch("/auth/me", { signal: controller.signal });
+        const mePayload: unknown = await meResponse.json();
+        if (!meResponse.ok) throw new Error(apiErrorMessage(mePayload));
+        if (!mePayload || typeof mePayload !== "object" || !("organizations" in mePayload) || !Array.isArray(mePayload.organizations)) {
+          throw new Error("The CRM API returned invalid organization membership data.");
+        }
+        let organizationId = "";
+        const savedOrganization = sessionStorage.getItem("myr.organization");
+        if (savedOrganization) {
+          try {
+            const parsed = JSON.parse(savedOrganization) as { id?: unknown };
+            if (typeof parsed.id === "string") organizationId = parsed.id;
+          } catch { /* Invalid cached organization data is ignored. */ }
+        }
+        const organization = (mePayload.organizations as { id?: unknown; role?: unknown }[]).find((item) => item.id === organizationId)
+          ?? (mePayload.organizations as { id?: unknown; role?: unknown }[])[0];
+        if (!organization || typeof organization.role !== "string") return;
+        if (!cancelled) setOrganizationRole(organization.role);
+        if (!["owner", "admin", "sales_manager"].includes(organization.role)) return;
+        const membersResponse = await crmApiFetch("/organizations/assignees", { signal: controller.signal });
+        const membersPayload: unknown = await membersResponse.json();
+        if (!membersResponse.ok) throw new Error(apiErrorMessage(membersPayload));
+        if (!membersPayload || typeof membersPayload !== "object" || !("data" in membersPayload) || !Array.isArray(membersPayload.data)) {
+          throw new Error("The CRM API returned invalid member-directory data.");
+        }
+        if (!cancelled) setMembers(membersPayload.data as MemberOption[]);
+      } catch (caught) {
+        if (cancelled || (caught instanceof Error && caught.name === "AbortError")) return;
+        if (!cancelled) setMemberOptionsError(caught instanceof Error ? caught.message : "Could not load assignable team members.");
+      }
+    }
+    void loadMembers();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,6 +249,8 @@ export default function Home() {
       });
       if (query.trim()) params.set("q", query.trim());
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (priorityFilter !== "all") params.set("priority", priorityFilter);
       if (assignedToFilter !== "all") params.set("assignedToUserId", assignedToFilter);
       if (relatedTypeFilter !== "all") params.set("relatedToType", relatedTypeFilter);
       if (relatedIdFilter !== "all" && relatedTypeFilter !== "all") {
@@ -253,6 +311,8 @@ export default function Home() {
     sortBy,
     sortDescending,
     statusFilter,
+    typeFilter,
+    priorityFilter,
   ]);
 
   useEffect(() => {
@@ -340,6 +400,7 @@ export default function Home() {
     const title = String(formData.get("title") ?? "").trim();
     const type = formData.get("type");
     const priority = formData.get("priority");
+    const status = formData.get("status");
     const dueDate = String(formData.get("dueAt") ?? "");
     const assignedToUserId = String(formData.get("assignedToUserId") ?? "").trim();
     const relatedToTypeValue = String(formData.get("relatedToType") ?? "");
@@ -350,6 +411,7 @@ export default function Home() {
       !title ||
       !isActivityType(type) ||
       !isPriority(priority) ||
+      !isStatus(status) ||
       (Boolean(relatedToType) !== Boolean(relatedToId))
     ) {
       setFormError("Enter a title and choose valid activity details.");
@@ -364,26 +426,30 @@ export default function Home() {
         title,
         description: String(formData.get("description") ?? "").trim() || null,
         priority,
+        status,
         dueAt: dueDate ? `${dueDate}T12:00:00.000Z` : null,
         relatedToType,
         relatedToId: relatedToId || null,
       };
-      if (assignedToUserId) body.assignedToUserId = assignedToUserId;
-      const response = await crmApiFetch("/activities", {
-        method: "POST",
+      if (editingItem && canAssign) body.assignedToUserId = assignedToUserId || null;
+      else if (assignedToUserId) body.assignedToUserId = assignedToUserId;
+      const response = await crmApiFetch(editingItem ? `/activities/${editingItem.id}` : "/activities", {
+        method: editingItem ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(apiErrorMessage(payload));
-      setNotice("Activity created.");
+      setNotice(editingItem ? "Activity updated." : "Activity created.");
       setPage(1);
       setRefresh((value) => value + 1);
       setIsCreateOpen(false);
+      setEditingItem(null);
       setCreateRelatedType("");
+      setCreateRelatedId("");
       formElement.reset();
     } catch (caught) {
-      setFormError(caught instanceof Error ? caught.message : "Could not create this activity.");
+      setFormError(caught instanceof Error ? caught.message : "Could not save this activity.");
     } finally {
       setSaving(false);
     }
@@ -459,17 +525,20 @@ export default function Home() {
               <h1>Activities &amp; Tasks</h1>
               <p>Keep track of follow-ups and stay on top of every relationship.</p>
             </div>
-            <button
+            {canWrite && <button
               className="primary-button"
               type="button"
               onClick={() => {
+                setEditingItem(null);
+                setCreateRelatedType("");
+                setCreateRelatedId("");
                 setFormError("");
                 setIsCreateOpen(true);
               }}
             >
               <Icon name="plus" size={17} />
               Create new
-            </button>
+            </button>}
           </section>
 
           <section className="stats-grid" aria-label="Task summary">
@@ -527,6 +596,28 @@ export default function Home() {
             <div className="list-toolbar">
               <div className="contract-filters" aria-label="Activity filters">
                 <label className="filter-select">
+                  <span>Type</span>
+                  <select value={typeFilter} onChange={(event) => {
+                    const value = event.target.value;
+                    setTypeFilter(value === "all" || activityTypes.includes(value as ActivityType) ? value as ActivityType | "all" : "all");
+                    setPage(1);
+                  }} aria-label="Filter by activity type">
+                    <option value="all">All types</option>
+                    {activityTypes.map((type) => <option key={type} value={type}>{formatLabel(type)}</option>)}
+                  </select>
+                </label>
+                <label className="filter-select">
+                  <span>Priority</span>
+                  <select value={priorityFilter} onChange={(event) => {
+                    const value = event.target.value;
+                    setPriorityFilter(value === "all" || priorities.includes(value as Priority) ? value as Priority | "all" : "all");
+                    setPage(1);
+                  }} aria-label="Filter by priority">
+                    <option value="all">All priorities</option>
+                    {priorities.map((priority) => <option key={priority} value={priority}>{formatLabel(priority)}</option>)}
+                  </select>
+                </label>
+                <label className="filter-select">
                   <span>Status</span>
                   <select
                     value={statusFilter}
@@ -555,6 +646,8 @@ export default function Home() {
                   >
                     <option value="all">All assignees</option>
                     <option value="me">My activities</option>
+                    {canArchive && <option value="unassigned">Unassigned</option>}
+                    {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
                   </select>
                 </label>
                 <label className="filter-select">
@@ -636,19 +729,19 @@ export default function Home() {
               ) : (
                 visibleItems.map((item) => (
                   <article className={`work-item${item.status === "completed" ? " is-complete" : ""}`} key={item.id}>
-                    <button
+                    {canWrite && <button
                       className={`completion-check${item.status === "completed" ? " checked" : ""}`}
                       type="button"
                       onClick={() => void setItemStatus(
                         item,
                         item.status === "completed" ? "open" : "completed",
                       )}
-                      disabled={item.status === "cancelled"}
+                      disabled={item.status === "cancelled" || !canWrite}
                       aria-label={item.status === "completed" ? `Mark ${item.title} as open` : `Complete ${item.title}`}
                       aria-pressed={item.status === "completed"}
                     >
                       {item.status === "completed" && <Icon name="check" size={13} />}
-                    </button>
+                    </button>}
                     <div className="item-main">
                       <div className="item-title-row">
                         <h3>{item.title}</h3>
@@ -674,14 +767,21 @@ export default function Home() {
                       </span>
                       <span>{item.assignedToName ?? "Unassigned"}</span>
                     </div>
-                    <button
+                    {canWrite && <button className="activity-archive" type="button" aria-label={`Edit ${item.title}`} onClick={() => {
+                      setEditingItem(item);
+                      setCreateRelatedType((item.relatedToType as RelatedRecordType | null) ?? "");
+                      setCreateRelatedId(item.relatedToId ?? "");
+                      setFormError("");
+                      setIsCreateOpen(true);
+                    }}>Edit</button>}
+                    {canArchive && <button
                       className="activity-archive"
                       type="button"
                       aria-label={`Archive ${item.title}`}
                       onClick={() => void archiveItem(item)}
                     >
                       Archive
-                    </button>
+                    </button>}
                   </article>
                 ))
               )}
@@ -734,6 +834,8 @@ export default function Home() {
           if (event.target === event.currentTarget) {
             setIsCreateOpen(false);
             setCreateRelatedType("");
+            setCreateRelatedId("");
+            setEditingItem(null);
           }
         }}>
           <section
@@ -745,12 +847,12 @@ export default function Home() {
             <div className="modal-heading">
               <div>
                 <span className="eyebrow">ACTIVITIES &amp; TASKS</span>
-                <h2 id="create-heading">Create a new item</h2>
+                <h2 id="create-heading">{editingItem ? "Edit activity" : "Create a new item"}</h2>
               </div>
               <button
                 className="modal-close"
                 type="button"
-                onClick={() => setIsCreateOpen(false)}
+                onClick={() => { setIsCreateOpen(false); setCreateRelatedType(""); setCreateRelatedId(""); setEditingItem(null); }}
                 aria-label="Close dialog"
               >
                 ×
@@ -760,16 +862,16 @@ export default function Home() {
               {formError && <p className="form-error" role="alert">{formError}</p>}
               <label className="form-field">
                 <span>Title <b>*</b></span>
-                <input name="title" type="text" placeholder="What needs to get done?" required autoFocus />
+                    <input name="title" type="text" placeholder="What needs to get done?" defaultValue={editingItem?.title ?? ""} required autoFocus />
               </label>
               <label className="form-field">
                 <span>Description</span>
-                <textarea name="description" rows={3} placeholder="Add helpful context (optional)" />
+                <textarea name="description" rows={3} placeholder="Add helpful context (optional)" defaultValue={editingItem?.description ?? ""} />
               </label>
               <div className="form-row">
                 <label className="form-field">
                   <span>Type</span>
-                  <select name="type" defaultValue="task">
+                  <select name="type" defaultValue={editingItem?.type ?? "task"}>
                     {activityTypes.map((type) => (
                       <option key={type} value={type}>{formatLabel(type)}</option>
                     ))}
@@ -777,7 +879,7 @@ export default function Home() {
                 </label>
                 <label className="form-field">
                   <span>Priority</span>
-                  <select name="priority" defaultValue="normal">
+                  <select name="priority" defaultValue={editingItem?.priority ?? "normal"}>
                     {priorities.map((priority) => (
                       <option key={priority} value={priority}>{formatLabel(priority)}</option>
                     ))}
@@ -786,12 +888,18 @@ export default function Home() {
               </div>
               <div className="form-row">
                 <label className="form-field">
+                  <span>Status</span>
+                  <select name="status" defaultValue={editingItem?.status ?? "open"}>
+                    {statuses.map((status) => <option key={status} value={status}>{formatLabel(status)}</option>)}
+                  </select>
+                </label>
+                <label className="form-field">
                   <span>Due date</span>
-                  <input name="dueAt" type="date" />
+                  <input name="dueAt" type="date" defaultValue={editingItem?.dueAt?.slice(0, 10) ?? ""} />
                 </label>
                 <label className="form-field">
                   <span>Assignee</span>
-                  <AssigneeField members={members} />
+                  <AssigneeField members={members} selectedId={editingItem?.assignedToUserId} />
                 </label>
               </div>
               <div className="form-row">
@@ -807,6 +915,7 @@ export default function Home() {
                           ? value as RelatedRecordType | ""
                           : "",
                       );
+                      setCreateRelatedId("");
                     }}
                   >
                     <option value="">No linked record</option>
@@ -817,7 +926,7 @@ export default function Home() {
                 </label>
                 <label className="form-field">
                   <span>Related record</span>
-                  <select name="relatedToId" defaultValue="" required={Boolean(createRelatedType)} disabled={!createRelatedType}>
+                    <select name="relatedToId" value={createRelatedId} onChange={(event) => setCreateRelatedId(event.target.value)} required={Boolean(createRelatedType)} disabled={!createRelatedType}>
                     <option value="">Select a record</option>
                     {createRelatedOptions.map((record) => (
                       <option key={record.id} value={record.id}>{record.name}</option>
@@ -826,16 +935,19 @@ export default function Home() {
                 </label>
               </div>
               {createRelatedOptionsError && <p className="form-error" role="alert">{createRelatedOptionsError}</p>}
+              {memberOptionsError && <p className="form-error" role="alert">{memberOptionsError}</p>}
               <div className="modal-actions">
                 <button className="secondary-button" type="button" onClick={() => {
                   setIsCreateOpen(false);
                   setCreateRelatedType("");
+                  setCreateRelatedId("");
+                  setEditingItem(null);
                 }}>
                   Cancel
                 </button>
                 <button className="primary-button" type="submit" disabled={saving}>
                   <Icon name="plus" size={16} />
-                  {saving ? "Creating…" : "Create item"}
+                  {saving ? "Saving…" : editingItem ? "Save changes" : "Create item"}
                 </button>
               </div>
             </form>

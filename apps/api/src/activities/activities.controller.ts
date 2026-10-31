@@ -170,14 +170,29 @@ export class ActivitiesController {
     if (assignedToUserId) await this.validateAssignee(organizationId, assignedToUserId);
     await this.validateRelated(organizationId, relatedType, relatedId);
 
-    const activity = await this.prisma.activity.create({
-      data: {
-        ...fields,
-        organizationId,
-        assignedToUserId,
-        createdByUserId: userId,
-      },
-      include: this.relations(),
+    const activity = await this.prisma.$transaction(async (tx) => {
+      const createdActivity = await tx.activity.create({
+        data: {
+          ...fields,
+          organizationId,
+          assignedToUserId,
+          createdByUserId: userId,
+        },
+        include: this.relations(),
+      });
+      if (assignedToUserId && assignedToUserId !== userId) {
+        await tx.notification.create({
+          data: {
+            organizationId,
+            recipientUserId: assignedToUserId,
+            activityId: createdActivity.id,
+            type: "ACTIVITY_ASSIGNED",
+            title: "Activity assigned to you",
+            body: createdActivity.title,
+          },
+        });
+      }
+      return createdActivity;
     });
     const relatedNames = await this.relatedNames(organizationId, [activity]);
     return { data: this.present(activity, relatedNames) };
@@ -207,7 +222,10 @@ export class ActivitiesController {
     const { organizationId, userId } = this.context(request);
     const ownerFilter = request.organizationRole === "sales_rep" ? { assignedToUserId: userId } : {};
     const where = { id, organizationId, archivedAt: null, ...ownerFilter };
-    const existing = await this.prisma.activity.findFirst({ where, select: { completedAt: true } });
+    const existing = await this.prisma.activity.findFirst({
+      where,
+      select: { completedAt: true, assignedToUserId: true, title: true, status: true, createdByUserId: true },
+    });
     if (!existing) throw new NotFoundException({ code: "not_found", message: "Activity not found" });
 
     const patch: ActivityFields = {};
@@ -242,7 +260,40 @@ export class ActivitiesController {
     }
     if (Object.keys(patch).length === 0) throw this.invalid("Provide at least one editable activity field");
 
-    const result = await this.prisma.activity.updateMany({ where, data: patch });
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.activity.updateMany({ where, data: patch });
+      if (updated.count > 0 && patch.assignedToUserId && patch.assignedToUserId !== existing.assignedToUserId && patch.assignedToUserId !== userId) {
+        await tx.notification.create({
+          data: {
+            organizationId,
+            recipientUserId: patch.assignedToUserId,
+            activityId: id,
+            type: "ACTIVITY_ASSIGNED",
+            title: "Activity assigned to you",
+            body: typeof patch.title === "string" ? patch.title : existing.title,
+          },
+        });
+      }
+      if (
+        updated.count > 0
+        && patch.status === "COMPLETED"
+        && existing.status !== "COMPLETED"
+        && existing.createdByUserId
+        && existing.createdByUserId !== userId
+      ) {
+        await tx.notification.create({
+          data: {
+            organizationId,
+            recipientUserId: existing.createdByUserId,
+            activityId: id,
+            type: "ACTIVITY_COMPLETED",
+            title: "Activity completed",
+            body: typeof patch.title === "string" ? patch.title : existing.title,
+          },
+        });
+      }
+      return updated;
+    });
     if (result.count === 0) throw new NotFoundException({ code: "not_found", message: "Activity not found" });
     const activity = await this.prisma.activity.findFirst({ where, include: this.relations() });
     if (!activity) throw new NotFoundException({ code: "not_found", message: "Activity not found" });

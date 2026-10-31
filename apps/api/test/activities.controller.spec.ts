@@ -104,8 +104,11 @@ describe("ActivitiesController", () => {
 
   it("creates activities with server-controlled tenant, creator, and default assignee", async () => {
     let args: Record<string, unknown> | undefined;
+    let notificationData: Record<string, unknown> | undefined;
     const prisma = {
       membership: { findFirst: async () => ({ userId }) },
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(prisma),
+      notification: { create: async (value: { data: Record<string, unknown> }) => { notificationData = value.data; return value.data; } },
       activity: {
         create: async (value: Record<string, unknown>) => {
           args = value;
@@ -127,6 +130,9 @@ describe("ActivitiesController", () => {
     assert.equal(data.createdByUserId, userId);
     assert.equal(data.assignedToUserId, otherUserId);
     assert.equal(data.title, "Call customer");
+    assert.equal(notificationData?.organizationId, organizationId);
+    assert.equal(notificationData?.recipientUserId, otherUserId);
+    assert.equal(notificationData?.activityId, recordId);
     assert.equal(result.data.type, "call");
   });
 
@@ -160,6 +166,7 @@ describe("ActivitiesController", () => {
     let patch: Record<string, unknown> | undefined;
     let calls = 0;
     const prisma = {
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(prisma),
       activity: {
         findFirst: async () => {
           calls += 1;
@@ -179,6 +186,32 @@ describe("ActivitiesController", () => {
 
     assert.equal(patch?.status, "COMPLETED");
     assert.ok(patch?.completedAt instanceof Date);
+  });
+
+  it("notifies the creator when another member completes an activity", async () => {
+    let notification: Record<string, unknown> | undefined;
+    let lookups = 0;
+    const prisma = {
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(prisma),
+      notification: { create: async (args: { data: Record<string, unknown> }) => { notification = args.data; return args.data; } },
+      activity: {
+        findFirst: async () => activity({
+          createdByUserId: otherUserId,
+          status: lookups++ === 0 ? "OPEN" : "COMPLETED",
+          completedAt: lookups > 1 ? new Date("2026-10-31T10:00:00.000Z") : null,
+        }),
+        updateMany: async () => ({ count: 1 }),
+      },
+    };
+    const controller = new ActivitiesController(prisma as never);
+
+    await controller.update(request("admin"), recordId, { status: "completed" });
+
+    assert.equal(notification?.organizationId, organizationId);
+    assert.equal(notification?.recipientUserId, otherUserId);
+    assert.equal(notification?.activityId, recordId);
+    assert.equal(notification?.type, "ACTIVITY_COMPLETED");
+    assert.equal(notification?.body, "Follow up");
   });
 
   it("prevents representatives from changing activity assignments", async () => {

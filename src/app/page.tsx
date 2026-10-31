@@ -1,144 +1,22 @@
 import NotificationPopover from './components/NotificationPopover';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import ProfileMenu from './components/ProfileMenu';
-import ActionMenu from './components/ActionMenu';
 import GlobalSearch from './components/GlobalSearch';
 import HelpPopover from './components/HelpPopover';
-import PipelineDistributionChart from './components/PipelineDistributionChart';
+import DashboardLivePanels from './components/DashboardLivePanels';
 import MobileNavigation from './components/MobileNavigation';
 
 const navigation = [
   { label: "Overview", icon: "grid", active: true },
-  { label: "Leads", icon: "users", count: "24" },
+  { label: "Leads", icon: "users" },
   { label: "Contacts", icon: "contact" },
   { label: "Companies", icon: "building" },
   { label: "Deals", icon: "briefcase" },
-  { label: "Activities", icon: "calendar", count: "5" },
+  { label: "Activities", icon: "calendar" },
   { label: "Automation", icon: "sparkles" },
   { label: "Reports", icon: "chart" },
+  { label: "Team", icon: "users" },
 ];
-
-const metrics = [
-  {
-    label: "Total leads",
-    value: "1,284",
-    change: "+12.8%",
-    note: "vs. last month",
-    icon: "users",
-    tone: "mint",
-  },
-  {
-    label: "Open deals",
-    value: "48",
-    change: "+8.2%",
-    note: "vs. last month",
-    icon: "briefcase",
-    tone: "peach",
-  },
-  {
-    label: "Pipeline value",
-    value: "$284,500",
-    change: "+14.6%",
-    note: "vs. last month",
-    icon: "coins",
-    tone: "lavender",
-  },
-  {
-    label: "Won this month",
-    value: "12",
-    change: "+4.1%",
-    note: "vs. last month",
-    icon: "trophy",
-    tone: "yellow",
-  },
-];
-
-const deals = [
-  {
-    company: "Northstar Labs",
-    initials: "NL",
-    color: "blue",
-    title: "Enterprise plan",
-    owner: "Maya Chen",
-    stage: "Proposal",
-    amount: "$24,000",
-    probability: "75%",
-  },
-  {
-    company: "Forma Studio",
-    initials: "FS",
-    color: "purple",
-    title: "Annual subscription",
-    owner: "Jordan Lee",
-    stage: "Negotiation",
-    amount: "$18,500",
-    probability: "90%",
-  },
-  {
-    company: "Greenway Co.",
-    initials: "GW",
-    color: "green",
-    title: "Team workspace",
-    owner: "Alex Morgan",
-    stage: "Qualified",
-    amount: "$12,800",
-    probability: "40%",
-  },
-  {
-    company: "Kinfield Group",
-    initials: "KG",
-    color: "orange",
-    title: "CRM migration",
-    owner: "Maya Chen",
-    stage: "Discovery",
-    amount: "$9,200",
-    probability: "20%",
-  },
-];
-
-const activities = [
-  {
-    initials: "MC",
-    name: "Maya Chen",
-    action: "moved a deal to",
-    target: "Proposal",
-    time: "12 min ago",
-    color: "blue",
-  },
-  {
-    initials: "JL",
-    name: "Jordan Lee",
-    action: "added a new lead",
-    target: "Olivia Rhye",
-    time: "48 min ago",
-    color: "purple",
-  },
-  {
-    initials: "AM",
-    name: "Alex Morgan",
-    action: "completed a call with",
-    target: "Greenway Co.",
-    time: "2 hours ago",
-    color: "green",
-  },
-];
-
-const tasks = [
-  { title: "Follow up with Olivia Rhye", detail: "Today · 10:30 AM", tag: "Call" },
-  { title: "Send proposal to Northstar Labs", detail: "Today · 1:00 PM", tag: "Email" },
-  { title: "Review Q4 pipeline", detail: "Tomorrow · 9:00 AM", tag: "Task" },
-];
-
-const pipeline = [
-  { name: "Discovery", value: 42500, color: "#3678D4" },
-  { name: "Qualified", value: 68200, color: "#8254C7" },
-  { name: "Proposal", value: 91800, color: "#E56F4A" },
-  { name: "Negotiation", value: 54600, color: "#24936F" },
-];
-
-const pipelineTotal = pipeline.reduce((total, stage) => total + stage.value, 0);
-const largestPipelineStage = pipeline.reduce((largest, stage) => stage.value > largest.value ? stage : largest, pipeline[0]);
-const formatCurrency = (value: number) => `$${value.toLocaleString("en-US")}`;
 
 function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
@@ -224,153 +102,30 @@ export default function Home() {
           <div className="topbar-actions">
             <GlobalSearch />
             <NotificationPopover />
-            <div className="preview-chip"><span /> Preview data</div>
+            <div className="preview-chip"><span /> Live workspace data</div>
           </div>
         </header>
 
         <div className="content">
           <section className="welcome-row">
             <div>
-              <p className="date-label">MONDAY, OCTOBER 27, 2026</p>
-              <h1>Good morning, Maya <span>✦</span></h1>
+              <p className="date-label">WORKSPACE OVERVIEW</p>
+              <h1>Your CRM at a glance</h1>
               <p className="welcome-copy">Here&apos;s what&apos;s happening with your workspace today.</p>
             </div>
             <div className="welcome-actions">
-              <a className="button button-secondary" href="/reports">
-                <span className="button-icon">⌑</span> Last 30 days <span className="button-caret">↗</span>
-              </a>
+              <a className="button button-secondary" href="/reports">View reports <span className="button-caret">↗</span></a>
               <a className="button button-primary" href="/leads">
                 <Icon name="plus" /> Add new lead
               </a>
             </div>
           </section>
 
-          <div className="demo-notice">
-            <span className="notice-dot" />
-            This is a UI preview with sample data. CRM records and metrics are not connected to a database yet.
-          </div>
-
-          <section className="metric-grid" aria-label="CRM summary">
-            {metrics.map((metric) => (
-              <article className="metric-card" key={metric.label}>
-                <div className="metric-top">
-                  <span>{metric.label}</span>
-                  <span className={`metric-icon ${metric.tone}`}><Icon name={metric.icon} /></span>
-                </div>
-                <div className="metric-value">{metric.value}</div>
-                <div className="metric-foot">
-                  <span className="positive-change">↗ {metric.change}</span>
-                  <span>{metric.note}</span>
-                </div>
-              </article>
-            ))}
-          </section>
-
-          <section className="dashboard-grid">
-            <article className="panel pipeline-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Pipeline overview</h2>
-                <p>How value is distributed across your sales stages</p>
-                </div>
-                <a className="select-button" href="/deals">All pipelines <span>↗</span></a>
-              </div>
-              <div className="pipeline-total">
-                <strong>{formatCurrency(pipelineTotal)}</strong>
-                <span className="positive-change">↗ 12.4%</span>
-                <span className="muted-copy">total pipeline value</span>
-              </div>
-              <PipelineDistributionChart items={pipeline.map((stage) => ({ label: stage.name, value: stage.value, color: stage.color }))} />
-              <div className="pipeline-footer">
-                <span><i className="legend-dot" /> Largest stage <b>{largestPipelineStage.name}</b> · {((largestPipelineStage.value / pipelineTotal) * 100).toFixed(1)}% of total</span>
-                <a href="/deals">View pipeline <Icon name="arrow" /></a>
-              </div>
-            </article>
-
-            <article className="panel activity-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Recent activity</h2>
-                  <p>What your team has been up to</p>
-                </div>
-                <ActionMenu label="More activity options" destination="/activities" copyText="Recent activity" />
-              </div>
-              <div className="activity-list">
-                {activities.map((activity) => (
-                  <div className="activity-item" key={`${activity.name}-${activity.time}`}>
-                    <span className={`avatar avatar-${activity.color}`}>{activity.initials}</span>
-                    <div className="activity-copy">
-                      <p><strong>{activity.name}</strong> {activity.action} <b>{activity.target}</b></p>
-                      <span>{activity.time}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <a className="panel-link" href="/activities">View all activity <Icon name="arrow" /></a>
-            </article>
-          </section>
-
-          <section className="panel deals-panel" id="deals">
-            <div className="panel-heading deals-heading">
-              <div>
-                <h2>Deals in progress</h2>
-                <p>Keep an eye on your team&apos;s active opportunities</p>
-              </div>
-              <a className="text-link" href="/deals">View all deals <Icon name="arrow" /></a>
-            </div>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>COMPANY</th>
-                    <th>DEAL NAME</th>
-                    <th>OWNER</th>
-                    <th>STAGE</th>
-                    <th>AMOUNT</th>
-                    <th>PROBABILITY</th>
-                    <th><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deals.map((deal) => (
-                    <tr key={deal.company}>
-                      <td><span className={`company-avatar company-${deal.color}`}>{deal.initials}</span><strong>{deal.company}</strong></td>
-                      <td className="deal-name">{deal.title}</td>
-                      <td><span className="avatar avatar-owner">{deal.owner.split(" ").map((part) => part[0]).join("")}</span>{deal.owner}</td>
-                      <td><span className={`stage-pill stage-${deal.stage.toLowerCase()}`}>{deal.stage}</span></td>
-                      <td className="amount-cell">{deal.amount}</td>
-                      <td><span className="probability"><i style={{ width: deal.probability }} />{deal.probability}</span></td>
-                      <td><ActionMenu label={`More options for ${deal.company}`} destination="/deals" copyText={deal.company} buttonClass="row-more" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="panel tasks-panel" id="activities">
-            <div className="panel-heading deals-heading">
-              <div>
-                <h2>Upcoming tasks</h2>
-                <p>You have <strong>3 things</strong> on your plate</p>
-              </div>
-              <a className="text-link" href="/activities">View calendar <Icon name="arrow" /></a>
-            </div>
-            <div className="task-list">
-              {tasks.map((task) => (
-                <div className="task-item" key={task.title}>
-                  <span className="task-check" aria-hidden="true" />
-                  <div className="task-copy"><strong>{task.title}</strong><span>{task.detail}</span></div>
-                  <span className={`task-tag task-${task.tag.toLowerCase()}`}>{task.tag}</span>
-                  <ActionMenu label={`More options for ${task.title}`} destination="/activities" copyText={task.title} buttonClass="row-more" />
-                </div>
-              ))}
-            </div>
-          </section>
+          <DashboardLivePanels />
 
           <footer className="page-footer">
             <span>MYR CRM <i /> Workspace overview</span>
-            <span>Preview build · Sample data</span>
+            <span>Live workspace data</span>
           </footer>
         </div>
       </section>
