@@ -5,17 +5,21 @@ import GlobalSearch from './components/GlobalSearch';
 import HelpPopover from './components/HelpPopover';
 import DashboardLivePanels from './components/DashboardLivePanels';
 import MobileNavigation from './components/MobileNavigation';
+import Link from 'next/link';
 
 const navigation = [
-  { label: "Overview", icon: "grid", active: true },
-  { label: "Leads", icon: "users" },
-  { label: "Contacts", icon: "contact" },
-  { label: "Companies", icon: "building" },
-  { label: "Deals", icon: "briefcase" },
-  { label: "Activities", icon: "calendar" },
-  { label: "Automation", icon: "sparkles" },
-  { label: "Reports", icon: "chart" },
-  { label: "Team", icon: "users" },
+  { label: "Overview", icon: "grid", href: "/", active: true },
+  { label: "Leads", icon: "users", href: "/leads" },
+  { label: "Contacts", icon: "contact", href: "/contacts" },
+  { label: "Companies", icon: "building", href: "/companies" },
+  { label: "Deals", icon: "briefcase", href: "/deals" },
+  { label: "Activities", icon: "calendar", href: "/activities" },
+  { label: "Automation", icon: "sparkles", href: "/automation" },
+  { label: "Email", icon: "contact", href: "/email" },
+  { label: "Reports", icon: "chart", href: "/reports" },
+  { label: "Audit Logs", icon: "chart", href: "/audit-logs" },
+  { label: "Settings", icon: "building", href: "/settings" },
+  { label: "Team", icon: "users", href: "/team" },
 ];
 
 function Icon({ name }: { name: string }) {
@@ -58,25 +62,25 @@ export default function Home() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#overview" aria-label="Myr CRM home">
+        <Link className="brand" href="/" aria-label="Myr CRM home">
           <span className="brand-mark">m</span>
           <span>myr<span className="brand-light">crm</span></span>
-        </a>
+        </Link>
 
         <WorkspaceSwitcher />
 
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
           {navigation.map((item) => (
-            <a
+            <Link
               className={`nav-item${item.active ? " active" : ""}`}
-              href={item.active ? "/" : `/${item.label.toLowerCase()}`}
+              href={item.href}
               key={item.label}
+              aria-current={item.active ? "page" : undefined}
             >
               <Icon name={item.icon} />
               <span>{item.label}</span>
-              {item.count && <span className="nav-count">{item.count}</span>}
-            </a>
+            </Link>
           ))}
         </nav>
 

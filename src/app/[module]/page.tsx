@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import WorkspaceSwitcher from '../components/WorkspaceSwitcher';
 import ProfileMenu from '../components/ProfileMenu';
@@ -64,7 +65,8 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   const [dealView, setDealView] = useState<'board' | 'table' | 'radar'>('board');
   const [moduleRows, setModuleRows] = useState<string[][]>([]);
   const { module: moduleName } = use(params);
-  const data = records[moduleName] || records.leads;
+  const data = records[moduleName];
+  if (!data) notFound();
   const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
   useEffect(() => {
     const saved = sessionStorage.getItem(`myr.preview.${moduleName}`);

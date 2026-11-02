@@ -459,7 +459,7 @@ export default function Home() {
     <div className="activities-screen">
       <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#" aria-label="Myr CRM home">
+        <a className="brand" href="/" aria-label="Myr CRM home">
           <span className="brand-mark">m</span>
           <span>myr<span className="brand-light">crm</span></span>
         </a>

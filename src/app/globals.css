@@ -67,6 +67,40 @@ input:focus-visible {
   min-height: 100vh;
 }
 
+.not-found-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.not-found-card {
+  width: min(100%, 440px);
+  padding: 40px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.not-found-code {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.not-found-card h1 {
+  margin: 12px 0 8px;
+  font: 800 26px/1.2 "Manrope", sans-serif;
+}
+
+.not-found-card p {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;

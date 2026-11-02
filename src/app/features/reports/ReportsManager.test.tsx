@@ -16,22 +16,24 @@ function jsonResponse(body: unknown, status = 200) {
 describe('ReportsManager', () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
-    apiFetchMock.mockResolvedValue(jsonResponse({
-      data: {
-        generatedAt: '2026-10-30T12:00:00.000Z',
-        metrics: {
-          totalLeads: 3,
-          openDeals: 2,
-          openPipelineValue: '1250.50',
-          wonRevenue: '700.00',
-          openActivities: 1,
-          completedActivities: 4,
+    apiFetchMock.mockImplementation((path) => Promise.resolve(path.endsWith('/settings')
+      ? jsonResponse({ data: { currency: 'USD' } })
+      : jsonResponse({
+        data: {
+          generatedAt: '2026-10-30T12:00:00.000Z',
+          metrics: {
+            totalLeads: 3,
+            openDeals: 2,
+            openPipelineValue: '1250.50',
+            wonRevenue: '700.00',
+            openActivities: 1,
+            completedActivities: 4,
+          },
+          leadsByStatus: [{ status: 'QUALIFIED', count: 3 }],
+          dealsByStatus: [{ status: 'OPEN', count: 2, value: '1250.50' }],
+          activitiesByStatus: [{ status: 'COMPLETED', count: 4 }],
         },
-        leadsByStatus: [{ status: 'QUALIFIED', count: 3 }],
-        dealsByStatus: [{ status: 'OPEN', count: 2, value: '1250.50' }],
-        activitiesByStatus: [{ status: 'COMPLETED', count: 4 }],
-      },
-    }));
+      })));
   });
 
   it('loads live workspace metrics and status breakdowns', async () => {
@@ -45,7 +47,9 @@ describe('ReportsManager', () => {
   });
 
   it('shows API errors instead of sample report data', async () => {
-    apiFetchMock.mockResolvedValue(jsonResponse({ error: { message: 'Reports unavailable' } }, 503));
+    apiFetchMock.mockImplementation((path) => Promise.resolve(path.endsWith('/settings')
+      ? jsonResponse({ data: { currency: 'USD' } })
+      : jsonResponse({ error: { message: 'Reports unavailable' } }, 503)));
     render(<ReportsManager />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Reports unavailable');

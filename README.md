@@ -173,11 +173,26 @@ The repository is in an early MVP foundation stage, not production-ready.
 Update this section whenever implementation changes are made. Include what
 changed, checks actually run, and any important remaining limitation.
 
+- 2026-11-02: Connected Gmail SMTP for local email delivery using the shared Nodemailer transport. Verified the transporter and sent a test message successfully. Production deployments still need the same SMTP environment variables configured.
+
+- 2026-10-31: Reports now format pipeline and won-revenue amounts using the
+  selected workspace currency from Settings. Frontend typecheck and
+  `git diff --check` passed; tests were not run.
 - 2026-10-31: Replaced the home dashboard's sample metrics, deal rows, and
   activities with tenant-scoped API data; added loading, empty, retry, and
   authentication states. Removed fabricated trend percentages and corrected
   stale preview labels. Checks were not run in this turn; a visual browser pass
   and the project checks remain outstanding.
+- 2026-10-31: Completed workspace navigation links for Email, Audit Logs, and
+  Settings; made the Activities brand link return to Overview; and changed
+  unknown module names to render the app's 404 page instead of a misleading
+  Leads preview. Verification: web tests (16), API tests (79), web/API
+  typechecks, web/API builds, and `git diff --check` passed. The API test runner
+  needed permission to create its IPC pipe after the sandbox blocked it. CSV
+  import/export, duplicate
+  detection, attachments, and queued email retries remain outside the current
+  MVP contract; SMTP provider setup
+  and visual browser review still need environment access.
 - 2026-10-31: Finished backend integration for the Activities, Automation, and
   Email work: tenant-scoped assignment updates and notifications, automation
   run history and role enforcement, and SMTP-backed contact email delivery with
@@ -279,13 +294,11 @@ changed, checks actually run, and any important remaining limitation.
 
 
 
-## Next session
+## Remaining work
 
-- Preview web/API servers are running at `http://localhost:3000` and port
-  `4000`; PostgreSQL and local seed data remain available.
-- The same-origin API proxy was verified for login and the Reports,
-  Notifications, Audit Logs, and Settings endpoints. Sign in with the
-  local-only credentials in `DEMO-CREDENTIALS.local.md`.
-- Next, visually verify the dashboard and responsive module screens, configure
-  an SMTP provider before production email delivery, and run the project checks
-  after implementation changes.
+- Email delivery needs a configured SMTP provider and an end-to-end provider
+  check before it can be considered operational in a deployed workspace.
+- A visual browser pass over the dashboard and responsive module screens is
+  still outstanding; this workspace has no browser automation tool available.
+- CSV import/export, duplicate detection, file attachments, and automatic email
+  retries are product enhancements outside the current documented MVP scope.
