@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { crmApiFetch } from '../../lib/api-client';
 
@@ -45,6 +45,7 @@ export default function TeamPage() {
       const billingPayload = await billingRes.json();
       if (!membersRes.ok) throw new Error((membersPayload as any)?.error?.message || 'Could not load members.');
       if (!invitesRes.ok) throw new Error((invitesPayload as any)?.error?.message || 'Could not load invitations.');
+      if (!billingRes.ok) throw new Error((billingPayload as any)?.error?.message || 'Could not load subscription details.');
       setMembers((membersPayload as any).data ?? []);
       setInvitations((invitesPayload as any).data ?? []);
       const sub = (billingPayload as any)?.data?.subscription;
@@ -61,7 +62,7 @@ export default function TeamPage() {
     load();
   }, []);
 
-  async function invite(event: Event) {
+  async function invite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError('');
@@ -71,7 +72,7 @@ export default function TeamPage() {
       const response = await crmApiFetch('/organizations/invitations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail, role: invokeRole }),
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -90,11 +91,37 @@ export default function TeamPage() {
   }
 
   async function removeMember(memberId: string, memberName: string) {
-    // Handle member removal
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await crmApiFetch('/organizations/memberships/' + memberId, { method: 'DELETE' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((payload as any)?.error?.message || 'Could not remove member.');
+      setNotice('Removed ' + memberName + '.');
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not remove member.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function revokeInvitation(invitationId: string) {
-    // Handle invitation revocation
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await crmApiFetch('/organizations/invitations/' + invitationId, { method: 'DELETE' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((payload as any)?.error?.message || 'Could not revoke invitation.');
+      setNotice('Invitation revoked.');
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not revoke invitation.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -106,7 +133,7 @@ export default function TeamPage() {
             <p>{seats?.toString() || ''} of {planCode?.replace('_', ' ') || ''} seats</p>
           </div>
           <div className="module-heading-actions">
-            <Link href="/invite" className="button button-primary">
+            <Link href="#invite-member" className="button button-primary">
               Invite team member
             </Link>
           </div>
@@ -138,6 +165,8 @@ export default function TeamPage() {
         </section>
 
         <section className="panel module-team-directory" aria-label="Team directory">
+          {error && <p role="alert" style={{ color: '#b91c1c' }}>{error}</p>}
+          {notice && <p role="status" style={{ color: '#166534' }}>{notice}</p>}
           <div className="panel-heading module-directory-heading">
             <div>
               <h2>Team members</h2>
@@ -158,6 +187,44 @@ export default function TeamPage() {
               </select>
             </div>
           </div>
+
+          <section style={{ background: '#fff', border: '1px solid #e8ece8', borderRadius: 12, padding: 20 }}>
+            <h2 style={{ fontSize: 16, margin: '0 0 12px' }}>Members</h2>
+            {loading ? (
+              <p style={{ color: '#85849a' }}>Loading…</p>
+            ) : members.length === 0 ? (
+              <p style={{ color: '#85849a' }}>No team members found.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #e3ebe6' }}>
+                    <th style={{ textAlign: 'left', padding: '9px 10px', color: '#8a889d', fontSize: 10, fontWeight: 700 }}>NAME</th>
+                    <th style={{ textAlign: 'left', padding: '9px 10px', color: '#8a889d', fontSize: 10, fontWeight: 700 }}>EMAIL</th>
+                    <th style={{ textAlign: 'left', padding: '9px 10px', color: '#8a889d', fontSize: 10, fontWeight: 700 }}>ROLE</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((member) => (
+                    <tr key={member.id}>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid #f0f3f0' }}>{member.name}</td>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid #f0f3f0' }}>{member.email}</td>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid #f0f3f0', textTransform: 'capitalize' }}>{member.role.replace(/_/g, ' ')}</td>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid #f0f3f0' }}>
+                        <button
+                          onClick={() => removeMember(member.id, member.name)}
+                          disabled={busy}
+                          style={{ padding: '6px 10px', border: '1px solid #e2dff0', borderRadius: 6, background: '#fff', color: '#a55143', cursor: busy ? 'not-allowed' : 'pointer', font: 'inherit', fontSize: 11 }}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
 
           <section style={{ background: '#fff', border: '1px solid #e8ece8', borderRadius: 12, padding: 20 }}>
             <h2 style={{ fontSize: 16, margin: '0 0 12x' }}>Pending invitations <span style={{ fontSize: 12, color: '#85849a', fontWeight: 500 }}>({invitations.length})</span></h2>
@@ -209,6 +276,7 @@ export default function TeamPage() {
             </div>
           </div>
           <form
+            id="invite-member"
             onSubmit={(event) => {
               event.preventDefault();
               invite(event);

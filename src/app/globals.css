@@ -2953,6 +2953,20 @@ td:first-child strong {
   opacity: .65;
 }
 
+.team-seat-limit-warning {
+  border: 1px solid #f1cecb;
+  border-radius: 8px;
+  background: #fff5f4;
+  padding: 10px 14px;
+  color: #9c3932;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.team-seat-limit-warning strong {
+  color: #9c3932;
+}
+
 .subscription-disclaimer {
   max-width: 780px;
   margin: 18px auto;
@@ -3499,3 +3513,14 @@ td:first-child strong {
 .auth-demo-button { padding: 8px 10px; border: 1px solid #dfe5e0; border-radius: 8px; background: #fff; color: #263c35; font-size: 13px; font-weight: 500; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
 .auth-demo-button:hover:not(:disabled) { background: #edf5f0; border-color: #2b7a62; }
 .auth-demo-button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.team-seats-summary {
+  margin: 0;
+  color: #6b706d;
+  font-size: 11px;
+}
+
+.team-seats-summary strong {
+  color: #263c35;
+  font-weight: 700;
+}

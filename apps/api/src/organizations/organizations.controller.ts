@@ -34,16 +34,17 @@ export class OrganizationsController {
         user: { status: "ACTIVE" },
       },
       select: {
-        userId: true,
+        id: true,
         role: true,
-        user: { select: { name: true } },
+        user: { select: { name: true, email: true } },
       },
       orderBy: [{ user: { name: "asc" } }, { userId: "asc" }],
     });
     return {
-      data: memberships.map(({ userId, role, user }) => ({
-        id: userId,
+      data: memberships.map(({ id, role, user }) => ({
+        id,
         name: user.name,
+        email: user.email,
         role: role.toLowerCase(),
       })),
     };
@@ -75,7 +76,7 @@ export class OrganizationsController {
       throw new ForbiddenException({ code: "forbidden", message: "Your organization role cannot invite members" });
     }
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-    if (!email || email.length > 254 || !/^\\S+@\\S+\\.\\S+$/.test(email)) throw new BadRequestException({ code: "validation_error", message: "A valid email is required" });
+    if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email)) throw new BadRequestException({ code: "validation_error", message: "A valid email is required" });
     const roleInput = typeof body?.role === "string" ? body.role.toLowerCase() : "sales_rep";
     const roleMap: Record<string, "ADMIN" | "SALES_MANAGER" | "SALES_REP" | "READ_ONLY"> = {
       admin: "ADMIN",
@@ -144,7 +145,6 @@ export class OrganizationsController {
     if (!request.orgId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated organization context required" });
     return request.orgId;
   }
-}
 
   @SkipOrganizationContext()
   @Post("invitations/:token/accept")
@@ -192,6 +192,45 @@ export class OrganizationsController {
     return { ok: true };
   }
 
+  @Delete("memberships/:id")
+  async removeMember(@Req() request: HttpRequest, @Param("id") membershipId: string) {
+    const organizationId = this.organizationId(request);
+    const requesterRole = request.organizationRole;
+    if (!requesterRole || !["owner", "admin"].includes(requesterRole)) {
+      throw new ForbiddenException({ code: "forbidden", message: "Only a workspace owner or administrator can remove members" });
+    }
+
+    const membership = await this.prisma.membership.findUnique({
+      where: { id: membershipId },
+      select: { id: true, organizationId: true, userId: true, status: true },
+    });
+    if (!membership) throw new NotFoundException({ code: "not_found", message: "Membership not found" });
+    if (membership.organizationId !== organizationId) throw new ForbiddenException({ code: "forbidden", message: "This member does not belong to the selected workspace" });
+
+    const requester = await this.prisma.membership.findFirst({
+      where: { organizationId, userId: this.userId(request), status: "ACTIVE", user: { status: "ACTIVE" } },
+      select: { role: true, userId: true },
+    });
+    if (!requester) throw new ForbiddenException({ code: "forbidden", message: "Your workspace membership could not be verified" });
+    if (requester.userId === membership.userId && requesterRole === "admin") {
+      throw new ForbiddenException({ code: "forbidden", message: "Administrators cannot remove themselves from the workspace" });
+    }
+
+    const isLastActiveMember = await this.prisma.membership.count({
+      where: { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } },
+    }) === 1;
+    if (isLastActiveMember) {
+      throw new ForbiddenException({ code: "forbidden", message: "You cannot remove the last active member of a workspace. Transfer ownership first, or change the workspace status to suspended." });
+    }
+
+    await this.prisma.membership.update({
+      where: { id: membershipId },
+      data: { status: "REMOVED" as const },
+    });
+
+    return { ok: true };
+  }
+
   private async assertSeatAvailable(organizationId: string) {
     const organization = await this.prisma.organization.findUnique({
       where: { id: organizationId },
@@ -208,4 +247,4 @@ export class OrganizationsController {
       throw new ConflictException({ code: "seat_limit_reached", message: `This plan allows up to ${plan.seats} members` });
     }
   }
-
+}
