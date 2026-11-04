@@ -38,6 +38,19 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     async function checkAccess() {
       try {
+        const adminResponse = await crmApiFetch('/control-panel/access', { signal: controller.signal });
+        if (adminResponse.ok) {
+          window.location.replace('/control-panel');
+          return;
+        }
+        if (adminResponse.status === 401) {
+          window.location.assign('/sign-in');
+          return;
+        }
+        if (adminResponse.status !== 403) {
+          throw new Error('Could not verify platform administrator access.');
+        }
+
         const response = await crmApiFetch('/billing/current', { signal: controller.signal });
         let payload: unknown;
         try {

@@ -1,29 +1,20 @@
 'use client';
 
-import Link from 'next/link';
 import { use, useEffect, useMemo, useState } from 'react';
-import WorkspaceSwitcher from '../components/WorkspaceSwitcher';
-import ProfileMenu from '../components/ProfileMenu';
-import NotificationPopover from '../components/NotificationPopover';
+import { notFound } from 'next/navigation';
 import CreateRecordDialog from '../components/CreateRecordDialog';
-import GlobalSearch from '../components/GlobalSearch';
-import HelpPopover from '../components/HelpPopover';
+import CrmShell from '../components/CrmShell';
 import RadialBarChart from '../components/RadialBarChart';
 import NightingaleChart from '../components/NightingaleChart';
 import RadarStageChart from '../components/RadarStageChart';
 import type { DistributionDatum } from '../components/chart-types';
-import MobileNavigation from '../components/MobileNavigation';
-import { SubscriptionExpiryBanner, WorkspaceAccessGate } from '../components/WorkspaceAccessGate';
+import { WorkspaceAccessGate } from '../components/WorkspaceAccessGate';
 import LeadsManager from '../features/leads/LeadsManager';
 import ContactsManager from '../features/contacts/ContactsManager';
 import CompaniesManager from '../features/companies/CompaniesManager';
 import DealsManager from '../features/deals/DealsManager';
-
-const navigation = [
-  ['Overview', '/'], ['Leads', '/leads'], ['Contacts', '/contacts'],
-  ['Companies', '/companies'], ['Deals', '/deals'], ['Activities', '/activities'],
-  ['Automation', '/automation'], ['Reports', '/reports'],
-];
+import TeamManager from '../features/team/TeamManager';
+import { fetchEnabledModules } from '../../lib/module-permissions';
 
 const dealStages = [
   { name: 'Discovery', tone: 'blue' }, { name: 'Qualified', tone: 'green' },
@@ -45,6 +36,7 @@ const records: Record<string, { title: string; label: string; columns: string[];
   activities: { title: 'Activities', label: 'Calls, meetings, and follow-ups to keep every deal on track.', columns: ['ACTIVITY', 'RELATED TO', 'TYPE', 'DUE', 'STATUS'], metric: '5 due today', rows: [['Follow up with Olivia', 'Northstar Labs', 'Call', 'Today · 10:30 AM', 'Open'], ['Send proposal', 'Northstar Labs', 'Email', 'Today · 1:00 PM', 'Open'], ['Review Q4 pipeline', 'Workspace', 'Task', 'Tomorrow · 9:00 AM', 'In progress'], ['Product walkthrough', 'Forma Studio', 'Meeting', 'Oct 30 · 2:00 PM', 'Scheduled']] },
   automation: { title: 'Automation', label: 'Give your team more time for the conversations that matter.', columns: ['WORKFLOW', 'TRIGGER', 'LAST RUN', 'COMPLETED', 'STATUS'], metric: '3 active workflows', rows: [['New lead follow-up', 'Lead created', '12 min ago', '128', 'Active'], ['Deal stage alert', 'Stage changed', '1 hour ago', '42', 'Active'], ['Weekly pipeline digest', 'Every Monday', 'Yesterday', '16', 'Active'], ['Inactive contact reminder', 'No activity · 30d', 'Oct 25', '9', 'Paused']] },
   reports: { title: 'Reports', label: 'A clear view of team performance and business momentum.', columns: ['REPORT', 'OWNER', 'LAST UPDATED', 'SCHEDULE', ''], metric: '4 reports ready', rows: [['Pipeline overview', 'Maya Chen', 'Today · 9:12 AM', 'Weekly', 'Open'], ['Lead conversion', 'Jordan Lee', 'Yesterday', 'Monthly', 'Open'], ['Team activity', 'Alex Morgan', 'Oct 25', 'Weekly', 'Open'], ['Revenue forecast', 'Maya Chen', 'Oct 24', 'Monthly', 'Open']] },
+  team: { title: 'Team', label: 'Manage workspace members and pending invitations.', columns: [], metric: '0 members', rows: [] },
 };
 
 export default function ModulePage({ params }: { params: Promise<{ module: string }> }) {
@@ -53,13 +45,29 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   const [showCreate, setShowCreate] = useState(false);
   const [dealView, setDealView] = useState<'board' | 'table' | 'radar'>('board');
   const [moduleRows, setModuleRows] = useState<string[][]>([]);
+  const [moduleAccess, setModuleAccess] = useState<'loading' | 'allowed' | 'disabled' | 'error'>('loading');
+  const [moduleAccessError, setModuleAccessError] = useState('');
   const { module: moduleName } = use(params);
-  const data = records[moduleName] || records.leads;
-  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Reports: 'report' }[data.title] || 'record';
+  const data = records[moduleName];
+  if (!data) notFound();
+  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Reports: 'report', Team: 'team member' }[data.title] || 'record';
   useEffect(() => {
     const saved = sessionStorage.getItem(`myr.preview.${moduleName}`);
     setModuleRows(saved ? JSON.parse(saved) as string[][] : data.rows);
   }, [data, moduleName]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setModuleAccess('loading');
+    void fetchEnabledModules(controller.signal)
+      .then((modules) => setModuleAccess(modules.includes(moduleName) ? 'allowed' : 'disabled'))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setModuleAccessError(error instanceof Error ? error.message : 'Could not verify workspace module access.');
+          setModuleAccess('error');
+        }
+      });
+    return () => controller.abort();
+  }, [moduleName]);
   const rows = useMemo(() => moduleRows.filter((row) => row.join(' ').toLowerCase().includes(query.toLowerCase())), [moduleRows, query]);
   const moduleChart = useMemo(() => {
     const config = moduleCharts[data.title];
@@ -99,21 +107,13 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
 
   return (
     <WorkspaceAccessGate>
-    <main className="app-shell">
-      <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Myr CRM home"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
-        <WorkspaceSwitcher />
-        <div className="nav-section-label">WORKSPACE</div>
-        <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : '⌁'}</span><span>{label}</span>{label === 'Leads' && <span className="nav-count">24</span>}{label === 'Activities' && <span className="nav-count">5</span>}</Link>)}
-        </nav>
-        <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✳</div><strong>Need a hand?</strong><p>Visit our help center to get started.</p><HelpPopover /></div><ProfileMenu /></div>
-      </aside>
-
-      <section className="main-panel">
-        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><SubscriptionExpiryBanner /><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
+    <CrmShell active={data.title}>
         <div className="content module-content">
-          {data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
+          {moduleAccess === 'loading' ? <p role="status">Checking module access…</p>
+            : moduleAccess === 'error' ? <div className="control-panel-error" role="alert">{moduleAccessError}</div>
+              : moduleAccess === 'disabled' ? <div className="control-panel-error" role="alert">This module is not enabled for your workspace. Contact your platform administrator.</div>
+                : <>
+          {data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : data.title === 'Team' ? <TeamManager /> : <>
           <section className="welcome-row module-welcome"><div><p className="date-label">WORKSPACE / {data.title.toUpperCase()}</p><h1>{data.title}</h1><p className="welcome-copy">{data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
           {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
           <div className="demo-notice"><span className="notice-dot" /> This is a UI preview with sample data. Records are not connected to a database yet.</div>
@@ -125,10 +125,10 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
           </section>
           <footer className="page-footer"><span>MYR CRM <i /> Workspace {data.title.toLowerCase()}</span><span>Preview build · Sample data</span></footer>
           </>}
+                </>}
         </div>
-        {showCreate && <CreateRecordDialog title={singular} columns={data.columns} onClose={() => setShowCreate(false)} onCreate={addRecord} />}
-      </section>
-    </main>
+        {showCreate && moduleAccess === 'allowed' && <CreateRecordDialog title={singular} columns={data.columns} onClose={() => setShowCreate(false)} onCreate={addRecord} />}
+    </CrmShell>
     </WorkspaceAccessGate>
   );
 }

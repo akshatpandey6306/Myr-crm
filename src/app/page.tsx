@@ -11,6 +11,7 @@ import PipelineDistributionChart from './components/PipelineDistributionChart';
 import MobileNavigation from './components/MobileNavigation';
 import { SubscriptionExpiryBanner, WorkspaceAccessGate } from './components/WorkspaceAccessGate';
 import { crmApiFetch } from '../lib/api-client';
+import { fetchEnabledModules } from '../lib/module-permissions';
 
 type DashboardDeal = {
   id: string;
@@ -121,6 +122,8 @@ export default function Home() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashboardError, setDashboardError] = useState('');
   const [userName, setUserName] = useState('there');
+  const [enabledModules, setEnabledModules] = useState<string[]>([]);
+  const [moduleAccessError, setModuleAccessError] = useState('');
 
   useEffect(() => {
     const storedUser = sessionStorage.getItem('myr.user');
@@ -134,6 +137,13 @@ export default function Home() {
     }
 
     const controller = new AbortController();
+    void fetchEnabledModules(controller.signal)
+      .then(setEnabledModules)
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setModuleAccessError(error instanceof Error ? error.message : 'Could not load workspace module access.');
+        }
+      });
     async function loadDashboard() {
       try {
         const response = await crmApiFetch('/dashboard/summary', { signal: controller.signal });
@@ -184,7 +194,7 @@ export default function Home() {
 
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map((item) => (
+          {navigation.filter((item) => item.active || enabledModules.includes(item.label.toLowerCase())).map((item) => (
             <a
               className={`nav-item${item.active ? " active" : ""}`}
               href={item.active ? "/" : `/${item.label.toLowerCase()}`}
@@ -209,7 +219,7 @@ export default function Home() {
 
       <section className="main-panel" id="overview">
         <header className="topbar">
-          <MobileNavigation active="Overview" />
+          <MobileNavigation active="Overview" enabledModules={enabledModules} />
           <div className="breadcrumbs">
             <span>Workspace</span>
             <Icon name="chevron" />
@@ -240,6 +250,7 @@ export default function Home() {
             </div>
           </section>
 
+          {moduleAccessError && <div className="demo-notice" role="alert"><span className="notice-dot" />{moduleAccessError}</div>}
           {dashboardError && <div className="demo-notice" role="alert"><span className="notice-dot" />{dashboardError}{dashboardError.toLowerCase().includes('token') || dashboardError.toLowerCase().includes('authenticated') ? <> · <a href="/sign-in">Sign in</a></> : null}</div>}
 
           <section className="metric-grid" aria-label="CRM summary">

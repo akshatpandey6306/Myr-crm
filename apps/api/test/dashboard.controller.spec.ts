@@ -73,4 +73,21 @@ describe("DashboardController", () => {
     const controller = new DashboardController({} as never);
     await assert.rejects(controller.summary({} as never), UnauthorizedException);
   });
+
+  it("does not include dashboard data from disabled lead and deal modules", async () => {
+    const controller = new DashboardController({} as never);
+    const response = await controller.summary({
+      orgId: "org-a",
+      userId: "user-a",
+      enabledModules: [],
+    } as never);
+
+    assert.deepEqual(response, {
+      data: {
+        metrics: { totalLeads: 0, openDeals: 0, pipelineValue: 0, wonDeals: 0 },
+        pipeline: [],
+        recentDeals: [],
+      },
+    });
+  });
 });

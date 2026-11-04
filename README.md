@@ -96,44 +96,59 @@ in this workspace and is excluded from Git.
 
 The repository is in an early MVP foundation stage, not production-ready.
 
-- The web UI has dashboard and sample module pages plus sign-in/sign-up forms.
+- The web UI has API-backed dashboard, leads, contacts, companies, deals, and
+  team screens plus sign-in/sign-up forms. Activities, automation, and reports
+  still use preview data or placeholders.
 - The NestJS API has health, authentication, organizations, organization-member
   listing, internal control-panel, billing/subscription, dashboard summary, leads, contacts,
   companies, deals, and pipeline routes.
 - PostgreSQL/Prisma persistence currently covers users, organizations,
-  memberships, subscriptions, and expiring sessions. Signup creates the initial
+  memberships, subscriptions, sessions, refresh tokens, and persistent
+  authentication rate limits. Signup creates the initial
   Owner membership and an unlicensed workspace atomically. Subscription status
   and expiry are checked along with organization membership on protected API
-  requests. Local test mode offers one no-charge 2-day trial; Razorpay checkout
-  is not connected yet.
+  requests. Local test mode offers one no-charge 2-day trial; PayU checkout is
+  not connected and no online payment is collected.
 - Leads, contacts, companies, deals, and pipelines persist in PostgreSQL.
   Their queries, updates, and archives are organization-scoped; membership and
   composite foreign keys prevent cross-organization owner/creator and related
   record references. Company and deal CRUD is soft-archived, and pipelines
-  support basic management of names and stages. The Companies and Deals
-  screens use the API and are responsive. Activities still have no API or
-  durable persistence.
+  support basic management of names and stages. The CRM screens use the API
+  and are responsive. Activities have a tenant-scoped API but no integrated
+  workspace UI; Automation and Reports remain previews.
 - The dashboard metrics, pipeline distribution, and recent open deals use a
   tenant-scoped API summary. Recent activity and upcoming tasks remain
   placeholders for the Activities module.
-- Browser authentication now uses an HttpOnly, SameSite=Lax session cookie while
-  bearer tokens remain supported for API clients. Password reset,
-  email-verification, invitation, rate-limiting, refresh-token, and full
-  permission-administration flows remain outstanding.
-- Organization-specific role policy and the shared Developer 2 contracts still
-  need review when that developer is available.
-- Internal platform administrators can view customer workspaces and suspend or
-  restore CRM access, review onboarding owners and subscription dates, and
-  manually activate or expire plans. Configure `PLATFORM_ADMIN_EMAILS` in the
+- Browser authentication uses short-lived HttpOnly session cookies and rotating
+  HttpOnly refresh cookies; bearer clients can rotate refresh tokens through the
+  API. Password-reset and email-verification links use the configured Resend
+  delivery service, with UI flows for recovery and verification. Production
+  workspace access requires verified email. Authentication throttles are
+  database-backed and shared across API instances. Configure `EMAIL_API_KEY`
+  and `EMAIL_FROM` before production signup/recovery. Full permission
+  administration remains outstanding.
+- The interim Owner/Admin/Manager/Representative/Read-only policy is
+  API-enforced; owners/admins can manage members except the Owner account,
+  admins cannot change their own role, and only owners can transfer ownership.
+  Developer 2 should review the policy and shared contracts before they are
+  treated as final.
+- Internal platform administrators can onboard and search customer
+  workspaces, review owner/member and seat details, filter by access,
+  subscription, plan, and signup date, and manually manage plans, CRM module
+  access, and subscriptions. Sensitive access/subscription/module changes
+  require a reason and are audited. Configure `PLATFORM_ADMIN_EMAILS` in the
   API environment. The local seed creates `admin@myrcrm.local` /
   `MyrAdmin123!` for testing only; never use or allowlist this account outside
   a local development database.
 - Workspaces without an active subscription are redirected to plan selection,
   and subscription expiry is enforced by protected API routes. Local
   `BILLING_TEST_MODE=true` allows one no-charge 2-day test trial, with a
-  header expiry warning during its final day. Razorpay checkout, verification, and
-  webhooks are not connected, so the displayed plan prices are not being
-  charged.
+  header expiry warning during its final day. The subscription page shows
+  configured rates and PayU branding, but checkout, payment verification, and
+  webhooks are not connected, so displayed prices are not being charged.
+  Expired workspaces can request manual platform-team activation; allowlisted
+  platform administrators bypass the subscription gate and use the control
+  panel without needing a customer subscription.
 
 ## Change log
 
@@ -185,7 +200,7 @@ changed, checks actually run, and any important remaining limitation.
   allowlist guard, and organization suspension enforced on protected CRM API
   requests. Added subscription plan selection, server-side access/expiry
   enforcement, a local test trial, admin plan controls, and an expiry warning.
-  Razorpay checkout and payment-verified activation remain pending.
+  Online checkout and payment-verified activation remain pending.
 - **2026-10-29:** Added a local-only seeded platform admin account for testing.
   Provision it with `npm run db:seed` and add its email to the local
   `PLATFORM_ADMIN_EMAILS` setting.
@@ -201,14 +216,29 @@ changed, checks actually run, and any important remaining limitation.
 - **2026-10-30:** Enhanced the internal control panel with per-workspace member viewing, plan cancellation, refresh, confirmation prompts, and more resilient API error handling. API and web typechecks and builds pass.
 - **2026-10-30:** Added tenant-scoped activities API (list/create/read/update/delete), validation of related records and assignment targets, completedAt lifecycle handling, and API unit coverage.
 - **2026-10-30:** Added a platform audit log model, service, admin-only read endpoint, and audit recording for workspace onboarding, suspension/restoration, and subscription changes.
+- **2026-11-04:** Clarified expired-subscription plan rates and manual activation on the subscription page, and routed platform administrators around the workspace subscription gate to the control panel. Web typecheck and production build passed.
+- **2026-11-04:** Fixed production API `.env` discovery for compiled starts, counted failed logins against throttling, prevented production responses from exposing development verification/reset tokens, and revoked active sessions on password reset. The local production API and web proxy health checks returned 200; Prisma reports no pending local migrations.
+- **2026-11-04:** Adopted the documented role matrix as interim Developer 1 policy. Added tenant-scoped member role changes, ownership transfer with concurrent-update safeguards, protected owner/admin operations, audit records, and Team UI controls. API typecheck/build and all 87 API tests passed; the web production build, Prisma schema validation, dependency audit, and `git diff --check` also passed. No Render deployment was performed.
+- **2026-11-04:** Added password-reset and email-verification pages with Resend-backed delivery, production verification gating, database-backed auth throttles, and rotating 15-minute sessions/30-day refresh tokens. API/web typechecks and builds passed; all 92 API tests passed; Prisma validation and dependency audit passed (0 vulnerabilities); the migration was applied to the local database and the schema is current; API and web-proxy health returned 200. No Render deployment or commit was made.
+- **2026-11-04:** Enhanced the platform-admin control panel without removing onboarding, owner/member details, manual subscription/module actions, plan management, or audit history. Added tenant search/filters, seat usage including pending invitations, recent-audit filtering, and required audited reasons for sensitive changes. Added a PayU wordmark/status notice only; online payments remain unavailable pending provider details and credentials.
+  Final checks: all 95 API tests, frontend typecheck, and `git diff --check`
+  passed. API typecheck/build and the web production build also passed on
+  2026-11-04. The local API health endpoint returned 200 and the web app
+  rendered the sign-in page successfully. No Render deployment or commit was
+  made.
 
-## Next session
+## Remaining work before production
 
-- Preview web/API servers were stopped at the user's request; PostgreSQL and
-  local seed data remain available.
-- The same-origin API proxy was verified for login, lead listing, lead creation,
-  and archival through the web origin. Sign in with the local-only credentials
-  in `DEMO-CREDENTIALS.local.md`.
-- Next, visually verify the lead dialog and responsive layouts in the browser,
-  then continue with the remaining CRM work. Re-run `npm run api:test`,
-  `npm run api:typecheck`, `npm run typecheck`, and `npm run build` after edits.
+- Configure Render web/API services and PostgreSQL, apply migrations with
+  `npm run db:deploy`, and provide production `EMAIL_API_KEY`, `EMAIL_FROM`,
+  `WEB_ORIGIN`, `API_PROXY_URL`, `DATABASE_URL`, and `PLATFORM_ADMIN_EMAILS`.
+- Follow the [Render deployment guide](docs/deployment/render.md) for service
+  commands and production settings.
+- PayU checkout, payment verification, and webhooks are not integrated; the
+  subscription page displays rates and provider branding, but plan activation
+  remains manual. Obtain the PayU product/region and credentials and separately
+  implement and validate self-service payments before accepting real payments.
+- Developer 2 should review the interim role policy and agree on remaining
+  cross-module permissions/contracts. Activities UI, Automation, and Reports
+  are also unfinished product work.
+- No production deployment has been run.

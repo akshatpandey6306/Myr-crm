@@ -3,6 +3,14 @@ import { describe, it } from 'node:test';
 import { UnauthorizedException } from '@nestjs/common';
 import { scryptSync, randomBytes } from 'node:crypto';
 import { AuthController } from '../src/auth/auth.controller.js';
+import { AuthRateLimitService } from '../src/auth/auth-rate-limit.service.js';
+
+const authRateLimits = { assertAllowed: async () => undefined };
+const emailService = {
+  isConfigured: () => false,
+  sendVerification: async () => undefined,
+  sendPasswordReset: async () => undefined,
+};
 
 function makeHash(password: string) {
   const salt = randomBytes(16);
@@ -35,11 +43,14 @@ describe('AuthController login', () => {
       let sessionCreated = false;
       const prisma = {
         user: { findUnique: async () => user },
-        session: { create: async () => { sessionCreated = true; return {}; } },
+        $transaction: async (operation: (tx: never) => Promise<void>) => operation({
+          session: { create: async () => { sessionCreated = true; } },
+          refreshToken: { create: async () => undefined },
+        } as never),
       };
-      const controller = new AuthController(prisma as never);
+      const controller = new AuthController(prisma as never, authRateLimits as AuthRateLimitService, emailService as never);
       const httpResponse = { setHeader: () => {} };
-      const result = await controller.login({ email: account.email, password: account.password }, httpResponse as never);
+      const result = await controller.login({ headers: {}, params: {}, path: '' }, { email: account.email, password: account.password }, httpResponse as never);
       assert.equal(result.user.email, account.email);
       assert.equal(typeof result.token, 'string');
       assert.ok(sessionCreated);
@@ -48,11 +59,17 @@ describe('AuthController login', () => {
 
   it('rejects invalid credentials', async () => {
     const user = makeUser('maya@studionorth.co', 'password123');
-    const prisma = { user: { findUnique: async () => user }, session: { create: async () => ({}) } };
-    const controller = new AuthController(prisma as never);
+    const prisma = {
+      user: { findUnique: async () => user },
+      $transaction: async (operation: (tx: never) => Promise<void>) => operation({
+        session: { create: async () => undefined },
+        refreshToken: { create: async () => undefined },
+      } as never),
+    };
+    const controller = new AuthController(prisma as never, authRateLimits as AuthRateLimitService, emailService as never);
     const httpResponse = { setHeader: () => {} };
     await assert.rejects(
-      () => controller.login({ email: 'maya@studionorth.co', password: 'wrong' }, httpResponse as never),
+      () => controller.login({ headers: {}, params: {}, path: '' }, { email: 'maya@studionorth.co', password: 'wrong' }, httpResponse as never),
       UnauthorizedException,
     );
   });

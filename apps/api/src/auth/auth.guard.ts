@@ -26,12 +26,25 @@ export class AuthGuard implements CanActivate {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const session = await this.prisma.session.findFirst({
       where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "ACTIVE" } },
-      select: { userId: true },
+      select: { userId: true, user: { select: { emailVerifiedAt: true } } },
     });
     if (!session) throw new UnauthorizedException({ code: "unauthorized", message: "Invalid or expired token" });
     request.userId = session.userId;
     request.token = token;
+    if (process.env.NODE_ENV === "production" && !session.user.emailVerifiedAt && !this.isVerificationExempt(request)) {
+      throw new ForbiddenException({
+        code: "email_verification_required",
+        message: "Verify your email address to access your workspace.",
+      });
+    }
     return true;
+  }
+
+  private isVerificationExempt(request: HttpRequest) {
+    const path = request.path.replace(/^\/api\/v\d+/, "");
+    return ["/auth/me", "/auth/logout", "/auth/refresh", "/auth/resend-verification"].some(
+      (allowed) => path === allowed,
+    );
   }
 
   private sessionCookie(cookieHeader: string | string[] | undefined) {

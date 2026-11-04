@@ -30,6 +30,11 @@ describe("BillingController", () => {
   it("returns selected workspace details, plans, and subscription status", async () => {
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
+      subscriptionPlan: { findMany: async () => [
+        { code: "starter", name: "Starter", price: 999, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 3, features: [] },
+        { code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 10, features: [] },
+        { code: "business", name: "Business", price: 4999, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 25, features: [] },
+      ] },
     } as never);
 
     const result = await controller.current({
@@ -40,6 +45,7 @@ describe("BillingController", () => {
     assert.equal(result.data.organization.id, "org-a");
     assert.equal(result.data.subscription.status, "pending");
     assert.equal(result.data.canManageBilling, true);
+    assert.equal(result.data.organizationRole, "owner");
     assert.equal(result.data.plans.length, 3);
   });
 
@@ -48,6 +54,7 @@ describe("BillingController", () => {
     let updateArgs: Record<string, unknown> | undefined;
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", trialDays: 0 }) },
       organization: {
         updateMany: async (args: Record<string, unknown>) => {
           updateArgs = args;
@@ -76,6 +83,7 @@ describe("BillingController", () => {
     process.env.BILLING_TEST_MODE = "true";
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership("PENDING", "SALES_REP") },
+      subscriptionPlan: { findFirst: async () => ({ code: "starter", trialDays: 0 }) },
     } as never);
 
     await assert.rejects(
@@ -88,6 +96,7 @@ describe("BillingController", () => {
     process.env.BILLING_TEST_MODE = "true";
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
+      subscriptionPlan: { findFirst: async () => ({ code: "starter", trialDays: 0 }) },
       organization: { updateMany: async () => ({ count: 0 }) },
     } as never);
 

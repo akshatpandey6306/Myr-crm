@@ -35,6 +35,7 @@ export class OrgGuard implements CanActivate {
             status: true,
             subscriptionStatus: true,
             subscriptionEndsAt: true,
+            enabledModules: true,
           },
         },
       },
@@ -53,6 +54,29 @@ export class OrgGuard implements CanActivate {
     }
     request.orgId = membership.organizationId;
     request.organizationRole = membership.role.toLowerCase() as HttpRequest["organizationRole"];
+    const enabledModules = membership.organization.enabledModules ?? [
+      "leads", "contacts", "companies", "deals", "activities", "team", "automation", "reports",
+    ];
+    request.enabledModules = enabledModules;
+    const module = this.moduleForPath(path);
+    if (module && !enabledModules.includes(module)) {
+      throw new ForbiddenException({ code: "module_disabled", message: `The ${module} module is not enabled for this workspace.` });
+    }
     return true;
+  }
+
+  private moduleForPath(path: string) {
+    const route = path.replace(/^\/api\/v\d+/, "").split("?")[0] ?? "";
+    const moduleRoutes: Array<[string, string[]]> = [
+      ["leads", ["/leads"]],
+      ["contacts", ["/contacts"]],
+      ["companies", ["/companies"]],
+      ["deals", ["/deals", "/pipelines"]],
+      ["activities", ["/activities"]],
+      ["team", ["/organizations/members", "/organizations/invitations", "/organizations/memberships"]],
+    ];
+    return moduleRoutes.find(([, prefixes]) =>
+      prefixes.some((prefix) => route === prefix || route.startsWith(`${prefix}/`)),
+    )?.[0];
   }
 }

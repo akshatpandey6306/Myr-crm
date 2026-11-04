@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { NotFoundException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { OrgGuard } from "../src/auth/org.guard.js";
 
 function makeContext(request: Record<string, unknown>) {
@@ -122,6 +122,31 @@ describe("OrgGuard", () => {
     await assert.rejects(guard.canActivate(makeContext(request) as never), (error: unknown) =>
       typeof error === "object" && error !== null && "response" in error &&
       (error.response as { code?: string }).code === "subscription_expired",
+    );
+  });
+
+  it("blocks direct API access to a module disabled for the tenant", async () => {
+    const request = {
+      headers: { "x-organization-id": "org-a" },
+      params: {},
+      path: "/api/v1/leads",
+      userId: "user-a",
+    };
+    const prisma = { membership: { findFirst: async () => ({
+      organizationId: "org-a",
+      role: "OWNER",
+      organization: {
+        status: "ACTIVE",
+        subscriptionStatus: "ACTIVE",
+        subscriptionEndsAt: new Date(Date.now() + 60_000),
+        enabledModules: ["contacts"],
+      },
+    }) } };
+    const guard = new OrgGuard(prisma as never);
+
+    await assert.rejects(guard.canActivate(makeContext(request) as never), (error: unknown) =>
+      error instanceof ForbiddenException &&
+      (error.getResponse() as { code?: string }).code === "module_disabled",
     );
   });
 });

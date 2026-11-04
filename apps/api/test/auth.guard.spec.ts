@@ -21,7 +21,7 @@ describe("AuthGuard", () => {
       session: {
         findFirst: async (args: Record<string, unknown>) => {
           sessionQuery = args;
-          return { userId: "user-a" };
+          return { userId: "user-a", user: { emailVerifiedAt: new Date() } };
         },
       },
     };
@@ -35,7 +35,7 @@ describe("AuthGuard", () => {
 
   it("continues accepting bearer tokens for API clients", async () => {
     const request: { headers: { authorization: string }; token?: string } = { headers: { authorization: "Bearer legacy-token" } };
-    const prisma = { session: { findFirst: async () => ({ userId: "user-a" }) } };
+    const prisma = { session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: new Date() } }) } };
     const guard = new AuthGuard(prisma as never);
 
     assert.equal(await guard.canActivate(makeContext(request) as never), true);
@@ -56,5 +56,25 @@ describe("AuthGuard", () => {
     const guard = new AuthGuard({} as never);
 
     await assert.rejects(guard.canActivate(makeContext({ headers: {} }) as never), UnauthorizedException);
+  });
+
+  it("blocks unverified production sessions outside account recovery endpoints", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const guard = new AuthGuard({
+        session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) },
+      } as never);
+      await assert.rejects(guard.canActivate(makeContext({
+        headers: { authorization: "Bearer token" },
+        path: "/api/v1/leads",
+      }) as never), (error: unknown) =>
+        error instanceof ForbiddenException && error.getResponse() instanceof Object &&
+        JSON.stringify(error.getResponse()).includes("email_verification_required"),
+      );
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
   });
 });

@@ -45,6 +45,14 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
       sessionStorage.removeItem('myr.organization');
       sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
       if (isRecord(payload.organization)) sessionStorage.setItem('myr.organization', JSON.stringify(payload.organization));
+      if (typeof payload.expiresAt === 'string') sessionStorage.setItem('myr.session.expiresAt', String(Date.parse(payload.expiresAt)));
+      if (payload.emailVerificationRequired === true || typeof payload.emailVerificationToken === 'string') {
+        const verificationToken = typeof payload.emailVerificationToken === 'string'
+          ? `?token=${encodeURIComponent(payload.emailVerificationToken)}`
+          : '';
+        window.location.assign(`/verify-email${verificationToken}`);
+        return;
+      }
       const controlPanelResponse = await crmApiFetch('/control-panel/access');
       if (controlPanelResponse.ok) window.location.assign('/control-panel');
       else if (controlPanelResponse.status === 403) window.location.assign('/');
@@ -92,6 +100,14 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
       sessionStorage.removeItem('myr.organization');
       sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
       if (isRecord(payload.organization)) sessionStorage.setItem('myr.organization', JSON.stringify(payload.organization));
+      if (typeof payload.expiresAt === 'string') sessionStorage.setItem('myr.session.expiresAt', String(Date.parse(payload.expiresAt)));
+      if (payload.emailVerificationRequired === true || typeof payload.emailVerificationToken === 'string') {
+        const verificationToken = typeof payload.emailVerificationToken === 'string'
+          ? `?token=${encodeURIComponent(payload.emailVerificationToken)}`
+          : '';
+        window.location.assign(`/verify-email${verificationToken}`);
+        return;
+      }
       const controlPanelResponse = await crmApiFetch('/control-panel/access');
       if (controlPanelResponse.ok) {
         window.location.assign('/control-panel');
@@ -121,7 +137,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
           {isSignup && <><label htmlFor="auth-name">Your name</label><input id="auth-name" name="name" type="text" autoComplete="name" placeholder="Maya Chen" required minLength={2} /><label htmlFor="auth-org">Workspace name</label><input id="auth-org" name="organizationName" type="text" placeholder="Studio North" required minLength={2} />
           </>}
           <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
-          <div className="auth-password-label"><label htmlFor="auth-password">Password</label>{!isSignup && <Link href="/sign-up">Need an account?</Link>}</div>
+          <div className="auth-password-label"><label htmlFor="auth-password">Password</label>{!isSignup && <Link href="/forgot-password">Forgot password?</Link>}</div>
           <div className="auth-password-wrap"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isSignup ? 'new-password' : 'current-password'} placeholder={isSignup ? 'At least 8 characters' : 'Enter your password'} minLength={8} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? 'Hide' : 'Show'}</button></div>
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button className="auth-submit" type="submit" disabled={busy}>{busy ? <><span className="auth-spinner" /> {isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>
@@ -144,6 +160,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
             </div>
           </div>
         )}
+        {!isSignup && <p className="auth-switch"><Link href="/sign-up">Need an account?</Link></p>}
         <p className="auth-switch">{isSignup ? 'Already have an account?' : 'New to Myr?'} <Link href={isSignup ? '/sign-in' : '/sign-up'}>{isSignup ? 'Sign in' : 'Create an account'}</Link></p>
         <p className="auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
       </div><span className="auth-copyright">© 2026 Myr CRM · Secure workspace access</span></section>

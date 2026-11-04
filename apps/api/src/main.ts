@@ -1,12 +1,18 @@
 import dotenv from "dotenv";
 import "reflect-metadata";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { HttpExceptionFilter } from "./common/http-exception.filter.js";
 
-dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+const envPath = [
+  resolve(moduleDirectory, "../../../.env"),
+  resolve(moduleDirectory, "../../../../.env"),
+].find(existsSync);
+dotenv.config(envPath ? { path: envPath } : {});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

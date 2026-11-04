@@ -4,20 +4,7 @@ import { HttpRequest } from "../common/http.types.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { effectiveSubscriptionStatus } from "./subscription-status.js";
 
-const TRIAL_DAYS = 2;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-export const SUBSCRIPTION_PLANS = [
-  { code: "starter", name: "Starter", monthlyPrice: 999, currency: "INR", seats: 3, features: ["Core CRM", "Leads and contacts", "Sales pipeline"] },
-  { code: "growth", name: "Growth", monthlyPrice: 2499, currency: "INR", seats: 10, features: ["Everything in Starter", "Team collaboration", "Reports and analytics"] },
-  { code: "business", name: "Business", monthlyPrice: 4999, currency: "INR", seats: 25, features: ["Everything in Growth", "Advanced permissions", "Priority support"] },
-] as const;
-
-type PlanCode = (typeof SUBSCRIPTION_PLANS)[number]["code"];
-
-function isPlanCode(value: unknown): value is PlanCode {
-  return typeof value === "string" && SUBSCRIPTION_PLANS.some((plan) => plan.code === value);
-}
 
 function isTestMode() {
   return process.env.BILLING_TEST_MODE === "true" && process.env.NODE_ENV !== "production";
@@ -32,6 +19,20 @@ export class BillingController {
   async current(@Req() request: HttpRequest) {
     const membership = await this.findMembership(request);
     const organization = membership.organization;
+    const plans = await this.prisma.subscriptionPlan.findMany({
+      where: { isActive: true },
+      orderBy: [{ price: "asc" }, { code: "asc" }],
+      select: {
+        code: true,
+        name: true,
+        price: true,
+        currency: true,
+        billingInterval: true,
+        trialDays: true,
+        employeeLimit: true,
+        features: true,
+      },
+    });
     return {
       data: {
         organization: { id: organization.id, name: organization.name, status: organization.status.toLowerCase() },
@@ -42,16 +43,26 @@ export class BillingController {
           endsAt: organization.subscriptionEndsAt?.toISOString() ?? null,
           provider: organization.billingProvider,
         },
-        plans: SUBSCRIPTION_PLANS,
+        plans: plans.map((plan) => ({
+          code: plan.code,
+          name: plan.name,
+          monthlyPrice: plan.price,
+          currency: plan.currency.trim(),
+          billingInterval: plan.billingInterval,
+          trialDays: plan.trialDays,
+          seats: plan.employeeLimit ?? 0,
+          features: plan.features,
+        })),
         testMode: isTestMode(),
         canManageBilling: membership.role === "OWNER" || membership.role === "ADMIN",
+        organizationRole: membership.role.toLowerCase(),
       },
     };
   }
 
   @Post("subscribe")
   async startTestSubscription(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
-    if (!isPlanCode(body?.planCode)) {
+    if (typeof body?.planCode !== "string") {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid subscription plan" });
     }
     if (!isTestMode()) {
@@ -65,16 +76,21 @@ export class BillingController {
     if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
       throw new ForbiddenException({ code: "forbidden", message: "Only a workspace owner or administrator can manage billing" });
     }
+    const plan = await this.prisma.subscriptionPlan.findFirst({
+      where: { code: body.planCode, isActive: true },
+      select: { code: true, trialDays: true },
+    });
+    if (!plan) throw new BadRequestException({ code: "validation_error", message: "Choose a valid active subscription plan" });
     if (membership.organization.status !== "ACTIVE") {
       throw new ForbiddenException({ code: "organization_suspended", message: "This workspace has been suspended. Contact your account administrator." });
     }
 
     const startsAt = new Date();
-    const endsAt = new Date(startsAt.getTime() + TRIAL_DAYS * DAY_MS);
+    const endsAt = new Date(startsAt.getTime() + (plan.trialDays || 2) * DAY_MS);
     const result = await this.prisma.organization.updateMany({
       where: { id: membership.organization.id, subscriptionStatus: "PENDING" },
       data: {
-        subscriptionPlan: body.planCode,
+        subscriptionPlan: plan.code,
         subscriptionStatus: "TRIAL",
         subscriptionStartedAt: startsAt,
         subscriptionEndsAt: endsAt,
@@ -90,7 +106,7 @@ export class BillingController {
 
     return {
       data: {
-        planCode: body.planCode,
+        planCode: plan.code,
         status: "trial",
         startsAt: startsAt.toISOString(),
         endsAt: endsAt.toISOString(),

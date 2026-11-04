@@ -9,6 +9,8 @@ type Plan = {
   name: string;
   monthlyPrice: number;
   currency: string;
+  billingInterval: 'monthly' | 'yearly';
+  trialDays: number;
   seats: number;
   features: string[];
 };
@@ -31,6 +33,8 @@ function isPlan(value: unknown): value is Plan {
     typeof value.name === 'string' &&
     typeof value.monthlyPrice === 'number' &&
     typeof value.currency === 'string' &&
+    (value.billingInterval === 'monthly' || value.billingInterval === 'yearly') &&
+    typeof value.trialDays === 'number' &&
     typeof value.seats === 'number' &&
     Array.isArray(value.features) &&
     value.features.every((feature) => typeof feature === 'string');
@@ -130,7 +134,7 @@ export default function SubscriptionPage() {
       <section className="subscription-content">
         <p className="date-label">WORKSPACE SUBSCRIPTION</p>
         <h1>{billing?.organization.name ? `Plans for ${billing.organization.name}` : 'Choose your CRM plan'}</h1>
-        <p className="subscription-intro">Select a plan to activate workspace access. Each plan is billed monthly once online checkout is configured.</p>
+        <p className="subscription-intro">Select a plan to activate workspace access. Prices use each plan’s configured billing interval.</p>
 
         {loading && <p className="subscription-state" role="status">Loading subscription plans…</p>}
         {error && <div className="control-panel-error" role="alert">{error}</div>}
@@ -141,6 +145,11 @@ export default function SubscriptionPage() {
               : `Subscription status: ${billing.subscription.status}`}
           </div>
         )}
+        {billing?.subscription.status === 'expired' && (
+          <div className="subscription-state" role="status">
+            Your workspace subscription has expired. Review the plan rates below and contact the platform team to arrange activation.
+          </div>
+        )}
 
         {billing && (
           <>
@@ -149,22 +158,39 @@ export default function SubscriptionPage() {
                 <article className={`subscription-plan${plan.code === 'growth' ? ' recommended' : ''}`} key={plan.code}>
                   {plan.code === 'growth' && <span className="subscription-recommended">POPULAR</span>}
                   <h2>{plan.name}</h2>
-                  <p className="subscription-price">₹{plan.monthlyPrice.toLocaleString('en-IN')}<small> / month</small></p>
-                  <p className="subscription-seats">Up to {plan.seats} team members</p>
+                  <p className="subscription-price">{plan.currency} {plan.monthlyPrice.toLocaleString('en-IN')}<small> / {plan.billingInterval === 'yearly' ? 'year' : 'month'}</small></p>
+                  <p className="subscription-seats">{plan.seats ? `Up to ${plan.seats} team members` : 'Unlimited team members'}</p>
                   <ul>{plan.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
                   {canStartTestPlan ? (
                     <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void startPlan(plan)}>
-                      {busyPlan === plan.code ? 'Starting trial…' : 'Start 2-day test trial'}
+                      {busyPlan === plan.code ? 'Starting trial…' : `Start ${plan.trialDays || 2}-day test trial`}
                     </button>
                   ) : <button className="button button-secondary subscription-button" type="button" disabled>
-                    {billing.subscription.status === 'pending' && !billing.canManageBilling ? 'Ask your workspace owner' : billing.testMode ? 'Trial already used' : 'Checkout coming soon'}
+                    {billing.subscription.status === 'pending' && !billing.canManageBilling
+                      ? 'Ask your workspace owner'
+                      : billing.subscription.status === 'expired'
+                        ? `Manual activation · ${plan.currency} ${plan.monthlyPrice.toLocaleString('en-IN')} / ${plan.billingInterval === 'yearly' ? 'year' : 'month'}`
+                        : billing.testMode ? 'Trial already used' : 'Checkout coming soon'}
                   </button>}
                 </article>
               ))}
             </div>
+            {['pending', 'expired'].includes(billing.subscription.status) && (
+              <aside className="subscription-payu-notice" aria-label="PayU payment status">
+                <span className="subscription-payu-wordmark">PayU</span>
+                <div>
+                  <strong>Online payments are not configured yet</strong>
+                  <p>
+                    {billing.testMode
+                      ? 'PayU checkout is not connected. Starting a test trial does not collect payment.'
+                      : 'No payment is collected on this page. Contact the platform team for manual plan activation.'}
+                  </p>
+                </div>
+              </aside>
+            )}
             <p className="subscription-disclaimer">
               {billing.testMode
-                ? 'TEST MODE: Starting a plan activates a 2-day trial only. No payment is collected. Razorpay checkout will be enabled after payment credentials are configured.'
+                ? 'TEST MODE: Starting a plan activates a trial only. The duration follows the selected plan, or defaults to 2 days when no trial duration is configured. No payment is collected.'
                 : 'Online checkout is not configured yet. Contact the platform team to activate your subscription.'}
             </p>
           </>

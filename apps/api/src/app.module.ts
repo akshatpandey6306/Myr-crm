@@ -17,6 +17,8 @@ import { AuditService } from "./audit/audit.service.js";
 import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
 import { BillingController } from "./billing/billing.controller.js";
 import { ActivitiesController } from "./activities/activities.controller.js";
+import { AuthRateLimitService } from "./auth/auth-rate-limit.service.js";
+import { EmailService } from "./auth/email.service.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
@@ -26,6 +28,8 @@ import { ActivitiesController } from "./activities/activities.controller.js";
     { provide: APP_GUARD, useClass: OrgGuard },
     PlatformAdminGuard,
     AuditService,
+    AuthRateLimitService,
+    EmailService,
   ],
 })
 export class AppModule {}
