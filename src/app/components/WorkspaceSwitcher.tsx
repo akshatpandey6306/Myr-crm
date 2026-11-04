@@ -39,11 +39,9 @@ export default function WorkspaceSwitcher() {
   }, []);
 
   if (!hydrated) {
-    return (
-      <div className="workspace-control" suppressHydrationWarning>
-        <button className="workspace-switcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span className="workspace-avatar">{active.name.slice(0, 1).toUpperCase()}</span><span className="workspace-copy"><strong>{active.name}</strong><small>{signedIn ? 'Your workspace' : 'Preview workspace'}</small></span><span className="switcher-chevron">⌄</span></button>
-      </div>
-    );
+    // Render nothing on the server so the client hydration HTML matches exactly.
+    // The workspace switcher is populated client-side after session data loads.
+    return null;
   }
 
   return (

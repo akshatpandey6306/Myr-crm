@@ -470,6 +470,51 @@ model OrganizationSettings {
   @@map("organization_settings")
 }
 
+// Settings configuration models
+model SettingsCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(100)
+  organizationId String @map("organization_id") @db.Uuid
+  organization Organization @relation(onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, name])
+  @@map("settings_categories")
+}
+
+model Setting {
+  id               String   @id @default(uuid()) @db.Uuid
+  key              String   @db.VarChar(100)
+  value            Json     @db.Json
+  settingCategory  SettingsCategory @relation(fields: [settingCategoryId], references: [id], onDelete: Cascade)
+  settingCategoryId String @map("setting_category_id") @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  organization     Organization @relation(onDelete: Cascade)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([organizationId, key])
+  @@map("settings")
+}
+
+model SettingsAuditLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  actorUserId      String   @map("actor_user_id") @db.Uuid
+  action           String   @db.VarChar(50) // created, updated, deleted
+  settingKey       String   @db.VarChar(100)
+  oldValue         Json?    @db.Json
+  newValue         Json?    @db.Json
+  ipAddress        String?  @db.VarChar(45)
+  userAgent        String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, settingKey, createdAt])
+  @@map("settings_audit_log")
+}
+
 model EmailMessage {
   id              String              @id @default(uuid()) @db.Uuid
   organizationId  String              @map("organization_id") @db.Uuid

@@ -26,11 +26,39 @@ import SettingsManager from '../features/settings/SettingsManager';
 import MembersManager from '../features/team/MembersManager';
 
 const navigation = [
-  ['Overview', '/'], ['Leads', '/leads'], ['Contacts', '/contacts'],
-  ['Companies', '/companies'], ['Deals', '/deals'], ['Activities', '/activities'],
-  ['Automation', '/automation'], ['Email', '/email'], ['Reports', '/reports'],
-  ['Audit Logs', '/audit-logs'], ['Settings', '/settings'], ['Team', '/team'],
+  ['Overview', '/'],
+  ['Leads', '/leads'],
+  ['Contacts', '/contacts'],
+  ['Companies', '/companies'],
+  ['Deals', '/deals'],
+  ['Activities', '/activities'],
+  ['Automation', '/automation'],
+  ['Email', '/email'],
+  ['Reports', '/reports'],
+  ['Audit Logs', '/audit-logs'],
+  ['Settings', '/settings'],
+  ['Team', '/team'],
 ];
+
+const navigationIcons: Record<string, string> = {
+  Overview: '◫',
+  Leads: '♙',
+  Contacts: '◎',
+  Companies: '▦',
+  Deals: '◇',
+  Activities: '◷',
+  Automation: '✳',
+  Email: '✉',
+  Reports: '⌁',
+  AuditLogs: '◉',
+  Settings: '⚙',
+  Team: '♙',
+};
+
+const navigationCounts: Record<string, number> = {
+  Leads: 24,
+  Activities: 5,
+};
 
 const dealStages = [
   { name: 'Discovery', tone: 'blue' }, { name: 'Qualified', tone: 'green' },
@@ -116,7 +144,22 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
         <WorkspaceSwitcher />
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span>{label === 'Leads' && <span className="nav-count">24</span>}{label === 'Activities' && <span className="nav-count">5</span>}</Link>)}
+          {navigation.map(([label, href]) => (
+            <Link
+              key={label}
+              href={href}
+              className={`nav-item${label === data.title ? ' active' : ''}`}
+            >
+              <span
+                className="module-nav-icon"
+                aria-hidden="true"
+              >
+                {navigationIcons[label] ?? '⌁'}
+              </span>
+              <span>{label}</span>
+              {navigationCounts[label] && <span className="nav-count">{navigationCounts[label]}</span>}
+            </Link>
+          ))}
         </nav>
         <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✳</div><strong>Need a hand?</strong><p>Visit our help center to get started.</p><HelpPopover /></div><ProfileMenu /></div>
       </aside>
