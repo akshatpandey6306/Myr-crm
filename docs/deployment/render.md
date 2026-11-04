@@ -17,6 +17,10 @@ region as the API.
 - Pre-deploy command: `npm run db:deploy --workspace @myr-crm/api`
 - Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`, `PLATFORM_ADMIN_EMAILS`,
   `EMAIL_API_KEY`, and `EMAIL_FROM`.
+- For a demo without verification emails, set `REQUIRE_EMAIL_VERIFICATION=false`
+  on the API service. Signup then skips verification email delivery and marks
+  newly created demo accounts verified. Remove this override to restore the
+  production default, which requires verification.
 - Set `WEB_ORIGIN` to the exact public origin of the Render web service. Use a
   verified sender address for `EMAIL_FROM` in the Resend account.
 - Do not set `BILLING_TEST_MODE=true` in production.

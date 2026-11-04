@@ -60,7 +60,9 @@ describe("AuthGuard", () => {
 
   it("blocks unverified production sessions outside account recovery endpoints", async () => {
     const originalNodeEnv = process.env.NODE_ENV;
+    const originalRequireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION;
     process.env.NODE_ENV = "production";
+    delete process.env.REQUIRE_EMAIL_VERIFICATION;
     try {
       const guard = new AuthGuard({
         session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) },
@@ -75,6 +77,27 @@ describe("AuthGuard", () => {
     } finally {
       if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = originalNodeEnv;
+      if (originalRequireEmailVerification === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+      else process.env.REQUIRE_EMAIL_VERIFICATION = originalRequireEmailVerification;
+    }
+  });
+
+  it("allows unverified production sessions when verification is disabled", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalRequireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION;
+    process.env.NODE_ENV = "production";
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    try {
+      const request = { headers: { authorization: "Bearer session-token" }, path: "/api/v1/leads" };
+      const guard = new AuthGuard({
+        session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) },
+      } as never);
+      assert.equal(await guard.canActivate(makeContext(request) as never), true);
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalRequireEmailVerification === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+      else process.env.REQUIRE_EMAIL_VERIFICATION = originalRequireEmailVerification;
     }
   });
 });

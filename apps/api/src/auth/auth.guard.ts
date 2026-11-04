@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { IS_PUBLIC_KEY } from "./public.decorator.js";
+import { isEmailVerificationRequired } from "./email-verification.js";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -31,7 +32,7 @@ export class AuthGuard implements CanActivate {
     if (!session) throw new UnauthorizedException({ code: "unauthorized", message: "Invalid or expired token" });
     request.userId = session.userId;
     request.token = token;
-    if (process.env.NODE_ENV === "production" && !session.user.emailVerifiedAt && !this.isVerificationExempt(request)) {
+    if (isEmailVerificationRequired() && !session.user.emailVerifiedAt && !this.isVerificationExempt(request)) {
       throw new ForbiddenException({
         code: "email_verification_required",
         message: "Verify your email address to access your workspace.",

@@ -5,6 +5,7 @@ import { AuthController } from "../src/auth/auth.controller.js";
 import { AuthRateLimitService } from "../src/auth/auth-rate-limit.service.js";
 
 const originalNodeEnv = process.env.NODE_ENV;
+const originalRequireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION;
 const noRateLimit = { assertAllowed: async () => undefined };
 const testEmail = {
   isConfigured: () => false,
@@ -12,13 +13,15 @@ const testEmail = {
   sendPasswordReset: async () => undefined,
 };
 
-function controller(prisma: object, rateLimits: object = noRateLimit) {
-  return new AuthController(prisma as never, rateLimits as AuthRateLimitService, testEmail as never);
+function controller(prisma: object, rateLimits: object = noRateLimit, email: object = testEmail) {
+  return new AuthController(prisma as never, rateLimits as AuthRateLimitService, email as never);
 }
 
 afterEach(() => {
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
+  if (originalRequireEmailVerification === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+  else process.env.REQUIRE_EMAIL_VERIFICATION = originalRequireEmailVerification;
 });
 
 describe("AuthController signup", () => {
@@ -110,6 +113,40 @@ describe("AuthController signup", () => {
 
     assert.equal("emailVerificationToken" in result, false);
     assert.equal(result.emailVerificationRequired, true);
+  });
+
+  it("skips verification email and marks signup verified when verification is disabled", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    let verificationEmailSent = false;
+    const auth = controller({
+      user: {
+        create: async (args: { data: { emailVerifiedAt?: Date } }) => {
+          assert.ok(args.data.emailVerifiedAt instanceof Date);
+          return {
+            id: "user-a",
+            email: "maya@example.com",
+            name: "Maya Chen",
+            memberships: [{ organization: { id: "org-a", name: "Northwind" }, role: "OWNER" }],
+          };
+        },
+      },
+    }, noRateLimit, {
+      ...testEmail,
+      sendVerification: async () => {
+        verificationEmailSent = true;
+      },
+    });
+
+    const result = await auth.signup({ headers: {}, params: {}, path: "" }, {
+      name: "Maya Chen",
+      email: "maya@example.com",
+      password: "password123",
+      organizationName: "Northwind",
+    }, { setHeader: () => undefined } as never);
+
+    assert.equal(verificationEmailSent, false);
+    assert.equal("emailVerificationRequired" in result, false);
   });
 });
 

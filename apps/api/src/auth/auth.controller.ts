@@ -5,6 +5,7 @@ import { HttpRequest, HttpResponse } from "../common/http.types.js";
 import { Public } from "./public.decorator.js";
 import { AuthRateLimitService } from "./auth-rate-limit.service.js";
 import { EmailService } from "./email.service.js";
+import { isEmailVerificationRequired } from "./email-verification.js";
 
 const SESSION_LIFETIME_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -41,7 +42,8 @@ export class AuthController {
 
     await this.rateLimit(`signup:${email}`, 5);
 
-    const verification = this.newToken();
+    const emailVerificationRequired = isEmailVerificationRequired();
+    const verification = emailVerificationRequired ? this.newToken() : undefined;
     const session = this.newSession();
     const refreshToken = this.newRefreshToken();
     try {
@@ -50,8 +52,12 @@ export class AuthController {
           email,
           name,
           passwordHash: this.hashPassword(password),
-          emailVerificationTokenHash: verification.tokenHash,
-          emailVerificationExpiresAt: verification.expiresAt,
+          ...(verification
+            ? {
+                emailVerificationTokenHash: verification.tokenHash,
+                emailVerificationExpiresAt: verification.expiresAt,
+              }
+            : { emailVerifiedAt: new Date() }),
           memberships: {
             create: {
               role: "OWNER",
@@ -76,7 +82,7 @@ export class AuthController {
       });
       const organization = user.memberships[0]?.organization;
       if (!organization) throw new Error("Signup did not create an owner organization membership");
-      const emailSent = await this.sendVerification(user.email, user.name, verification.token);
+      if (verification) await this.sendVerification(user.email, user.name, verification.token);
       this.setAuthCookies(response, session, refreshToken);
       return {
         user: { id: user.id, email: user.email, name: user.name },
@@ -84,8 +90,7 @@ export class AuthController {
         token: session.token,
         expiresAt: session.expiresAt.toISOString(),
         ...(this.isBearerClient(request) ? { refreshToken: refreshToken.token } : {}),
-        ...(process.env.NODE_ENV === "production" ? { emailVerificationRequired: true } : {}),
-        ...(!emailSent ? { emailVerificationToken: verification.token } : {}),
+        ...(emailVerificationRequired ? { emailVerificationRequired: true } : {}),
       };
     } catch (error) {
       if (this.prismaCode(error) === "P2002") throw new ConflictException({ code: "conflict", message: "Email already registered" });
@@ -123,7 +128,7 @@ export class AuthController {
       token: session.token,
       expiresAt: session.expiresAt.toISOString(),
       ...(this.isBearerClient(request) ? { refreshToken: refreshToken.token } : {}),
-      ...(process.env.NODE_ENV === "production" && !user.emailVerifiedAt ? { emailVerificationRequired: true } : {}),
+      ...(isEmailVerificationRequired() && !user.emailVerifiedAt ? { emailVerificationRequired: true } : {}),
     };
   }
 
