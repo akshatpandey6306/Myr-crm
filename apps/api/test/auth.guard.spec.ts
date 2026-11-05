@@ -22,7 +22,7 @@ describe("AuthGuard cookie sessions", () => {
       session: {
         findFirst: async (args: Record<string, unknown>) => {
           query = args;
-          return { userId: "user-a" };
+          return { userId: "user-a", user: { emailVerifiedAt: new Date() } };
         },
       },
     } as never);
@@ -59,5 +59,37 @@ describe("AuthGuard cookie sessions", () => {
       if (previousOrigin === undefined) delete process.env.WEB_ORIGIN;
       else process.env.WEB_ORIGIN = previousOrigin;
     }
+  });
+
+  it("allows an unverified demo session only when verification is disabled outside production", async () => {
+    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    process.env.NODE_ENV = "test";
+    const guard = new AuthGuard({ session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) } } as never);
+    const request = { headers: { cookie: "myr_session=demo-session" }, method: "GET", path: "/api/v1/leads", params: {} };
+
+    assert.equal(await guard.canActivate(context(request)), true);
+
+    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  });
+
+  it("does not allow verification to be disabled in production", async () => {
+    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    process.env.NODE_ENV = "production";
+    const guard = new AuthGuard({ session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) } } as never);
+    const request = { headers: { cookie: "myr_session=demo-session" }, method: "GET", path: "/api/v1/leads", params: {} };
+
+    await assert.rejects(guard.canActivate(context(request)), ForbiddenException);
+
+    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
   });
 });

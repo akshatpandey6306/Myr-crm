@@ -11,6 +11,8 @@ function hashPassword(password: string) {
 
 describe("AuthController", () => {
   it("creates an unverified owner account and sends a one-time email-verification link", async () => {
+    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "true";
     let userCreate: Record<string, unknown> | undefined;
     let tokenCreate: Record<string, unknown> | undefined;
     let sentText = "";
@@ -71,6 +73,8 @@ describe("AuthController", () => {
     assert.ok(sentToken);
     assert.equal(storedHash, createHash("sha256").update(sentToken!).digest("hex"));
     assert.notEqual(storedHash, sentToken);
+    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
   });
 
   it("sets a secure HttpOnly session cookie after verified login without returning the session token", async () => {
@@ -106,6 +110,8 @@ describe("AuthController", () => {
   });
 
   it("does not allow an unverified user to sign in", async () => {
+    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "true";
     const controller = new AuthController({
       user: {
         findUnique: async () => ({
@@ -126,6 +132,27 @@ describe("AuthController", () => {
       ),
       ForbiddenException,
     );
+    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
+  });
+
+  it("marks demo accounts verified without sending verification email when verification is disabled", async () => {
+    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    let userData: Record<string, unknown> | undefined;
+    let emailTokenWrites = 0;
+    const controller = new AuthController({
+      user: { create: async (args: { data: Record<string, unknown> }) => { userData = args.data; return { id: "user-a", email: "maya@example.com", memberships: [{ organization: { id: "org-a", name: "Northwind" }, role: "OWNER" }] }; } },
+      emailToken: { create: async () => { emailTokenWrites += 1; }, updateMany: async () => ({ count: 0 }) },
+    } as never, { send: async () => { emailTokenWrites += 1; } } as never);
+
+    const result = await controller.signup({ name: "Maya Chen", email: "maya@example.com", password: "password123", organizationName: "Northwind" });
+
+    assert.equal(result.verificationRequired, false);
+    assert.ok(userData?.emailVerifiedAt instanceof Date);
+    assert.equal(emailTokenWrites, 0);
+    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
   });
 
   it("returns the same password-reset request message for an unknown account", async () => {

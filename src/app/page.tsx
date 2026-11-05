@@ -75,7 +75,7 @@ export default function Home() {
             >
               <Icon name={item.icon} />
               <span>{item.label}</span>
-              {item.count && <span className="nav-count">{item.count}</span>}
+              {"count" in item && typeof item.count === "number" && item.count > 0 && <span className="nav-count">{item.count}</span>}
             </a>
           ))}
         </nav>

@@ -105,12 +105,12 @@ export class EmailsController {
     });
     if (!configured || !this.email) return { data: this.present(email) };
 
-    let deliveryStatus: "SENT" | "FAILED" = "SENT";
+    let deliveryStatus: "SENT" | "FAILED" | "NOT_CONFIGURED" = "SENT";
     let sentAt: Date | null = new Date();
     try {
       const sent = await this.email.send(email.recipientEmail, email.subject, email.body);
       if (!sent) {
-        deliveryStatus = "FAILED";
+        deliveryStatus = "NOT_CONFIGURED";
         sentAt = null;
       }
     } catch {

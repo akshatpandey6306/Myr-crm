@@ -8,8 +8,10 @@ implementation change.
 ## Product and architecture
 
 - Build a secure, responsive CRM for multiple organizations in one application.
-- Use a modular monolith. Keep the Next.js frontend and NestJS API independently
-  runnable; add a separate worker only when queued work is introduced.
+- Use a strangler migration. The Next.js frontend and NestJS CRM API remain
+  independently runnable; SMTP delivery is the first independently runnable
+  service in `apps/email-service`. Do not describe the remaining API modules as
+  independent services until their runtime and data ownership are extracted.
 - Required stack: Next.js App Router, React, strict TypeScript, NestJS REST API
   under `/api/v1`, Prisma, PostgreSQL, and npm workspaces. Add Redis/BullMQ,
   email integration, and other infrastructure when their modules require them.
@@ -73,9 +75,14 @@ npm run db:deploy
 npm run db:seed
 ```
 
-Start the web app with `npm run dev` and the API with `npm run api:dev` in
-separate terminals. The web app proxies same-origin `/api/v1` requests to the
-API server; set `API_PROXY_URL` when the API is not at
+Start the web app with `npm run dev`, the API with `npm run api:dev`, and the
+delivery service with `npm run email:dev` in separate terminals. Email
+verification is enabled in the example environment. Without SMTP, the local
+delivery service logs verification links; to send real mail, configure
+`SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS options in
+`.env`. The API forwards validated email requests to that private service using
+`EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN`. The web app proxies same-origin
+`/api/v1` requests to the API server; set `API_PROXY_URL` when the API is not at
 `http://localhost:4000/api/v1`. Useful checks:
 
 ```sh
@@ -95,15 +102,25 @@ in this workspace and is excluded from Git.
 
 ## Current implementation status
 
-The repository is in an early MVP foundation stage, not production-ready.
+The repository is in an incremental strangler migration and is not
+production-ready. See
+[`docs/architecture/service-decomposition.md`](docs/architecture/service-decomposition.md)
+for the current service map, ownership, local workflow, and remaining migration.
 
 - The web UI has dashboard and CRM module pages, sign-in/sign-up and account
   recovery forms, and a Team & access screen.
 - The workspace dashboard now loads tenant-scoped lead, deal, and activity
   summaries and live deal/activity records through the authenticated API. It no
   longer presents hard-coded preview metrics as real CRM data.
-- The NestJS API has health, authentication, organizations, leads, contacts,
-  companies, deals, pipelines, activities, automation, and email routes.
+- The NestJS API is the authenticated CRM gateway and still owns identity,
+  organizations, memberships, CRM records, activities, automation, reports,
+  notifications, audit logs, settings, billing, and the persisted email outbox.
+- SMTP delivery runs in the independent `apps/email-service` process. The API
+  validates tenant access and recipient ownership, then calls its private
+  `/internal/v1/email` contract using a service token. The delivery service owns
+  SMTP configuration and has `/health` and `/ready` endpoints; it does not
+  access CRM tables or accept tenant IDs. Signup, verification resend,
+  password reset, and member invitations use this same delivery path.
 - PostgreSQL/Prisma persistence covers users, organizations, memberships,
   expiring sessions, one-time email tokens, invitations, and shared
   rate-limit buckets. Signup creates the initial Owner membership atomically.
@@ -113,8 +130,10 @@ The repository is in an early MVP foundation stage, not production-ready.
   revocation, per-route database-backed rate limits, and HttpOnly SameSite
   session cookies (Secure in production) with same-origin checks on unsafe
   requests. Password-reset and verification tokens are stored only as hashes.
-  Configure SMTP for production; development without SMTP logs one-time links
-  locally. The local seed account is marked verified.
+  Verification is always required in production; non-production demos can set
+  `REQUIRE_EMAIL_VERIFICATION=false`. Configure the private delivery-service
+  URL and token on the API and SMTP on the email service for production. The
+  local seed account is marked verified.
 - Organization Owners and Admins can invite members, view and change member
   roles, remove members, and transfer ownership. Owner invariants are guarded
   transactionally and by a database partial unique index. Sales Managers get
@@ -164,15 +183,31 @@ The repository is in an early MVP foundation stage, not production-ready.
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks
   module uses the adopted role and soft-archive contract.
-- SMTP delivery is synchronous and has no retry queue. In production, set
-  `SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS options; set
-  `TRUST_PROXY_HOPS` only when the API is behind that exact trusted proxy chain.
+- Email delivery is synchronous and has no retry queue. In production, set
+  `EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN` on the API, and set
+  `SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS options only
+  on the email service. Set `TRUST_PROXY_HOPS` only when the API is behind that
+  exact trusted proxy chain.
 
 ## Change log
 
 Update this section whenever implementation changes are made. Include what
 changed, checks actually run, and any important remaining limitation.
 
+- 2026-11-05: Integrated the Aditya and Akshat branch work on `mergetest`.
+  Preserved the existing cookie-session, organization-membership, and
+  tenant-scoped member APIs where branch changes overlapped; retained the
+  non-overlapping settings, reporting, billing, dashboard, control-panel, and
+  subscription work, including a demo verification opt-out that cannot disable
+  production verification. Added additive subscription/platform-audit schema
+  migrations and extracted SMTP transport into the independent
+  `apps/email-service`; the CRM API still owns authorization and outbox state.
+  Verification: Prisma Client generation, API typecheck/build, 124 API tests,
+  web typecheck, 16 web tests, Next production build, and service smoke checks
+  (health 200, readiness 503 without SMTP, unauthenticated send 401) passed.
+  Database migrations were not applied because no database URL/service is
+  configured; live SMTP delivery remains unverified. Other CRM capabilities
+  remain in the NestJS modular monolith.
 - 2026-10-31: Replaced the home dashboard's sample metrics, deal rows, and
   activities with tenant-scoped API data; added loading, empty, retry, and
   authentication states. Removed fabricated trend percentages and corrected

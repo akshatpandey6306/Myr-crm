@@ -40,7 +40,10 @@ link; login is refused until the email is verified. The API exposes
 `POST /api/v1/auth/password-reset/request`,
 `POST /api/v1/auth/password-reset/confirm`,
 `POST /api/v1/auth/email-verification/resend`, and
-`POST /api/v1/auth/email-verification/confirm`.
+`POST /api/v1/auth/email-verification/confirm`. Email verification is required
+in production. Non-production demos may set `REQUIRE_EMAIL_VERIFICATION=false`
+to mark newly created demo accounts verified without sending a verification
+message; production always enforces verification regardless of this setting.
 
 Login sets a seven-day `myr_session` HttpOnly, SameSite=Lax cookie, with Secure
 enabled in production. The API stores only the SHA-256 session digest and accepts
@@ -60,12 +63,15 @@ attempts per hour; 5 reset requests per hour; 10 reset/verification/invitation
 accept attempts per hour; and 20 invitations per hour per inviter/email.
 Expired buckets are periodically removed by the API.
 
-Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional `SMTP_USER` /
-`SMTP_PASSWORD` in `.env` to deliver verification, reset, invitation, and CRM
-contact messages. TLS is required by default for STARTTLS connections; use
-`SMTP_SECURE=true` for implicit TLS. In development without SMTP, one-time
-links are logged locally; production startup fails when `SMTP_HOST` or
-`SMTP_FROM` is missing. SMTP delivery is synchronous and does not retry.
+Configure `EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN` on the API to send
+verification, reset, invitation, and CRM contact messages through the private
+email service. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional
+`SMTP_USER` / `SMTP_PASSWORD` only on that service. TLS is required by default
+for STARTTLS connections; use `SMTP_SECURE=true` for implicit TLS. In
+development without an API delivery URL, one-time links are logged locally;
+production API startup requires the service URL and token, while production
+email-service startup requires SMTP configuration. Delivery is synchronous and
+does not retry.
 
 `GET /api/v1/organizations` lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as
@@ -226,18 +232,31 @@ Organization Owners, Admins, and Sales Managers can view the organization's
 outbox. Sales Representatives can view and compose messages only for their own
 contacts; Read-only Users can view but cannot compose.
 
-When SMTP is configured with `SMTP_HOST` and `SMTP_FROM`, the API sends the
-message synchronously after storing the outbox record. Successful delivery is
-recorded as `sent` with `sentAt`; a delivery error is recorded as `failed`.
-Without SMTP, messages are saved as `not_configured` and are not delivered.
+When email delivery is configured, the API sends the message synchronously after
+storing the outbox record by calling the private email service at
+`EMAIL_DELIVERY_URL` with `EMAIL_DELIVERY_TOKEN`. Signup, verification resend,
+password reset, invitations, and CRM contact messages use this same service.
+The email service owns SMTP
+configuration (`SMTP_HOST`, `SMTP_FROM`, and optional SMTP credentials/TLS
+settings). Successful delivery is recorded as `sent` with `sentAt`; a delivery
+error is recorded as `failed`. Without an API delivery URL, messages are saved
+as `not_configured` and are not delivered.
 Message bodies are plain text and the recipient address always comes from the
 selected active contact. The UI shows each message's delivery state.
 
-Delivery has no retry queue: configure SMTP as described in Authentication and
-Security. A process or database failure after SMTP accepts a message can leave
-delivery state uncertain; a future worker with idempotent delivery is needed
+Delivery has no retry queue or idempotency store. A process or database failure
+after SMTP accepts a message can leave delivery state uncertain; a future worker
+with idempotent delivery is needed
 before retrying automatically. Templates, attachments, and inbound mailbox
 sync are outside this MVP.
+
+Run the independent delivery process with `npm run email:dev` from the
+repository root. It listens on `EMAIL_SERVICE_PORT` (default 4100), exposes
+`GET /health` and `GET /ready`, and accepts only authenticated internal
+`POST /internal/v1/email` requests. Keep it on a private network; do not expose
+the internal route to browsers or the public internet. The CRM API remains
+responsible for session validation, tenant authorization, recipient lookup, and
+outbox persistence.
 
 ## Reports — live summary
 

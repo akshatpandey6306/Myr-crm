@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { IS_PUBLIC_KEY } from "./public.decorator.js";
+import { isEmailVerificationRequired } from "./email-verification.js";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -30,9 +31,12 @@ export class AuthGuard implements CanActivate {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const session = await this.prisma.session.findFirst({
       where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "ACTIVE" } },
-      select: { userId: true },
+      select: { userId: true, user: { select: { emailVerifiedAt: true } } },
     });
     if (!session) throw new UnauthorizedException({ code: "unauthorized", message: "Invalid or expired session" });
+    if (isEmailVerificationRequired() && !session.user.emailVerifiedAt && !this.isVerificationExempt(request.path)) {
+      throw new ForbiddenException({ code: "email_not_verified", message: "Verify your email address before continuing" });
+    }
     request.userId = session.userId;
     request.token = token;
     return true;
@@ -42,5 +46,10 @@ export class AuthGuard implements CanActivate {
     if (typeof header !== "string") return undefined;
     const cookie = header.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
     return cookie?.slice(name.length + 1);
+  }
+
+  private isVerificationExempt(path = "") {
+    const route = path.replace(/^\/api\/v\d+/, "");
+    return ["/auth/me", "/auth/logout", "/auth/email-verification/resend", "/auth/email-verification/confirm"].includes(route);
   }
 }

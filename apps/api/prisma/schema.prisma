@@ -14,6 +14,23 @@ enum UserStatus {
   @@map("user_status")
 }
 
+enum OrganizationStatus {
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+
+  @@map("organization_status")
+}
+
+enum SubscriptionStatus {
+  PENDING   @map("pending")
+  TRIAL     @map("trial")
+  ACTIVE    @map("active")
+  EXPIRED   @map("expired")
+  CANCELLED @map("cancelled")
+
+  @@map("subscription_status")
+}
+
 enum MembershipRole {
   OWNER         @map("owner")
   ADMIN         @map("admin")
@@ -149,26 +166,69 @@ model User {
 }
 
 model Organization {
-  id              String                   @id @default(uuid()) @db.Uuid
-  name            String                   @db.VarChar(160)
-  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships     Membership[]
-  leads           Lead[]
-  contacts        Contact[]
-  companies       Company[]
-  pipelines       Pipeline[]
-  deals           Deal[]
-  activities      Activity[]
-  emailMessages   EmailMessage[]
-  automationRules AutomationRule[]
-  automationRuns  AutomationRun[]
-  notifications   Notification[]
-  auditLogs       AuditLog[]
-  settings        OrganizationSettings?
-  invitations     OrganizationInvitation[]
+  id                     String             @id @default(uuid()) @db.Uuid
+  name                   String             @db.VarChar(160)
+  status                 OrganizationStatus @default(ACTIVE)
+  subscriptionPlan       String?            @map("subscription_plan") @db.VarChar(32)
+  subscriptionStatus     SubscriptionStatus @default(ACTIVE) @map("subscription_status")
+  subscriptionStartedAt  DateTime?          @map("subscription_started_at") @db.Timestamptz(3)
+  subscriptionEndsAt     DateTime?          @map("subscription_ends_at") @db.Timestamptz(3)
+  billingProvider        String?            @map("billing_provider") @db.VarChar(32)
+  razorpaySubscriptionId String?            @map("razorpay_subscription_id") @db.VarChar(128)
+  enabledModules         String[]            @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "reports"]) @map("enabled_modules")
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  memberships            Membership[]
+  leads                  Lead[]
+  contacts               Contact[]
+  companies              Company[]
+  pipelines              Pipeline[]
+  deals                  Deal[]
+  activities             Activity[]
+  emailMessages          EmailMessage[]
+  automationRules        AutomationRule[]
+  automationRuns         AutomationRun[]
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  settings               OrganizationSettings?
+  invitations            OrganizationInvitation[]
 
   @@map("organizations")
+}
+
+model SubscriptionPlan {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique @db.VarChar(32)
+  name            String   @db.VarChar(80)
+  price           Int
+  currency        String   @default("INR") @db.Char(3)
+  billingInterval String   @default("monthly") @map("billing_interval") @db.VarChar(16)
+  trialDays       Int      @default(0) @map("trial_days")
+  features        String[] @default([])
+  employeeLimit   Int?     @map("employee_limit")
+  usageLimits     Json     @default("{}") @map("usage_limits")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("subscription_plans")
+}
+
+model PlatformAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  actorEmail String?  @map("actor_email") @db.VarChar(254)
+  action     String   @db.VarChar(120)
+  targetType String   @map("target_type") @db.VarChar(80)
+  targetId   String?  @map("target_id") @db.VarChar(128)
+  reason     String?  @db.VarChar(500)
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@map("platform_audit_logs")
 }
 
 model Membership {

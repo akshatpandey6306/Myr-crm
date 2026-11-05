@@ -22,6 +22,15 @@ function message(payload: unknown) {
   return typeof value === 'string' ? value : 'Something went wrong. Please try again.';
 }
 
+function responsePayload(response: Response) {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('json')) {
+    const detail = response.ok ? 'an unexpected non-JSON response' : `HTTP ${response.status} with a non-JSON response`;
+    throw new Error(`The CRM API returned ${detail}. Check that the API server is running and API_PROXY_URL points to it.`);
+  }
+  return response.json();
+}
+
 function currency(value: string) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value) || 0);
 }
@@ -53,7 +62,7 @@ function DealDialog({ deal, pipelines, companies, close, saved }: { deal: Deal |
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(message(payload));
       saved();
     } catch (cause) {
@@ -93,7 +102,7 @@ export default function DealsManager() {
           crmApiFetch('/pipelines', { signal: controller.signal }),
           crmApiFetch('/companies?pageSize=100&sortBy=name&sortOrder=asc', { signal: controller.signal }),
         ]);
-        const [pipelinePayload, companyPayload] = await Promise.all([pipelinesResponse.json(), companiesResponse.json()]);
+        const [pipelinePayload, companyPayload] = await Promise.all([responsePayload(pipelinesResponse), responsePayload(companiesResponse)]);
         if (!pipelinesResponse.ok) throw new Error(message(pipelinePayload));
         if (!companiesResponse.ok) throw new Error(message(companyPayload));
         const nextPipelines = Array.isArray(pipelinePayload.data) ? pipelinePayload.data as Pipeline[] : [];
@@ -123,7 +132,7 @@ export default function DealsManager() {
         if (status) params.set('status', status);
         const [sortBy, sortOrder] = sort.split(':'); params.set('sortBy', sortBy); params.set('sortOrder', sortOrder);
         const response = await crmApiFetch(`/deals?${params.toString()}`, { signal: controller.signal });
-        const payload = await response.json();
+        const payload = await responsePayload(response);
         if (!response.ok) throw new Error(message(payload));
         if (!cancelled) setDeals(Array.isArray(payload.data) ? payload.data as Deal[] : []);
       } catch (cause) {
@@ -146,7 +155,7 @@ export default function DealsManager() {
     setError('');
     try {
       const response = await crmApiFetch(`/deals/${deal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stageId }) });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(message(payload));
       setNotice(`${deal.name} moved to ${selectedPipeline?.stages.find((stage) => stage.id === stageId)?.name}.`);
       await refreshDeals();
@@ -156,7 +165,7 @@ export default function DealsManager() {
     if (!window.confirm(`Archive ${deal.name}? It will be removed from the active deals list.`)) return;
     try {
       const response = await crmApiFetch(`/deals/${deal.id}`, { method: 'DELETE' });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(message(payload));
       setNotice(`${deal.name} was archived.`);
       await refreshDeals();
@@ -168,7 +177,7 @@ export default function DealsManager() {
     setBusy(true); setError('');
     try {
       const response = await crmApiFetch(`/pipelines/${selectedPipeline.id}/stages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: stageName }) });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(message(payload));
       setStageName(''); setStageFormOpen(false); setNotice(`Stage ${payload.data.name} added.`);
       await refreshDeals();
@@ -180,7 +189,7 @@ export default function DealsManager() {
     setBusy(true); setError('');
     try {
       const response = await crmApiFetch('/pipelines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: pipelineName }) });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(message(payload));
       setPipelineName(''); setPipelineFormOpen(false); setPipelineId(payload.data.id);
       setNotice(`${payload.data.name} pipeline created.`);

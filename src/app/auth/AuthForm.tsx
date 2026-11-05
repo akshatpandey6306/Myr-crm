@@ -30,7 +30,9 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         throw new Error(Array.isArray(message) ? message.join(', ') : message);
       }
       if (isSignup) {
-        setSuccess(payload.message ?? 'Check your email to verify your account before signing in.');
+        setSuccess(payload.verificationRequired
+          ? payload.message ?? 'Check your email to verify your account before signing in.'
+          : payload.message ?? 'Your workspace is ready. Sign in to continue.');
         return;
       }
       sessionStorage.setItem('myr.user', JSON.stringify(payload.user));

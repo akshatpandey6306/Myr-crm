@@ -24,10 +24,15 @@ import { SettingsController } from "./settings/settings.controller.js";
 import { AuthEmailService } from "./auth/email.service.js";
 import { RateLimitGuard } from "./auth/rate-limit.guard.js";
 import { MembersController } from "./organizations/members.controller.js";
+import { BillingController } from "./billing/billing.controller.js";
+import { ControlPanelController } from "./control-panel/control-panel.controller.js";
+import { DashboardController } from "./dashboard/dashboard.controller.js";
+import { AuditService } from "./audit/audit.service.js";
+import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
-  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController],
+  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: OrgGuard },
@@ -36,6 +41,8 @@ import { MembersController } from "./organizations/members.controller.js";
     AuthEmailService,
     AutomationsService,
     AuditLogsService,
+    AuditService,
+    PlatformAdminGuard,
   ],
 })
 export class AppModule {}
