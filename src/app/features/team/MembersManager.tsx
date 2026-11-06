@@ -1,12 +1,12 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { crmApiFetch } from '../../../lib/api-client';
 import styles from './MembersManager.module.css';
 
 type Role = 'owner' | 'admin' | 'sales_manager' | 'sales_rep' | 'read_only';
 type Member = { userId: string; name: string; email: string; role: Role; emailVerified: boolean; joinedAt: string };
-type Invitation = { id: string; email: string; role: Exclude<Role, 'owner'>; expiresAt: string };
+type MembershipRequest = { userId: string; name: string; email: string; requestedAt: string };
 
 const roleOptions: { value: Exclude<Role, 'owner'>; label: string }[] = [
   { value: 'admin', label: 'Admin' },
@@ -23,10 +23,9 @@ async function responseMessage(response: Response) {
 
 export default function MembersManager() {
   const [members, setMembers] = useState<Member[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [requests, setRequests] = useState<MembershipRequest[]>([]);
+  const [joinCode, setJoinCode] = useState('');
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Exclude<Role, 'owner'>>('sales_rep');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -36,18 +35,21 @@ export default function MembersManager() {
     setLoading(true);
     setError('');
     try {
-      const [membersResponse, invitationsResponse, meResponse] = await Promise.all([
+      const [membersResponse, requestsResponse, joinCodeResponse, meResponse] = await Promise.all([
         crmApiFetch('/organizations/members'),
-        crmApiFetch('/organizations/invitations'),
+        crmApiFetch('/organizations/membership-requests'),
+        crmApiFetch('/organizations/join-code'),
         crmApiFetch('/auth/me'),
       ]);
-      const [membersPayload, invitationsPayload, mePayload] = await Promise.all([
+      const [membersPayload, requestsPayload, joinCodePayload, mePayload] = await Promise.all([
         responseMessage(membersResponse),
-        responseMessage(invitationsResponse),
+        responseMessage(requestsResponse),
+        responseMessage(joinCodeResponse),
         responseMessage(meResponse),
       ]);
       setMembers(membersPayload.data as Member[]);
-      setInvitations(invitationsPayload.data as Invitation[]);
+      setRequests(requestsPayload.data as MembershipRequest[]);
+      setJoinCode(joinCodePayload.data.joinCode as string);
       const saved = sessionStorage.getItem('myr.organization');
       let organizationId = '';
       if (saved) {
@@ -67,27 +69,6 @@ export default function MembersManager() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-
-  async function sendInvitation(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      await responseMessage(await crmApiFetch('/organizations/invitations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, role }),
-      }));
-      setEmail('');
-      setNotice(`Invitation sent to ${email}.`);
-      await load();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not send this invitation.');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function changeRole(member: Member, newRole: Exclude<Role, 'owner'>) {
     setError('');
@@ -128,14 +109,22 @@ export default function MembersManager() {
     }
   }
 
-  async function revokeInvitation(invitation: Invitation) {
+  async function reviewRequest(joinRequest: MembershipRequest, decision: 'approve' | 'decline') {
+    setBusy(true);
     setError('');
+    setNotice('');
     try {
-      await responseMessage(await crmApiFetch(`/organizations/invitations/${invitation.id}`, { method: 'DELETE' }));
-      setNotice(`Invitation to ${invitation.email} was revoked.`);
+      await responseMessage(await crmApiFetch(`/organizations/membership-requests/${joinRequest.userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      }));
+      setNotice(`${joinRequest.name}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not revoke this invitation.');
+      setError(caught instanceof Error ? caught.message : 'Could not review this request.');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -143,7 +132,7 @@ export default function MembersManager() {
   return (
     <section className={styles.manager}>
       <header className={styles.heading}>
-        <div><p className="date-label">WORKSPACE / TEAM</p><h1>Team & access</h1><p className="welcome-copy">Invite people and manage their organization roles.</p></div>
+        <div><p className="date-label">WORKSPACE / TEAM</p><h1>Team & access</h1><p className="welcome-copy">Review join requests and manage your workspace members.</p></div>
       </header>
       {error && <div className={styles.error} role="alert">{error}</div>}
       {notice && <div className={styles.notice} role="status">{notice}</div>}
@@ -158,7 +147,7 @@ export default function MembersManager() {
               <td><strong>{member.name}</strong></td>
               <td>{member.email}</td>
               <td>{member.role === 'owner' ? <span className={styles.roleBadge}>Owner</span> : <select aria-label={`Role for ${member.name}`} value={member.role} disabled={!canManage} onChange={(event) => void changeRole(member, event.target.value as Exclude<Role, 'owner'>)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}</td>
-              <td><span className={member.emailVerified ? styles.verified : styles.pending}>{member.emailVerified ? 'Verified' : 'Unverified'}</span></td>
+              <td><span className={styles.verified}>Active</span></td>
               <td className={styles.actions}>{currentRole === 'owner' && member.role !== 'owner' && <button type="button" onClick={() => void transferOwnership(member)}>Transfer ownership</button>}{member.role !== 'owner' && <button type="button" className={styles.danger} disabled={!canManage} onClick={() => void removeMember(member)}>Remove</button>}</td>
             </tr>)}</tbody>
           </table></div>
@@ -167,16 +156,12 @@ export default function MembersManager() {
 
       {canManage && <>
         <section className={styles.panel}>
-          <div className={styles.panelHeading}><div><h2>Invite a teammate</h2><p>Invitations expire after seven days and can be revoked.</p></div></div>
-          <form className={styles.inviteForm} onSubmit={sendInvitation}>
-            <label>Email address<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="teammate@company.com" /></label>
-            <label>Organization role<select value={role} onChange={(event) => setRole(event.target.value as Exclude<Role, 'owner'>)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <button type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send invitation'}</button>
-          </form>
+          <div className={styles.panelHeading}><div><h2>Workspace join code</h2><p>Share this code with teammates. They can request access when creating an account.</p></div></div>
+          <p className={styles.joinCode}>{joinCode || 'Loading workspace code…'}</p>
         </section>
         <section className={styles.panel}>
-          <div className={styles.panelHeading}><div><h2>Pending invitations</h2><p>Only unexpired invitations are shown.</p></div></div>
-          {invitations.length === 0 ? <p className={styles.empty}>No pending invitations.</p> : <ul className={styles.invitationList}>{invitations.map((invitation) => <li key={invitation.id}><div><strong>{invitation.email}</strong><span>{roleOptions.find((item) => item.value === invitation.role)?.label} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}</span></div><button type="button" className={styles.danger} onClick={() => void revokeInvitation(invitation)}>Revoke</button></li>)}</ul>}
+          <div className={styles.panelHeading}><div><h2>Join requests</h2><p>{requests.length} waiting for workspace admin approval.</p></div></div>
+          {requests.length === 0 ? <p className={styles.empty}>No pending requests.</p> : <ul className={styles.invitationList}>{requests.map((joinRequest) => <li key={joinRequest.userId}><div><strong>{joinRequest.name}</strong><span>{joinRequest.email} · Requested {new Date(joinRequest.requestedAt).toLocaleDateString()}</span></div><div className={styles.actions}><button type="button" disabled={busy} onClick={() => void reviewRequest(joinRequest, 'approve')}>Approve</button><button type="button" className={styles.danger} disabled={busy} onClick={() => void reviewRequest(joinRequest, 'decline')}>Decline</button></div></li>)}</ul>}
         </section>
       </>}
     </section>

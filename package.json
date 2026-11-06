@@ -3,8 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "apps/api",
-    "apps/email-service"
+    "apps/api"
   ],
   "scripts": {
     "dev": "next dev",
@@ -16,8 +15,6 @@
     "api:build": "npm run build --workspace @myr-crm/api",
     "api:typecheck": "npm run typecheck --workspace @myr-crm/api",
     "api:test": "npm run test --workspace @myr-crm/api",
-    "email:dev": "npm run dev --workspace @myr-crm/email-service",
-    "email:start": "npm run start --workspace @myr-crm/email-service",
     "db:generate": "npm run db:generate --workspace @myr-crm/api",
     "db:migrate": "npm run db:migrate --workspace @myr-crm/api",
     "db:deploy": "npm run db:deploy --workspace @myr-crm/api",

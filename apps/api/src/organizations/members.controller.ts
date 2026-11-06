@@ -1,4 +1,3 @@
-import { createHash, randomBytes, scryptSync } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -17,8 +16,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
-import { AuthEmailService } from "../auth/email.service.js";
-import { Public, SkipOrganizationContext } from "../auth/public.decorator.js";
+import { SkipOrganizationContext } from "../auth/public.decorator.js";
 
 const administrators = new Set(["owner", "admin"]);
 const assignmentManagers = new Set(["owner", "admin", "sales_manager"]);
@@ -28,14 +26,9 @@ const assignableRoles: Record<string, "ADMIN" | "SALES_MANAGER" | "SALES_REP" | 
   sales_rep: "SALES_REP",
   read_only: "READ_ONLY",
 };
-const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
-
 @Controller("organizations")
 export class MembersController {
-  constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(AuthEmailService) private readonly email: AuthEmailService,
-  ) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get("members")
   async listMembers(@Req() request: HttpRequest) {
@@ -161,158 +154,163 @@ export class MembersController {
     return { data: { userId: targetUserId, status: "removed" } };
   }
 
-  @Post("invitations")
-  async createInvitation(@Req() request: HttpRequest, @Body() body: { email?: unknown; role?: unknown }) {
-    const { organizationId, userId } = this.requireAdministrator(request);
-    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-    const role = typeof body?.role === "string" ? assignableRoles[body.role] : undefined;
-    if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !role) {
-      throw new BadRequestException({ code: "validation_error", message: "Enter a valid email and choose an assignable organization role" });
-    }
-    const existingMembership = await this.prisma.membership.findFirst({
-      where: { organizationId, status: "ACTIVE", user: { email } },
-      select: { id: true },
-    });
-    if (existingMembership) throw new ConflictException({ code: "conflict", message: "This person is already an active organization member" });
-
-    const token = randomBytes(32).toString("base64url");
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + INVITATION_LIFETIME_MS);
-    const invitation = await this.prisma.$transaction(async (transaction) => {
-      await transaction.organizationInvitation.updateMany({
-        where: { organizationId, email, acceptedAt: null, revokedAt: null },
-        data: { revokedAt: now },
-      });
-      return transaction.organizationInvitation.create({
-        data: {
-          organizationId,
-          email,
-          role,
-          tokenHash: this.hashToken(token),
-          invitedByUserId: userId,
-          expiresAt,
-        },
-        select: { id: true, email: true, role: true, expiresAt: true },
-      });
-    });
-    const link = new URL("/accept-invitation", (process.env.WEB_ORIGIN ?? "http://localhost:3000").replace(/\/+$/, ""));
-    link.searchParams.set("token", token);
-    await this.email.send(email, "You are invited to Myr CRM", `Accept your workspace invitation using this one-time link:\n\n${link.toString()}\n\nThis link expires in 7 days.`);
-    return {
-      data: {
-        id: invitation.id,
-        email: invitation.email,
-        role: invitation.role.toLowerCase(),
-        expiresAt: invitation.expiresAt.toISOString(),
+  @SkipOrganizationContext()
+  @Get("join-requests")
+  async listMyJoinRequests(@Req() request: HttpRequest) {
+    if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
+    const memberships = await this.prisma.membership.findMany({
+      where: { userId: request.userId, status: { in: ["ACTIVE", "PENDING"] } },
+      select: {
+        status: true,
+        createdAt: true,
+        organization: { select: { id: true, name: true } },
       },
-    };
-  }
-
-  @Get("invitations")
-  async listInvitations(@Req() request: HttpRequest) {
-    const { organizationId } = this.requireAdministrator(request);
-    const invitations = await this.prisma.organizationInvitation.findMany({
-      where: { organizationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
-      select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });
     return {
-      data: invitations.map((invitation) => ({
-        ...invitation,
-        role: invitation.role.toLowerCase(),
-        expiresAt: invitation.expiresAt.toISOString(),
-        createdAt: invitation.createdAt.toISOString(),
+      data: memberships.map((membership) => ({
+        organization: membership.organization,
+        status: membership.status.toLowerCase(),
+        requestedAt: membership.createdAt.toISOString(),
       })),
     };
   }
 
-  @Delete("invitations/:id")
-  async revokeInvitation(@Req() request: HttpRequest, @Param("id") id: string) {
-    const { organizationId } = this.requireAdministrator(request);
-    const result = await this.prisma.organizationInvitation.updateMany({
-      where: { id, organizationId, acceptedAt: null, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    if (!result.count) throw new NotFoundException({ code: "not_found", message: "Invitation not found" });
-    return { data: { id, status: "revoked" } };
-  }
-
-  @Public()
   @SkipOrganizationContext()
-  @Post("invitations/accept")
-  async acceptInvitation(@Body() body: { token?: unknown; name?: unknown; password?: unknown }) {
-    const token = typeof body?.token === "string" ? body.token : "";
-    const name = typeof body?.name === "string" ? body.name.trim() : "";
-    const password = typeof body?.password === "string" ? body.password : "";
-    if (!token || token.length > 128) throw new BadRequestException({ code: "invalid_invitation", message: "This invitation is invalid or expired" });
-    const now = new Date();
-    const invitation = await this.prisma.organizationInvitation.findFirst({
-      where: { tokenHash: this.hashToken(token), acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
-      select: { id: true, organizationId: true, email: true, role: true },
-    });
-    if (!invitation) throw new BadRequestException({ code: "invalid_invitation", message: "This invitation is invalid or expired" });
-
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: invitation.email },
-      select: { id: true, status: true },
-    });
-    if (existingUser?.status === "DISABLED") {
-      throw new ForbiddenException({ code: "account_disabled", message: "This account cannot accept organization invitations" });
+  @Post("join-requests")
+  async requestToJoin(@Req() request: HttpRequest, @Body() body: { joinCode?: unknown }) {
+    if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
+    const requesterId = request.userId;
+    const joinCode = typeof body?.joinCode === "string" ? body.joinCode.trim() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(joinCode)) {
+      throw new BadRequestException({ code: "validation_error", message: "Enter a valid workspace join code" });
     }
-    if (!existingUser && (!name || name.length > 120 || password.length < 8 || password.length > 128)) {
-      throw new BadRequestException({ code: "validation_error", message: "For a new account, provide your name and a password of 8 to 128 characters" });
-    }
+    const organization = await this.prisma.organization.findFirst({
+      where: { joinCode, status: "ACTIVE" },
+      select: { id: true, name: true },
+    });
+    if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
 
-    const acceptedUser = await this.prisma.$transaction(async (transaction) => {
-      const claimed = await transaction.organizationInvitation.updateMany({
-        where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
-        data: { acceptedAt: now },
-      });
-      if (claimed.count !== 1) throw new BadRequestException({ code: "invalid_invitation", message: "This invitation is invalid or expired" });
-
-      const user = existingUser
-        ? await transaction.user.update({
-          where: { id: existingUser.id },
-          data: { emailVerifiedAt: now },
-          select: { id: true, email: true, name: true },
-        })
-        : await transaction.user.create({
-          data: {
-            email: invitation.email,
-            name,
-            passwordHash: this.hashPassword(password),
-            emailVerifiedAt: now,
-          },
-          select: { id: true, email: true, name: true },
-        });
-
-      const currentMembership = await transaction.membership.findUnique({
-        where: { organizationId_userId: { organizationId: invitation.organizationId, userId: user.id } },
+    await this.prisma.$transaction(async (transaction) => {
+      const membership = await transaction.membership.findUnique({
+        where: { organizationId_userId: { organizationId: organization.id, userId: requesterId } },
         select: { status: true },
       });
-      if (currentMembership?.status === "ACTIVE") {
-        throw new ConflictException({ code: "conflict", message: "This account is already an active organization member" });
+      if (membership?.status === "ACTIVE") {
+        throw new ConflictException({ code: "conflict", message: "You are already a member of this workspace" });
+      }
+      if (membership?.status === "PENDING") {
+        throw new ConflictException({ code: "conflict", message: "Your request to join this workspace is already awaiting review" });
       }
       await transaction.membership.upsert({
-        where: { organizationId_userId: { organizationId: invitation.organizationId, userId: user.id } },
-        update: { status: "ACTIVE", role: invitation.role },
-        create: { organizationId: invitation.organizationId, userId: user.id, role: invitation.role },
+        where: { organizationId_userId: { organizationId: organization.id, userId: requesterId } },
+        update: { status: "PENDING", role: "SALES_REP" },
+        create: { organizationId: organization.id, userId: requesterId, role: "SALES_REP", status: "PENDING" },
       });
-      await transaction.auditLog.create({
-        data: {
-          organizationId: invitation.organizationId,
-          actorUserId: user.id,
-          action: "UPDATE",
-          resourceType: "invitation",
-          resourceId: invitation.id,
-        },
+      const administrators = await transaction.membership.findMany({
+        where: { organizationId: organization.id, status: "ACTIVE", role: { in: ["OWNER", "ADMIN"] } },
+        select: { userId: true },
       });
-      return user;
+      const user = await transaction.user.findUnique({
+        where: { id: requesterId },
+        select: { name: true, email: true },
+      });
+      if (!user) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user not found" });
+      if (administrators.length) {
+        await transaction.notification.createMany({
+          data: administrators.map(({ userId }) => ({
+            organizationId: organization.id,
+            recipientUserId: userId,
+            resourceId: requesterId,
+            type: "MEMBER_JOIN_REQUEST",
+            title: "New team member request",
+            body: `${user.name} (${user.email}) requested to join the workspace.`,
+          })),
+        });
+      }
+    });
+    return { data: { organization: { id: organization.id, name: organization.name }, status: "pending" } };
+  }
+
+  @Get("join-code")
+  async getJoinCode(@Req() request: HttpRequest) {
+    const { organizationId } = this.requireAdministrator(request);
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { joinCode: true },
+    });
+    if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
+    return { data: { joinCode: organization.joinCode } };
+  }
+
+  @Get("membership-requests")
+  async listMembershipRequests(@Req() request: HttpRequest) {
+    const { organizationId } = this.requireAdministrator(request);
+    const requests = await this.prisma.membership.findMany({
+      where: { organizationId, status: "PENDING", user: { status: "ACTIVE" } },
+      select: {
+        userId: true,
+        createdAt: true,
+        user: { select: { name: true, email: true } },
+      },
+      orderBy: { createdAt: "asc" },
     });
     return {
-      message: "Invitation accepted. Sign in to open your workspace.",
-      user: { id: acceptedUser.id, email: acceptedUser.email, name: acceptedUser.name },
+      data: requests.map((membership) => ({
+        userId: membership.userId,
+        name: membership.user.name,
+        email: membership.user.email,
+        requestedAt: membership.createdAt.toISOString(),
+      })),
     };
+  }
+
+  @Patch("membership-requests/:userId")
+  async reviewMembershipRequest(
+    @Req() request: HttpRequest,
+    @Param("userId") targetUserId: string,
+    @Body() body: { decision?: unknown; role?: unknown },
+  ) {
+    const { organizationId, userId } = this.requireAdministrator(request);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetUserId)) {
+      throw new BadRequestException({ code: "validation_error", message: "A valid user ID is required" });
+    }
+    if (body?.decision !== "approve" && body?.decision !== "decline") {
+      throw new BadRequestException({ code: "validation_error", message: "Choose approve or decline" });
+    }
+    const approvedRole = typeof body.role === "string" ? assignableRoles[body.role] : "SALES_REP";
+    if (body.decision === "approve" && !approvedRole) {
+      throw new BadRequestException({ code: "validation_error", message: "Choose an assignable organization role" });
+    }
+    const decision = body.decision;
+    const updated = await this.prisma.membership.updateMany({
+      where: { organizationId, userId: targetUserId, status: "PENDING", user: { status: "ACTIVE" } },
+      data: decision === "approve"
+        ? { status: "ACTIVE", role: approvedRole }
+        : { status: "REMOVED" },
+    });
+    if (!updated.count) throw new NotFoundException({ code: "not_found", message: "Pending membership request not found" });
+
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId,
+        actorUserId: userId,
+        action: "UPDATE",
+        resourceType: "membership_request",
+        resourceId: targetUserId,
+      },
+    });
+    await this.prisma.notification.updateMany({
+      where: {
+        organizationId,
+        recipientUserId: userId,
+        resourceId: targetUserId,
+        type: "MEMBER_JOIN_REQUEST",
+        readAt: null,
+      },
+      data: { readAt: new Date() },
+    });
+    return { data: { userId: targetUserId, decision, role: approvedRole?.toLowerCase() } };
   }
 
   private requireAdministrator(request: HttpRequest, allowedRoles = administrators) {
@@ -322,20 +320,11 @@ export class MembersController {
       throw new ForbiddenException({
         code: "forbidden",
         message: allowedRoles === administrators
-          ? "Only the Organization Owner or Admin can manage members and invitations"
+          ? "Only the Organization Owner or Admin can manage members and requests"
           : "Only organization managers can view assignable team members",
       });
     }
     return { organizationId: request.orgId, userId: request.userId };
-  }
-
-  private hashToken(token: string) {
-    return createHash("sha256").update(token).digest("hex");
-  }
-
-  private hashPassword(password: string) {
-    const salt = randomBytes(16);
-    return `scrypt$${salt.toString("hex")}$${scryptSync(password, salt, 64).toString("hex")}`;
   }
 
   private prismaCode(error: unknown) {

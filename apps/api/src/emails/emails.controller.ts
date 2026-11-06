@@ -13,17 +13,13 @@ import {
 import { requireRecordWrite } from "../auth/record-permissions.js";
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { AuthEmailService } from "../auth/email.service.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const pageSizeLimit = 100;
 
 @Controller("emails")
 export class EmailsController {
-  constructor(
-    @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(AuthEmailService) private readonly email?: AuthEmailService,
-  ) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
   async list(
@@ -86,7 +82,6 @@ export class EmailsController {
     });
     if (!contact) throw new NotFoundException({ code: "not_found", message: "Contact not found" });
 
-    const configured = this.email?.isConfigured() ?? false;
     const email = await this.prisma.emailMessage.create({
       data: {
         organizationId,
@@ -96,40 +91,14 @@ export class EmailsController {
         recipientEmail: contact.email,
         subject,
         body: text,
-        deliveryStatus: configured ? "QUEUED" : "NOT_CONFIGURED",
+        deliveryStatus: "NOT_CONFIGURED",
       },
       include: {
         contact: { select: { id: true, name: true } },
         creator: { include: { user: { select: { name: true } } } },
       },
     });
-    if (!configured || !this.email) return { data: this.present(email) };
-
-    let deliveryStatus: "SENT" | "FAILED" | "NOT_CONFIGURED" = "SENT";
-    let sentAt: Date | null = new Date();
-    try {
-      const sent = await this.email.send(email.recipientEmail, email.subject, email.body);
-      if (!sent) {
-        deliveryStatus = "NOT_CONFIGURED";
-        sentAt = null;
-      }
-    } catch {
-      deliveryStatus = "FAILED";
-      sentAt = null;
-    }
-    await this.prisma.emailMessage.updateMany({
-      where: { id: email.id, organizationId },
-      data: { deliveryStatus, sentAt },
-    });
-    const updated = await this.prisma.emailMessage.findFirst({
-      where: { id: email.id, organizationId },
-      include: {
-        contact: { select: { id: true, name: true } },
-        creator: { include: { user: { select: { name: true } } } },
-      },
-    });
-    if (!updated) throw new NotFoundException({ code: "not_found", message: "Email message not found" });
-    return { data: this.present(updated) };
+    return { data: this.present(email) };
   }
 
   private present(email: {

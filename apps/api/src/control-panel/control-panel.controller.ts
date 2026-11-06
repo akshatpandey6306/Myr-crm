@@ -162,6 +162,76 @@ export class ControlPanelController {
     };
   }
 
+  @Get("workspace-signups")
+  async listWorkspaceSignupRequests() {
+    const requests = await this.prisma.membership.findMany({
+      where: { role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      select: {
+        userId: true,
+        createdAt: true,
+        user: { select: { name: true, email: true } },
+        organization: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+      data: requests.map((request) => ({
+        userId: request.userId,
+        requestedAt: request.createdAt.toISOString(),
+        user: request.user,
+        organization: request.organization,
+      })),
+    };
+  }
+
+  @Post("workspace-signups/:userId/review")
+  async reviewWorkspaceSignup(
+    @Param("userId") userId: string,
+    @Body() body: { decision?: unknown },
+    @Req() request: HttpRequest,
+  ) {
+    if (!UUID.test(userId)) throw new BadRequestException({ code: "validation_error", message: "A valid user ID is required" });
+    if (body?.decision !== "approve" && body?.decision !== "decline") {
+      throw new BadRequestException({ code: "validation_error", message: "Choose approve or decline" });
+    }
+
+    const signup = await this.prisma.membership.findFirst({
+      where: { userId, role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      select: { organizationId: true, userId: true },
+    });
+    if (!signup) throw new NotFoundException({ code: "not_found", message: "Pending workspace signup not found" });
+
+    const approved = body.decision === "approve";
+    await this.prisma.$transaction(async (transaction) => {
+      const user = await transaction.user.updateMany({
+        where: { id: signup.userId, status: "PENDING" },
+        data: { status: approved ? "ACTIVE" : "DISABLED" },
+      });
+      const membership = await transaction.membership.updateMany({
+        where: { organizationId: signup.organizationId, userId: signup.userId, role: "OWNER", status: "PENDING" },
+        data: { status: approved ? "ACTIVE" : "REMOVED" },
+      });
+      if (user.count !== 1 || membership.count !== 1) {
+        throw new ConflictException({ code: "conflict", message: "This workspace signup has already been reviewed" });
+      }
+      if (!approved) {
+        await transaction.organization.updateMany({
+          where: { id: signup.organizationId },
+          data: { status: "SUSPENDED" },
+        });
+        await transaction.session.updateMany({
+          where: { userId: signup.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+    });
+
+    await this.recordAudit(request, `workspace_signup.${body.decision}`, "organization", signup.organizationId, {
+      userId: signup.userId,
+    });
+    return { data: { userId: signup.userId, decision: body.decision } };
+  }
+
   @Post("plans")
   async createPlan(@Body() body: unknown, @Req() request: HttpRequest) {
     const plan = parsePlanDraft(body);
@@ -214,8 +284,7 @@ export class ControlPanelController {
 
   @Get("organizations")
   async listOrganizations() {
-    const now = new Date();
-    const [organizations, memberCounts, pendingInvitationCounts, dealTotals] = await Promise.all([
+    const [organizations, memberCounts, pendingJoinRequestCounts, dealTotals] = await Promise.all([
       this.prisma.organization.findMany({
         select: {
           id: true,
@@ -242,9 +311,9 @@ export class ControlPanelController {
         where: { status: "ACTIVE", user: { status: "ACTIVE" } },
         _count: { _all: true },
       }),
-      this.prisma.organizationInvitation.groupBy({
+      this.prisma.membership.groupBy({
         by: ["organizationId"],
-        where: { acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        where: { status: "PENDING", user: { status: "ACTIVE" } },
         _count: { _all: true },
       }),
       this.prisma.deal.groupBy({
@@ -255,8 +324,8 @@ export class ControlPanelController {
       }),
     ]);
     const countsByOrganization = new Map(memberCounts.map((entry) => [entry.organizationId, entry._count._all]));
-    const pendingInvitationsByOrganization = new Map(
-      pendingInvitationCounts.map((entry) => [entry.organizationId, entry._count._all]),
+    const pendingJoinRequestsByOrganization = new Map(
+      pendingJoinRequestCounts.map((entry) => [entry.organizationId, entry._count._all]),
     );
     const dealTotalsByOrganization = new Map<string, {
       count: number;
@@ -281,7 +350,7 @@ export class ControlPanelController {
         name: organization.name,
         status: organization.status.toLowerCase(),
         memberCount: countsByOrganization.get(organization.id) ?? 0,
-        pendingInvitationCount: pendingInvitationsByOrganization.get(organization.id) ?? 0,
+        pendingMemberRequestCount: pendingJoinRequestsByOrganization.get(organization.id) ?? 0,
         dealCount: dealTotalsByOrganization.get(organization.id)?.count ?? 0,
         openPipelineValue: dealTotalsByOrganization.get(organization.id)?.openPipelineValue ?? 0,
         wonRevenue: dealTotalsByOrganization.get(organization.id)?.wonRevenue ?? 0,

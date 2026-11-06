@@ -32,6 +32,7 @@
 .invitationList li strong { color: #38463e; font-size: 10px; }
 .invitationList li span { color: #8a968e; font-size: 9px; }
 .empty { margin: 0; padding: 18px 19px; color: #8a968e; font-size: 10px; }
+.joinCode { margin: 0; padding: 17px 19px; color: #35423b; font-family: monospace; font-size: 13px; font-weight: 700; letter-spacing: .04em; overflow-wrap: anywhere; }
 .error, .notice { border-radius: 7px; padding: 11px 13px; font-size: 10px; line-height: 1.5; }
 .error { border: 1px solid #f1d4ce; background: #fff7f5; color: #a55143; }
 .notice { border: 1px solid #cfe7d7; background: #f4fbf6; color: #386e4d; }

@@ -29,7 +29,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     '/forgot-password',
     '/reset-password',
     '/verify-email',
-    '/accept-invitation',
+    '/join-workspace',
     '/subscription',
     '/control-panel',
   ].some((route) => pathname === route || pathname.startsWith(`${route}/`));

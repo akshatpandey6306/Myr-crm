@@ -21,7 +21,7 @@ export class NotificationsController {
         where: recipient,
         orderBy: { createdAt: "desc" },
         take: limit,
-        select: { id: true, type: true, title: true, body: true, activityId: true, readAt: true, createdAt: true },
+        select: { id: true, type: true, title: true, body: true, activityId: true, resourceId: true, readAt: true, createdAt: true },
       }),
       this.prisma.notification.count({ where: { ...recipient, readAt: null } }),
     ]);

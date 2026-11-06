@@ -73,7 +73,7 @@ export class OrgGuard implements CanActivate {
       ["companies", ["/companies"]],
       ["deals", ["/deals", "/pipelines"]],
       ["activities", ["/activities"]],
-      ["team", ["/organizations/members", "/organizations/invitations", "/organizations/memberships"]],
+      ["team", ["/organizations/members", "/organizations/membership-requests", "/organizations/join-code"]],
       ["automation", ["/automations"]],
       ["email", ["/emails"]],
       ["reports", ["/reports"]],

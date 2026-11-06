@@ -33,8 +33,10 @@ require a persisted session and an active organization membership.
 
 The web app provides `/sign-in`, `/sign-up`, `/forgot-password`,
 `/reset-password`, and `/verify-email` for old verification links. Signup
-creates the user, workspace, Owner membership, and default pipeline atomically;
-new accounts can sign in immediately without email verification. The API
+creates either a pending workspace Owner and workspace or an account-only
+teammate signup, without requiring email verification. The platform admin must
+approve a new workspace Owner before they can sign in. Teammates can sign in
+and request access with a workspace join code. The API
 exposes `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
 `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`,
 `POST /api/v1/auth/password-reset/request`,
@@ -50,10 +52,10 @@ enabled in production. The API stores only the SHA-256 session digest and accept
 that cookie for protected requests; the raw session token is never returned in
 JSON or stored in browser storage. Unsafe requests with an Origin header must
 match `WEB_ORIGIN`, and production cookie-authenticated mutations require the
-expected Origin. Password-reset tokens are random, one-use values stored only
-as SHA-256 digests; reset links expire after one hour. Successful password
-resets revoke every existing session for that user. Reset responses are generic
-to avoid account enumeration.
+expected Origin. Password reset by email is disabled because email delivery is
+off; the request endpoint returns an unavailable response. Existing reset
+tokens, if any, remain one-use values stored only as SHA-256 digests; successful
+resets revoke every existing session for that user.
 
 The local, non-production seed creates `admin@myrcrm.local` with password
 `MyrAdmin123!`; this account can access `/control-panel` when no
@@ -95,22 +97,16 @@ deal list with company, stage, owner, and value details. These cross-workspace
 read endpoints are protected by the single platform-admin identity; customer
 workspace admins remain limited to their own organization.
 
-Authentication and invitation endpoints use PostgreSQL-backed rate-limit
+Authentication and join-request endpoints use PostgreSQL-backed rate-limit
 windows keyed by hashed IP and, where applicable, normalized email or user ID.
-Limits are 10 login attempts per 15 minutes; 5 signup and verification-resend
-attempts per hour; 5 reset requests per hour; 10 reset/verification/invitation
-accept attempts per hour; and 20 invitations per hour per inviter/email.
+Limits are 10 login attempts per 15 minutes; 5 signup attempts per hour per IP
+and email; and 5 workspace join requests per hour per user.
 Expired buckets are periodically removed by the API.
 
-Configure `EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN` on the API to send
-password-reset, invitation, and CRM contact messages through the private email
-service. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional
-`SMTP_USER` / `SMTP_PASSWORD` only on that service. TLS is required by default
-for STARTTLS connections; use `SMTP_SECURE=true` for implicit TLS. In
-development without an API delivery URL, one-time links are logged locally;
-production API startup requires the service URL and token, while production
-email-service startup requires SMTP configuration. Delivery is synchronous and
-does not retry.
+Email delivery is disabled. Signup does not require email verification. New
+workspace signups are held until a platform admin approves them; password reset
+by email is unavailable. CRM contact messages can be saved to the outbox but
+are not sent.
 
 `GET /api/v1/organizations` lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as
@@ -155,10 +151,9 @@ sorting. Deal fields include `name`, `value`, `closeDate`, `status`,
 `companyId`, `pipelineId`, and `stageId`; the API verifies company, pipeline,
 and stage membership in the active organization. Deletion archives a deal.
 
-## Team, invitations, and roles
+## Team join requests and roles
 
-`GET /api/v1/organizations/members` lists active members (including email and
-verification status) for Owners and Admins. `PATCH
+`GET /api/v1/organizations/members` lists active members for Owners and Admins. `PATCH
 /api/v1/organizations/members/:userId` changes a member to Admin, Sales Manager,
 Sales Representative, or Read-only User; only Owners and Admins may manage
 members. Owners cannot be changed through this endpoint. Only the current Owner
@@ -168,14 +163,14 @@ becomes an Admin. Members can be removed with `DELETE
 /api/v1/organizations/members/:userId`. Owner uniqueness and transfer are
 protected by a transaction and a database partial unique index.
 
-Owners and Admins can invite with `POST /api/v1/organizations/invitations`,
-list pending invitations with `GET` on the same route, and revoke with
-`DELETE /api/v1/organizations/invitations/:id`. Invitations expire after seven
-days and store only a token hash. `POST
-/api/v1/organizations/invitations/accept` accepts a one-time email link; a new
-member sets a name and password, while an existing account is added to the
-organization. Accepting an invite verifies the invited email and creates the
-membership and audit event transactionally. A names-only active member
+Owners and Admins can get the workspace join code from
+`GET /api/v1/organizations/join-code`. A signed-in user submits that code to
+`POST /api/v1/organizations/join-requests`; requests are saved as pending
+memberships and notify workspace Owners/Admins in-app. Owners/Admins review
+requests with `GET /api/v1/organizations/membership-requests` and
+`PATCH /api/v1/organizations/membership-requests/:userId` using an `approve` or
+`decline` decision. `GET /api/v1/organizations/join-requests` lets a user check
+their pending or active workspace requests. A names-only active member
 directory at `GET /api/v1/organizations/assignees` is available to Owners,
 Admins, and Sales Managers for activity assignments.
 
@@ -255,7 +250,7 @@ creates linked tasks. Run history stores successful executions only. Delete
 uses soft archive. Scheduled, email, deal, retry, and failure-history
 workflows are outside this MVP contract.
 
-## Email outbox and SMTP delivery
+## Email outbox
 
 The Email screen at `/email` uses `GET /api/v1/emails` to list messages and
 `POST /api/v1/emails` to save a plain-text message. Requests use the shared
@@ -271,31 +266,13 @@ Organization Owners, Admins, and Sales Managers can view the organization's
 outbox. Sales Representatives can view and compose messages only for their own
 contacts; Read-only Users can view but cannot compose.
 
-When email delivery is configured, the API sends the message synchronously after
-storing the outbox record by calling the private email service at
-`EMAIL_DELIVERY_URL` with `EMAIL_DELIVERY_TOKEN`. Signup, verification resend,
-password reset, invitations, and CRM contact messages use this same service.
-The email service owns SMTP
-configuration (`SMTP_HOST`, `SMTP_FROM`, and optional SMTP credentials/TLS
-settings). Successful delivery is recorded as `sent` with `sentAt`; a delivery
-error is recorded as `failed`. Without an API delivery URL, messages are saved
-as `not_configured` and are not delivered.
+Email delivery is disabled. CRM contact messages are saved with status
+`not_configured`; no mail service or SMTP configuration is required. Signup,
+workspace approval, and team access use in-app workflows.
 Message bodies are plain text and the recipient address always comes from the
 selected active contact. The UI shows each message's delivery state.
 
-Delivery has no retry queue or idempotency store. A process or database failure
-after SMTP accepts a message can leave delivery state uncertain; a future worker
-with idempotent delivery is needed
-before retrying automatically. Templates, attachments, and inbound mailbox
-sync are outside this MVP.
-
-Run the independent delivery process with `npm run email:dev` from the
-repository root. It listens on `EMAIL_SERVICE_PORT` (default 4100), exposes
-`GET /health` and `GET /ready`, and accepts only authenticated internal
-`POST /internal/v1/email` requests. Keep it on a private network; do not expose
-the internal route to browsers or the public internet. The CRM API remains
-responsible for session validation, tenant authorization, recipient lookup, and
-outbox persistence.
+Templates, attachments, and inbound mailbox sync are outside this MVP.
 
 ## Reports — live summary
 

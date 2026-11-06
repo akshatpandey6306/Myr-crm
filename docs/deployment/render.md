@@ -15,15 +15,17 @@ region as the API.
 - Build command: `npm ci && npm run db:generate --workspace @myr-crm/api && npm run api:build`
 - Start command: `npm run start --workspace @myr-crm/api`
 - Pre-deploy command: `npm run db:deploy --workspace @myr-crm/api`
-- Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`, `PLATFORM_ADMIN_EMAIL`,
-  `EMAIL_API_KEY`, and `EMAIL_FROM`.
+- Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`, and
+  `PLATFORM_ADMIN_EMAIL`.
 - Set `PLATFORM_ADMIN_EMAIL` to the email address of the one existing active
   account that should manage the platform. Production does not create the local
   seeded demo-admin account. Do not configure multiple platform administrators.
-- Set `WEB_ORIGIN` to the exact public origin of the Render web service. Use a
-  verified sender address for `EMAIL_FROM` in the Resend account.
+- Set `WEB_ORIGIN` to the exact public origin of the Render web service.
 The API listens on Render's `PORT`. Do not run `npm run db:seed` against a
 production database.
+
+Email delivery is disabled for now. Deploy only the API and web services; no
+SMTP credentials, delivery token, or separate email service are required.
 
 ## Web service
 
@@ -39,7 +41,7 @@ The browser uses the same-origin `/api/v1` rewrite, so leave
 
 1. Confirm the pre-deploy migration succeeds and the API health endpoint returns
    `{"status":"ok"}`.
-2. Verify signup, login, refresh, password reset, and
+2. Verify workspace signup approval, teammate join requests, login, and
    workspace subscription gating using test accounts.
 3. New workspaces can start a free two-day trial. Online checkout, payment
    verification, and webhooks are not integrated; after a trial, activation

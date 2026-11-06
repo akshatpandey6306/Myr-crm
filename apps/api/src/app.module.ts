@@ -21,7 +21,6 @@ import { AuditLogsController } from "./audit-logs/audit-logs.controller.js";
 import { AuditLogInterceptor } from "./audit-logs/audit-log.interceptor.js";
 import { AuditLogsService } from "./audit-logs/audit-logs.service.js";
 import { SettingsController } from "./settings/settings.controller.js";
-import { AuthEmailService } from "./auth/email.service.js";
 import { RateLimitGuard } from "./auth/rate-limit.guard.js";
 import { MembersController } from "./organizations/members.controller.js";
 import { BillingController } from "./billing/billing.controller.js";
@@ -38,7 +37,6 @@ import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
     { provide: APP_GUARD, useClass: OrgGuard },
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditLogInterceptor },
-    AuthEmailService,
     AutomationsService,
     AuditLogsService,
     AuditService,

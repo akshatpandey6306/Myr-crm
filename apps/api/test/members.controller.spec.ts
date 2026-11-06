@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { ForbiddenException } from "@nestjs/common";
 import { MembersController } from "../src/organizations/members.controller.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const organizationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const joinCode = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function request(role: "owner" | "admin" | "sales_manager" | "sales_rep" = "owner") {
   return {
@@ -33,7 +33,7 @@ describe("MembersController", () => {
           }];
         },
       },
-    } as never, {} as never);
+    } as never);
 
     const result = await controller.listMembers(request());
     assert.deepEqual(args?.where, { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } });
@@ -42,7 +42,7 @@ describe("MembersController", () => {
   });
 
   it("denies member administration to sales managers", async () => {
-    const controller = new MembersController({} as never, {} as never);
+    const controller = new MembersController({} as never);
     await assert.rejects(controller.listMembers(request("sales_manager")), ForbiddenException);
   });
 
@@ -55,7 +55,7 @@ describe("MembersController", () => {
           return [{ userId: "member-a", user: { name: "Riley" } }];
         },
       },
-    } as never, {} as never);
+    } as never);
 
     const result = await controller.listAssignees(request("sales_manager"));
     assert.deepEqual(args?.where, { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } });
@@ -68,86 +68,78 @@ describe("MembersController", () => {
         updateMany: async () => ({ count: 0 }),
         findFirst: async () => ({ role: "OWNER" }),
       },
-    } as never, {} as never);
+    } as never);
     await assert.rejects(
       controller.updateMemberRole(request(), "owner-a", { role: "admin" }),
       ForbiddenException,
     );
   });
 
-  it("creates an invitation with a hashed token and never returns the raw link token", async () => {
-    let invitationData: Record<string, unknown> | undefined;
-    let emailText = "";
-    const transaction = {
-      organizationInvitation: {
-        updateMany: async () => ({ count: 0 }),
-        create: async (args: Record<string, unknown>) => {
-          invitationData = args.data as Record<string, unknown>;
-          return {
-            id: "invite-a",
-            email: "riley@example.com",
-            role: "SALES_REP",
-            expiresAt: new Date("2026-11-06T12:00:00.000Z"),
-          };
-        },
-      },
-    };
-    const controller = new MembersController({
-      membership: { findFirst: async () => null },
-      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
-    } as never, { send: async (_to: string, _subject: string, text: string) => { emailText = text; } } as never);
-
-    const result = await controller.createInvitation(request(), { email: "Riley@Example.com", role: "sales_rep" });
-    const rawToken = new URL(emailText.match(/https?:\/\/\S+/)?.[0] ?? "http://localhost").searchParams.get("token");
-    assert.equal(invitationData?.organizationId, organizationId);
-    assert.equal(invitationData?.invitedByUserId, userId);
-    assert.equal(invitationData?.email, "riley@example.com");
-    assert.equal(invitationData?.role, "SALES_REP");
-    assert.ok(rawToken);
-    assert.equal(invitationData?.tokenHash, createHash("sha256").update(rawToken!).digest("hex"));
-    assert.equal(result.data.id, "invite-a");
-    assert.equal("token" in result.data, false);
-  });
-
-  it("accepts an invitation by activating membership and verifying the invited email", async () => {
-    const token = "single-use-invitation-secret";
+  it("creates a pending membership and notifies workspace administrators", async () => {
     let membershipData: Record<string, unknown> | undefined;
-    let createdUser: Record<string, unknown> | undefined;
-    let auditData: Record<string, unknown> | undefined;
+    let notificationData: Record<string, unknown>[] | undefined;
     const transaction = {
-      organizationInvitation: { updateMany: async () => ({ count: 1 }) },
-      user: {
-        create: async (args: Record<string, unknown>) => {
-          createdUser = args.data as Record<string, unknown>;
-          return { id: "new-user", email: "riley@example.com", name: "Riley" };
-        },
-      },
       membership: {
         findUnique: async () => null,
         upsert: async (args: Record<string, unknown>) => { membershipData = args; return {}; },
+        findMany: async () => [{ userId: "admin-a" }],
       },
-      auditLog: { create: async (args: Record<string, unknown>) => { auditData = args.data as Record<string, unknown>; return {}; } },
+      user: { findUnique: async () => ({ name: "Riley", email: "riley@example.com" }) },
+      notification: { createMany: async (args: { data: Record<string, unknown>[] }) => { notificationData = args.data; } },
     };
     const controller = new MembersController({
-      organizationInvitation: {
-        findFirst: async (args: { where: { tokenHash: string } }) => {
-          assert.equal(args.where.tokenHash, createHash("sha256").update(token).digest("hex"));
-          return { id: "invite-a", organizationId, email: "riley@example.com", role: "SALES_REP" };
-        },
-      },
-      user: { findUnique: async () => null },
+      organization: { findFirst: async () => ({ id: organizationId, name: "Acme" }) },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
-    } as never, {} as never);
+    } as never);
 
-    const result = await controller.acceptInvitation({ token, name: "Riley", password: "password123" });
-    assert.equal(createdUser?.emailVerifiedAt instanceof Date, true);
-    assert.match(String(createdUser?.passwordHash), /^scrypt\$/);
-    assert.deepEqual((membershipData?.create as Record<string, unknown>), {
+    const result = await controller.requestToJoin(
+      { ...request(), orgId: undefined, userId },
+      { joinCode },
+    );
+
+    assert.deepEqual(membershipData?.create, {
       organizationId,
-      userId: "new-user",
+      userId,
       role: "SALES_REP",
+      status: "PENDING",
     });
-    assert.equal(auditData?.resourceType, "invitation");
-    assert.equal(result.user.email, "riley@example.com");
+    assert.equal(notificationData?.[0]?.recipientUserId, "admin-a");
+    assert.equal(notificationData?.[0]?.resourceId, userId);
+    assert.equal(notificationData?.[0]?.type, "MEMBER_JOIN_REQUEST");
+    assert.deepEqual(result.data.organization, { id: organizationId, name: "Acme" });
+    assert.equal(result.data.status, "pending");
+  });
+
+  it("lets a workspace administrator approve a pending join request", async () => {
+    let updateArgs: Record<string, unknown> | undefined;
+    let auditData: Record<string, unknown> | undefined;
+    let notificationQuery: Record<string, unknown> | undefined;
+    const controller = new MembersController({
+      membership: {
+        updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
+      },
+      auditLog: { create: async (args: { data: Record<string, unknown> }) => { auditData = args.data; } },
+      notification: {
+        updateMany: async (args: { where: Record<string, unknown> }) => { notificationQuery = args.where; return { count: 1 }; },
+      },
+    } as never);
+
+    const result = await controller.reviewMembershipRequest(
+      request("admin"),
+      "22222222-2222-4222-8222-222222222222",
+      { decision: "approve", role: "admin" },
+    );
+
+    assert.deepEqual(updateArgs?.where, {
+      organizationId,
+      userId: "22222222-2222-4222-8222-222222222222",
+      status: "PENDING",
+      user: { status: "ACTIVE" },
+    });
+    assert.deepEqual(updateArgs?.data, { status: "ACTIVE", role: "ADMIN" });
+    assert.equal(auditData?.resourceType, "membership_request");
+    assert.equal(notificationQuery?.resourceId, "22222222-2222-4222-8222-222222222222");
+    assert.equal(result.data.decision, "approve");
+    assert.equal(result.data.role, "admin");
   });
 });

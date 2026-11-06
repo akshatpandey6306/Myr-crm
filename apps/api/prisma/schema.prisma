@@ -8,6 +8,7 @@ datasource db {
 }
 
 enum UserStatus {
+  PENDING  @map("pending")
   ACTIVE   @map("active")
   DISABLED @map("disabled")
 
@@ -50,6 +51,7 @@ enum MembershipRole {
 }
 
 enum MembershipStatus {
+  PENDING @map("pending")
   ACTIVE  @map("active")
   REVOKED @map("revoked")
   REMOVED @map("removed")
@@ -138,6 +140,7 @@ enum EmailDeliveryStatus {
 enum NotificationType {
   ACTIVITY_ASSIGNED @map("activity_assigned")
   ACTIVITY_COMPLETED @map("activity_completed")
+  MEMBER_JOIN_REQUEST @map("member_join_request")
 
   @@map("notification_type")
 }
@@ -176,6 +179,7 @@ model User {
 
 model Organization {
   id                     String             @id @default(uuid()) @db.Uuid
+  joinCode               String             @unique @default(uuid()) @map("join_code") @db.Uuid
   name                   String             @db.VarChar(160)
   status                 OrganizationStatus @default(ACTIVE)
   subscriptionPlan       String?            @map("subscription_plan") @db.VarChar(32)
@@ -514,7 +518,8 @@ model Notification {
   id              String           @id @default(uuid()) @db.Uuid
   organizationId  String           @map("organization_id") @db.Uuid
   recipientUserId String           @map("recipient_user_id") @db.Uuid
-  activityId      String           @map("activity_id") @db.Uuid
+  activityId      String?          @map("activity_id") @db.Uuid
+  resourceId      String?          @map("resource_id") @db.Uuid
   type            NotificationType
   title           String           @db.VarChar(160)
   body            String           @db.VarChar(500)
@@ -522,7 +527,7 @@ model Notification {
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   recipient       Membership       @relation("NotificationRecipient", fields: [organizationId, recipientUserId], references: [organizationId, userId], onDelete: Cascade)
-  activity        Activity         @relation(fields: [organizationId, activityId], references: [organizationId, id], onDelete: Cascade)
+  activity        Activity?        @relation(fields: [organizationId, activityId], references: [organizationId, id], onDelete: Cascade)
 
   @@index([organizationId, recipientUserId, readAt, createdAt])
   @@map("notifications")

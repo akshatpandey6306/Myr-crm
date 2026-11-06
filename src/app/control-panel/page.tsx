@@ -10,7 +10,7 @@ type Organization = {
   name: string;
   status: 'active' | 'suspended';
   memberCount: number;
-  pendingInvitationCount: number;
+  pendingMemberRequestCount: number;
   dealCount: number;
   openPipelineValue: number;
   wonRevenue: number;
@@ -44,6 +44,12 @@ type SubscriptionActivationRequest = {
   requestedAt: string;
   organization: { id: string; name: string };
   requestedBy: { name: string; email: string };
+};
+type WorkspaceSignupRequest = {
+  userId: string;
+  requestedAt: string;
+  user: { name: string; email: string };
+  organization: { id: string; name: string };
 };
 type WorkspaceMember = {
   id: string;
@@ -126,7 +132,7 @@ function isOrganization(value: unknown): value is Organization {
     typeof organization.name === 'string' &&
     (organization.status === 'active' || organization.status === 'suspended') &&
     Number.isInteger(organization.memberCount) &&
-    Number.isInteger(organization.pendingInvitationCount) &&
+    Number.isInteger(organization.pendingMemberRequestCount) &&
     Number.isInteger(organization.dealCount) &&
     typeof organization.openPipelineValue === 'number' &&
     Number.isFinite(organization.openPipelineValue) &&
@@ -207,6 +213,7 @@ export default function ControlPanelPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
   const [activationRequests, setActivationRequests] = useState<SubscriptionActivationRequest[]>([]);
+  const [workspaceSignupRequests, setWorkspaceSignupRequests] = useState<WorkspaceSignupRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyOrganizationId, setBusyOrganizationId] = useState('');
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
@@ -407,11 +414,42 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function loadWorkspaceSignupRequests(signal?: AbortSignal) {
+    try {
+      const response = await crmApiFetch('/control-panel/workspace-signups', signal ? { signal } : {});
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const body = typeof payload === 'object' && payload !== null && 'error' in payload
+          ? (payload as { error?: { message?: string } }).error
+          : undefined;
+        throw new Error(body?.message ?? 'Could not load workspace signup requests.');
+      }
+      if (typeof payload !== 'object' || payload === null ||
+        !Array.isArray((payload as { data?: unknown }).data) ||
+        !(payload as { data: unknown[] }).data.every((item) =>
+          typeof item === 'object' && item !== null &&
+          typeof (item as WorkspaceSignupRequest).userId === 'string' &&
+          typeof (item as WorkspaceSignupRequest).requestedAt === 'string' &&
+          typeof (item as WorkspaceSignupRequest).user?.name === 'string' &&
+          typeof (item as WorkspaceSignupRequest).user?.email === 'string' &&
+          typeof (item as WorkspaceSignupRequest).organization?.name === 'string',
+        )) {
+        throw new Error('The control panel returned invalid workspace signup requests.');
+      }
+      setWorkspaceSignupRequests((payload as { data: WorkspaceSignupRequest[] }).data);
+    } catch (caught) {
+      if (!(caught instanceof Error) || caught.name !== 'AbortError') {
+        setError(caught instanceof Error ? caught.message : 'Could not load workspace signup requests.');
+      }
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     void loadOrganizations(controller.signal);
     void loadPlans(controller.signal);
     void loadActivationRequests(controller.signal);
+    void loadWorkspaceSignupRequests(controller.signal);
     void loadAuditLogs();
     return () => controller.abort();
   }, []);
@@ -470,6 +508,28 @@ export default function ControlPanelPage() {
     setLoading(true);
     await loadOrganizations();
     await loadActivationRequests();
+    await loadWorkspaceSignupRequests();
+  }
+
+  async function reviewWorkspaceSignup(signup: WorkspaceSignupRequest, decision: 'approve' | 'decline') {
+    setBusyOrganizationId(signup.userId);
+    setError('');
+    setAccessMessage('');
+    try {
+      const response = await crmApiFetch(`/control-panel/workspace-signups/${signup.userId}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message ?? payload?.message ?? 'Could not review this workspace signup.');
+      setAccessMessage(`${signup.organization.name} was ${decision === 'approve' ? 'approved' : 'declined'}.`);
+      await Promise.all([loadWorkspaceSignupRequests(), loadOrganizations(), loadAuditLogs()]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not review this workspace signup.');
+    } finally {
+      setBusyOrganizationId('');
+    }
   }
 
   async function createWorkspace(event: React.FormEvent<HTMLFormElement>) {
@@ -919,10 +979,39 @@ export default function ControlPanelPage() {
           <a href="#overview">Overview</a>
           <a href="#onboarding">Onboard workspace</a>
           <a href="#plans">Subscription plans</a>
+          <a href="#workspace-signups">Workspace approvals</a>
           <a href="#activation-requests">Activation requests</a>
           <a href="#workspaces">Workspaces</a>
           <a href="#audit-log">Audit log</a>
         </nav>
+
+        <section id="workspace-signups" className="panel control-panel-table" aria-label="Workspace signup approvals">
+          <div className="panel-heading">
+            <div className="control-panel-section-title">
+              <h2>Workspace signup approvals</h2>
+              <p>{workspaceSignupRequests.length} awaiting platform-admin review</p>
+            </div>
+          </div>
+          {workspaceSignupRequests.length ? (
+            <div className="table-scroll">
+              <table>
+                <thead><tr><th>WORKSPACE</th><th>REQUESTED BY</th><th>REQUESTED</th><th>ACTION</th></tr></thead>
+                <tbody>{workspaceSignupRequests.map((signup) => (
+                  <tr key={signup.userId}>
+                    <td><strong>{signup.organization.name}</strong></td>
+                    <td>{signup.user.name}<small>{signup.user.email}</small></td>
+                    <td>{new Date(signup.requestedAt).toLocaleDateString()}</td>
+                    <td>
+                      <button className="control-panel-action" type="button" disabled={Boolean(busyOrganizationId)} onClick={() => void reviewWorkspaceSignup(signup, 'approve')}>Allow</button>
+                      {' '}
+                      <button className="control-panel-action" type="button" disabled={Boolean(busyOrganizationId)} onClick={() => void reviewWorkspaceSignup(signup, 'decline')}>Decline</button>
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ) : <p className="control-panel-empty">No workspace signups are waiting for approval.</p>}
+        </section>
 
         <section id="activation-requests" className="panel control-panel-table" aria-label="Subscription activation requests">
           <div className="panel-heading">
@@ -1141,7 +1230,7 @@ export default function ControlPanelPage() {
                     const selectedPlanRecord = subscriptionPlans.find((plan) => plan.code === selectedPlan);
                     const tenantPlan = subscriptionPlans.find((plan) => plan.code === organization.subscription.planCode);
                     const seatLimit = tenantPlan?.employeeLimit;
-                    const seatsUsed = organization.memberCount + organization.pendingInvitationCount;
+                    const seatsUsed = organization.memberCount + organization.pendingMemberRequestCount;
                     const seatLimitStatus = seatLimit === null || seatLimit === undefined
                       ? null
                       : seatsUsed > seatLimit ? 'over' : seatsUsed === seatLimit ? 'at' : null;
@@ -1186,8 +1275,8 @@ export default function ControlPanelPage() {
                                 ? `${seatsUsed} seats · plan limit unavailable`
                                 : `${seatsUsed} seats · no plan assigned`}
                           </small>
-                          {organization.pendingInvitationCount > 0 && (
-                            <small>{organization.pendingInvitationCount} pending invitations included</small>
+                          {organization.pendingMemberRequestCount > 0 && (
+                            <small>{organization.pendingMemberRequestCount} pending join requests included</small>
                           )}
                           {seatLimitStatus && (
                             <small className="control-panel-seat-limit-warning">
