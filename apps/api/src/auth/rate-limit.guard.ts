@@ -3,11 +3,16 @@ import { createHash } from "node:crypto";
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
-type Policy = { limit: number; windowSeconds: number; emailKey?: boolean; userKey?: boolean };
+type Policy = {
+  limit: number;
+  windowSeconds: number;
+  emailKey?: boolean;
+  userKey?: boolean;
+};
 
 const policies = new Map<string, Policy>([
-  ["POST /auth/login", { limit: 10, windowSeconds: 900, emailKey: true }],
-  ["POST /auth/signup", { limit: 100, windowSeconds: 600, emailKey: true }],
+  ["POST /auth/login", { limit: 5, windowSeconds: 60, emailKey: true }],
+  ["POST /auth/signup", { limit: 5, windowSeconds: 60, emailKey: true }],
   ["POST /auth/password-reset/request", { limit: 5, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/password-reset/confirm", { limit: 10, windowSeconds: 3600 }],
   ["POST /billing/request-activation", { limit: 3, windowSeconds: 3600, userKey: true }],
