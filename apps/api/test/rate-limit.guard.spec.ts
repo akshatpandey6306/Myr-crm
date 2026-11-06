@@ -10,6 +10,37 @@ function context(request: Record<string, unknown>) {
 }
 
 describe("RateLimitGuard", () => {
+  it("allows 100 signup attempts per IP and email within a 10-minute window", async () => {
+    const attempts = new Map<string, number>();
+    const prisma = {
+      $queryRaw: async (_query: TemplateStringsArray, keyHash: string) => {
+        const count = (attempts.get(keyHash) ?? 0) + 1;
+        attempts.set(keyHash, count);
+        return [{ attempts: count, window_started_at: new Date() }];
+      },
+      $executeRaw: async () => 0,
+    };
+    const guard = new RateLimitGuard(prisma as never);
+    const request = {
+      method: "POST",
+      path: "/api/v1/auth/signup",
+      ip: "192.0.2.2",
+      body: { email: "new-user@example.com" },
+    };
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      assert.equal(await guard.canActivate(context(request)), true);
+    }
+
+    await assert.rejects(guard.canActivate(context(request)), (error: unknown) => {
+      assert.ok(error instanceof HttpException);
+      assert.equal(error.getStatus(), 429);
+      const response = error.getResponse() as { retryAfterSeconds: number };
+      assert.ok(response.retryAfterSeconds > 0 && response.retryAfterSeconds <= 600);
+      return true;
+    });
+  });
+
   it("limits auth attempts by hashed IP and email keys", async () => {
     const attempts = new Map<string, number>();
     const keyHashes: string[] = [];
