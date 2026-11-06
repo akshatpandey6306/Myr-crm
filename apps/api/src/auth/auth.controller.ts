@@ -18,7 +18,6 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { AuthEmailService } from "./email.service.js";
 import { Public } from "./public.decorator.js";
-import { isEmailVerificationRequired } from "./email-verification.js";
 
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const EMAIL_VERIFICATION_LIFETIME_MS = 24 * 60 * 60 * 1000;
@@ -48,7 +47,6 @@ export class AuthController {
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     const organizationName = typeof body?.organizationName === "string" ? body.organizationName.trim() : "";
     const password = typeof body?.password === "string" ? body.password : "";
-    const verificationRequired = isEmailVerificationRequired();
     if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !name || name.length > 120 || !organizationName || organizationName.length > 160 || password.length < 8 || password.length > 128) {
       throw new BadRequestException({ code: "validation_error", message: "Enter your name, a valid email, a workspace name, and a password of 8 to 128 characters" });
     }
@@ -59,13 +57,14 @@ export class AuthController {
           email,
           name,
           passwordHash: this.hashPassword(password),
-          ...(!verificationRequired ? { emailVerifiedAt: new Date() } : {}),
+          emailVerifiedAt: new Date(),
           memberships: {
             create: {
               role: "OWNER",
               organization: {
                 create: {
                   name: organizationName,
+                  subscriptionStatus: "PENDING",
                   pipelines: {
                     create: {
                       name: "Sales pipeline",
@@ -82,10 +81,9 @@ export class AuthController {
       });
       const organization = user.memberships[0]?.organization;
       if (!organization) throw new Error("Signup did not create an owner organization membership");
-      if (verificationRequired) await this.sendEmailToken(user.id, user.email, "EMAIL_VERIFICATION");
       return {
-        message: verificationRequired ? "Check your email to verify your account before signing in." : "Your workspace is ready. Sign in to continue.",
-        verificationRequired,
+        message: "Your workspace is ready. Sign in to continue.",
+        verificationRequired: false,
         organization: { id: organization.id, name: organization.name },
       };
     } catch (error) {
@@ -109,9 +107,7 @@ export class AuthController {
     if (!user || user.status !== "ACTIVE" || !this.verifyPassword(password, user.passwordHash)) {
       throw new UnauthorizedException({ code: "unauthorized", message: "Invalid credentials" });
     }
-    if (isEmailVerificationRequired() && !user.emailVerifiedAt) {
-      throw new ForbiddenException({ code: "email_not_verified", message: "Verify your email address before signing in" });
-    }
+
     const session = this.newSession();
     await this.prisma.session.create({ data: { userId: user.id, tokenHash: session.tokenHash, expiresAt: session.expiresAt } });
     response.cookie(SESSION_COOKIE, session.token, {

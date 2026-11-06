@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { crmApiFetch } from '../../lib/api-client';
 
 export type WorkspaceSubscription = {
@@ -18,9 +19,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [subscription, setSubscription] = useState<WorkspaceSubscription | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const isUngatedRoute = [
+    '/sign-in',
+    '/sign-up',
+    '/forgot-password',
+    '/reset-password',
+    '/verify-email',
+    '/accept-invitation',
+    '/subscription',
+    '/control-panel',
+  ].some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
   async function signOut() {
     try {
@@ -35,6 +47,10 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    if (isUngatedRoute) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     async function checkAccess() {
       try {
@@ -97,7 +113,9 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     }
     void checkAccess();
     return () => controller.abort();
-  }, []);
+  }, [isUngatedRoute]);
+
+  if (isUngatedRoute) return children;
 
   if (loading) {
     return <main className="subscription-gate-message" role="status">Checking your workspace subscription…</main>;

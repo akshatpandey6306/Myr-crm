@@ -1,5 +1,11 @@
 CREATE TYPE "audit_action" AS ENUM ('create', 'update', 'archive');
 
+ALTER TABLE "audit_logs" RENAME TO "platform_audit_logs";
+ALTER TABLE "platform_audit_logs" RENAME CONSTRAINT "audit_logs_pkey" TO "platform_audit_logs_pkey";
+ALTER INDEX "audit_logs_created_at_idx" RENAME TO "platform_audit_logs_created_at_idx";
+ALTER INDEX "audit_logs_actor_user_id_created_at_idx" RENAME TO "platform_audit_logs_actor_user_id_created_at_idx";
+ALTER INDEX "audit_logs_target_type_target_id_created_at_idx" RENAME TO "platform_audit_logs_target_type_target_id_created_at_idx";
+
 CREATE TABLE "audit_logs" (
   "id" UUID NOT NULL,
   "organization_id" UUID NOT NULL,

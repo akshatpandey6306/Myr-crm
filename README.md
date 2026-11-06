@@ -77,11 +77,11 @@ npm run db:seed
 
 Start the web app with `npm run dev`, the API with `npm run api:dev`, and the
 delivery service with `npm run email:dev` in separate terminals. Email
-verification is enabled in the example environment. Without SMTP, the local
-delivery service logs verification links; to send real mail, configure
-`SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS options in
-`.env`. The API forwards validated email requests to that private service using
-`EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN`. The web app proxies same-origin
+verification is not required for signup or sign-in. Without SMTP, the local
+delivery service logs password-reset and invitation links; to send real mail,
+configure `SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS
+options in `.env`. The API forwards validated email requests to that private
+service using `EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN`. The web app proxies same-origin
 `/api/v1` requests to the API server; set `API_PROXY_URL` when the API is not at
 `http://localhost:4000/api/v1`. Useful checks:
 
@@ -122,18 +122,21 @@ for the current service map, ownership, local workflow, and remaining migration.
   access CRM tables or accept tenant IDs. Signup, verification resend,
   password reset, and member invitations use this same delivery path.
 - PostgreSQL/Prisma persistence covers users, organizations, memberships,
-  expiring sessions, one-time email tokens, invitations, and shared
+  expiring sessions, password-reset tokens, invitations, and shared
   rate-limit buckets. Signup creates the initial Owner membership atomically.
   Organization selection is checked against active membership on protected
   API requests.
-- Authentication includes email verification, password reset with session
-  revocation, per-route database-backed rate limits, and HttpOnly SameSite
-  session cookies (Secure in production) with same-origin checks on unsafe
-  requests. Password-reset and verification tokens are stored only as hashes.
-  Verification is always required in production; non-production demos can set
-  `REQUIRE_EMAIL_VERIFICATION=false`. Configure the private delivery-service
-  URL and token on the API and SMTP on the email service for production. The
-  local seed account is marked verified.
+- Authentication includes password reset with session revocation, per-route
+  database-backed rate limits, and HttpOnly SameSite session cookies (Secure in
+  production) with same-origin checks on unsafe requests. Signup does not
+  require email verification. Configure the private delivery-service URL and
+  token on the API and SMTP on the email service for production.
+- The non-production seed provides the platform-admin login
+  `admin@myrcrm.local` / `MyrAdmin123!` for `/control-panel`. Production does
+  not create this demo account; configure `PLATFORM_ADMIN_EMAIL` with the
+  address of one existing active account to grant platform-admin access.
+  Customer workspace Owners/Admins remain separate and cannot access other
+  workspaces' records or team details.
 - Organization Owners and Admins can invite members, view and change member
   roles, remove members, and transfer ownership. Owner invariants are guarded
   transactionally and by a database partial unique index. Sales Managers get
@@ -179,7 +182,13 @@ for the current service map, ownership, local workflow, and remaining migration.
   not roll back the completed CRM mutation.
 - Settings are available at `/settings`. Owners and Admins can update the
   workspace name, currency display preference, time zone, and week start day;
-  currency changes do not convert existing deal values.
+  currency changes do not convert existing deal values. Settings has General,
+  Leads, Roles, and Users sections; lead choices and workspace roles are
+  documented as fixed until their customization APIs are implemented.
+- New workspaces start pending and are directed to `/subscription` after sign-in.
+  Owners/Admins can start one free two-day trial; after it expires, a plan
+  activation request is queued for manual review in the platform control panel.
+  Online checkout is not connected.
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks
   module uses the adopted role and soft-archive contract.
@@ -198,8 +207,8 @@ changed, checks actually run, and any important remaining limitation.
   Preserved the existing cookie-session, organization-membership, and
   tenant-scoped member APIs where branch changes overlapped; retained the
   non-overlapping settings, reporting, billing, dashboard, control-panel, and
-  subscription work, including a demo verification opt-out that cannot disable
-  production verification. Added additive subscription/platform-audit schema
+  subscription work, including the demo verification opt-out, later removed
+  when signup no longer required verification. Added additive subscription/platform-audit schema
   migrations and extracted SMTP transport into the independent
   `apps/email-service`; the CRM API still owns authorization and outbox state.
   Verification: Prisma Client generation, API typecheck/build, 124 API tests,

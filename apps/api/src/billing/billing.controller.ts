@@ -1,14 +1,10 @@
-import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Inject, Post, Body, Req, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Inject, Post, Body, Req, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { effectiveSubscriptionStatus } from "./subscription-status.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function isTestMode() {
-  return process.env.BILLING_TEST_MODE === "true" && process.env.NODE_ENV !== "production";
-}
 
 @SkipOrganizationContext()
 @Controller("billing")
@@ -19,20 +15,26 @@ export class BillingController {
   async current(@Req() request: HttpRequest) {
     const membership = await this.findMembership(request);
     const organization = membership.organization;
-    const plans = await this.prisma.subscriptionPlan.findMany({
-      where: { isActive: true },
-      orderBy: [{ price: "asc" }, { code: "asc" }],
-      select: {
-        code: true,
-        name: true,
-        price: true,
-        currency: true,
-        billingInterval: true,
-        trialDays: true,
-        employeeLimit: true,
-        features: true,
-      },
-    });
+    const [plans, activationRequest] = await Promise.all([
+      this.prisma.subscriptionPlan.findMany({
+        where: { isActive: true },
+        orderBy: [{ price: "asc" }, { code: "asc" }],
+        select: {
+          code: true,
+          name: true,
+          price: true,
+          currency: true,
+          billingInterval: true,
+          trialDays: true,
+          employeeLimit: true,
+          features: true,
+        },
+      }),
+      this.prisma.subscriptionActivationRequest.findFirst({
+        where: { organizationId: organization.id, status: "PENDING" },
+        select: { id: true, planCode: true, createdAt: true },
+      }),
+    ]);
     return {
       data: {
         organization: { id: organization.id, name: organization.name, status: organization.status.toLowerCase() },
@@ -53,7 +55,11 @@ export class BillingController {
           seats: plan.employeeLimit ?? 0,
           features: plan.features,
         })),
-        testMode: isTestMode(),
+        activationRequest: activationRequest ? {
+          id: activationRequest.id,
+          planCode: activationRequest.planCode,
+          requestedAt: activationRequest.createdAt.toISOString(),
+        } : null,
         canManageBilling: membership.role === "OWNER" || membership.role === "ADMIN",
         organizationRole: membership.role.toLowerCase(),
       },
@@ -61,15 +67,9 @@ export class BillingController {
   }
 
   @Post("subscribe")
-  async startTestSubscription(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
+  async startFreeTrial(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
     if (typeof body?.planCode !== "string") {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid subscription plan" });
-    }
-    if (!isTestMode()) {
-      throw new ServiceUnavailableException({
-        code: "billing_unavailable",
-        message: "Online checkout is not configured yet. Contact the platform team to activate your subscription.",
-      });
     }
 
     const membership = await this.findMembership(request);
@@ -78,7 +78,7 @@ export class BillingController {
     }
     const plan = await this.prisma.subscriptionPlan.findFirst({
       where: { code: body.planCode, isActive: true },
-      select: { code: true, trialDays: true },
+      select: { code: true },
     });
     if (!plan) throw new BadRequestException({ code: "validation_error", message: "Choose a valid active subscription plan" });
     if (membership.organization.status !== "ACTIVE") {
@@ -86,7 +86,7 @@ export class BillingController {
     }
 
     const startsAt = new Date();
-    const endsAt = new Date(startsAt.getTime() + (plan.trialDays || 2) * DAY_MS);
+    const endsAt = new Date(startsAt.getTime() + 2 * DAY_MS);
     const result = await this.prisma.organization.updateMany({
       where: { id: membership.organization.id, subscriptionStatus: "PENDING" },
       data: {
@@ -94,7 +94,7 @@ export class BillingController {
         subscriptionStatus: "TRIAL",
         subscriptionStartedAt: startsAt,
         subscriptionEndsAt: endsAt,
-        billingProvider: "test",
+        billingProvider: "trial",
       },
     });
     if (result.count !== 1) {
@@ -110,9 +110,63 @@ export class BillingController {
         status: "trial",
         startsAt: startsAt.toISOString(),
         endsAt: endsAt.toISOString(),
-        provider: "test",
+        provider: "trial",
       },
     };
+  }
+
+  @Post("request-activation")
+  async requestActivation(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
+    if (typeof body?.planCode !== "string") {
+      throw new BadRequestException({ code: "validation_error", message: "Choose a valid subscription plan" });
+    }
+    const membership = await this.findMembership(request);
+    if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      throw new ForbiddenException({ code: "forbidden", message: "Only a workspace owner or administrator can request activation" });
+    }
+    const subscriptionStatus = effectiveSubscriptionStatus(
+      membership.organization.subscriptionStatus,
+      membership.organization.subscriptionEndsAt,
+    );
+    if (!["expired", "cancelled"].includes(subscriptionStatus)) {
+      throw new ConflictException({ code: "subscription_not_ended", message: "Activation can be requested after the free trial or subscription ends" });
+    }
+    const plan = await this.prisma.subscriptionPlan.findFirst({
+      where: { code: body.planCode, isActive: true },
+      select: { code: true },
+    });
+    if (!plan) throw new BadRequestException({ code: "validation_error", message: "Choose a valid active subscription plan" });
+
+    const existing = await this.prisma.subscriptionActivationRequest.findFirst({
+      where: { organizationId: membership.organization.id, status: "PENDING" },
+      select: { id: true, planCode: true, createdAt: true },
+    });
+    if (existing) return { data: this.activationRequestData(existing) };
+
+    if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
+    try {
+      const created = await this.prisma.subscriptionActivationRequest.create({
+        data: {
+          organizationId: membership.organization.id,
+          requestedById: request.userId,
+          planCode: plan.code,
+        },
+        select: { id: true, planCode: true, createdAt: true },
+      });
+      return { data: this.activationRequestData(created) };
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") throw error;
+      const concurrent = await this.prisma.subscriptionActivationRequest.findFirst({
+        where: { organizationId: membership.organization.id, status: "PENDING" },
+        select: { id: true, planCode: true, createdAt: true },
+      });
+      if (!concurrent) throw error;
+      return { data: this.activationRequestData(concurrent) };
+    }
+  }
+
+  private activationRequestData(request: { id: string; planCode: string; createdAt: Date }) {
+    return { id: request.id, planCode: request.planCode, requestedAt: request.createdAt.toISOString() };
   }
 
   private async findMembership(request: HttpRequest) {

@@ -10,12 +10,23 @@ export class PlatformAdminGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<HttpRequest>();
     if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
 
-    const allowedEmails = new Set(
-      (process.env.PLATFORM_ADMIN_EMAILS ?? "")
+    const configuredEmail = process.env.PLATFORM_ADMIN_EMAIL?.trim().toLowerCase();
+    const configuredEmails = configuredEmail
+      ? [configuredEmail]
+      : (process.env.PLATFORM_ADMIN_EMAILS ?? "")
         .split(",")
         .map((email) => email.trim().toLowerCase())
-        .filter(Boolean),
-    );
+        .filter(Boolean);
+    const allowedEmails = new Set(configuredEmails);
+    if (allowedEmails.size > 1) {
+      throw new ForbiddenException({
+        code: "platform_admin_misconfigured",
+        message: "Configure exactly one platform administrator account",
+      });
+    }
+    if (!allowedEmails.size && process.env.NODE_ENV !== "production") {
+      allowedEmails.add("admin@myrcrm.local");
+    }
     if (!allowedEmails.size) {
       throw new ForbiddenException({ code: "forbidden", message: "Platform administration is not configured" });
     }

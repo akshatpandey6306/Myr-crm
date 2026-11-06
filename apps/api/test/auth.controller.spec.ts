@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, scryptSync } from "node:crypto";
 import { describe, it } from "node:test";
-import { ForbiddenException } from "@nestjs/common";
 import { AuthController } from "../src/auth/auth.controller.js";
 
 function hashPassword(password: string) {
@@ -10,12 +9,12 @@ function hashPassword(password: string) {
 }
 
 describe("AuthController", () => {
-  it("creates an unverified owner account and sends a one-time email-verification link", async () => {
+  it("creates an immediately usable owner account without sending verification email", async () => {
     const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
     process.env.REQUIRE_EMAIL_VERIFICATION = "true";
     let userCreate: Record<string, unknown> | undefined;
-    let tokenCreate: Record<string, unknown> | undefined;
-    let sentText = "";
+    let verificationEmailSent = false;
+    let tokenWrites = 0;
     const organization = { id: "org-a", name: "Northwind" };
     const user = {
       id: "user-a",
@@ -31,15 +30,12 @@ describe("AuthController", () => {
         },
       },
       emailToken: {
-        updateMany: async () => ({ count: 0 }),
-        create: async (args: Record<string, unknown>) => {
-          tokenCreate = args;
-          return {};
-        },
+        updateMany: async () => { tokenWrites += 1; return { count: 0 }; },
+        create: async () => { tokenWrites += 1; return {}; },
       },
       $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
     };
-    const controller = new AuthController(prisma as never, { send: async (_to: string, _subject: string, text: string) => { sentText = text; } } as never);
+    const controller = new AuthController(prisma as never, { send: async () => { verificationEmailSent = true; } } as never);
 
     const response = await controller.signup({
       name: "Maya Chen",
@@ -49,30 +45,28 @@ describe("AuthController", () => {
     });
 
     type SignupPipeline = { name: string; isDefault: boolean; stages: { create: { name: string; position: number }[] } };
-    type SignupOrganization = { create: { name: string; pipelines: { create: SignupPipeline } } };
+    type SignupOrganization = { create: { name: string; subscriptionStatus: string; pipelines: { create: SignupPipeline } } };
     type SignupMemberships = { create: { role: string; organization: SignupOrganization } };
     const data = userCreate?.data as {
       email: string;
       memberships: SignupMemberships;
       passwordHash: string;
+      emailVerifiedAt: Date;
     };
     assert.equal(data.email, "maya@example.com");
     assert.equal(data.memberships.create.role, "OWNER");
     assert.equal(data.memberships.create.organization.create.name, "Northwind");
+    assert.equal(data.memberships.create.organization.create.subscriptionStatus, "PENDING");
     const pipeline = data.memberships.create.organization.create.pipelines.create;
     assert.equal(pipeline.name, "Sales pipeline");
     assert.equal(pipeline.isDefault, true);
     assert.deepEqual(pipeline.stages.create.map((stage) => stage.name), ["Discovery", "Qualified", "Proposal", "Negotiation"]);
     assert.match(data.passwordHash, /^scrypt\$/);
+    assert.ok(data.emailVerifiedAt instanceof Date);
     assert.equal(response.organization.id, "org-a");
-    assert.equal(response.verificationRequired, true);
-    assert.equal("token" in response, false);
-    assert.equal((tokenCreate?.data as { purpose: string }).purpose, "EMAIL_VERIFICATION");
-    const storedHash = (tokenCreate?.data as { tokenHash: string }).tokenHash;
-    const sentToken = new URL(sentText.match(/https?:\/\/\S+/)?.[0] ?? "http://localhost").searchParams.get("token");
-    assert.ok(sentToken);
-    assert.equal(storedHash, createHash("sha256").update(sentToken!).digest("hex"));
-    assert.notEqual(storedHash, sentToken);
+    assert.equal(response.verificationRequired, false);
+    assert.equal(tokenWrites, 0);
+    assert.equal(verificationEmailSent, false);
     if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
     else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
   });
@@ -109,9 +103,13 @@ describe("AuthController", () => {
     assert.equal("token" in response, false);
   });
 
-  it("does not allow an unverified user to sign in", async () => {
+  it("allows an unverified user to sign in when the legacy verification setting is enabled", async () => {
     const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
+    const previousNodeEnv = process.env.NODE_ENV;
     process.env.REQUIRE_EMAIL_VERIFICATION = "true";
+    process.env.NODE_ENV = "production";
+    let sessionCreated = false;
+    let cookieSet = false;
     const controller = new AuthController({
       user: {
         findUnique: async () => ({
@@ -124,35 +122,23 @@ describe("AuthController", () => {
           memberships: [],
         }),
       },
+      session: { create: async () => { sessionCreated = true; } },
     } as never, {} as never);
-    await assert.rejects(
-      controller.login(
+    try {
+      const result = await controller.login(
         { email: "maya@example.com", password: "password123" },
-        { cookie: () => undefined, clearCookie: () => undefined },
-      ),
-      ForbiddenException,
-    );
-    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
-    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
-  });
+        { cookie: () => { cookieSet = true; }, clearCookie: () => undefined },
+      );
 
-  it("marks demo accounts verified without sending verification email when verification is disabled", async () => {
-    const previousVerificationSetting = process.env.REQUIRE_EMAIL_VERIFICATION;
-    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
-    let userData: Record<string, unknown> | undefined;
-    let emailTokenWrites = 0;
-    const controller = new AuthController({
-      user: { create: async (args: { data: Record<string, unknown> }) => { userData = args.data; return { id: "user-a", email: "maya@example.com", memberships: [{ organization: { id: "org-a", name: "Northwind" }, role: "OWNER" }] }; } },
-      emailToken: { create: async () => { emailTokenWrites += 1; }, updateMany: async () => ({ count: 0 }) },
-    } as never, { send: async () => { emailTokenWrites += 1; } } as never);
-
-    const result = await controller.signup({ name: "Maya Chen", email: "maya@example.com", password: "password123", organizationName: "Northwind" });
-
-    assert.equal(result.verificationRequired, false);
-    assert.ok(userData?.emailVerifiedAt instanceof Date);
-    assert.equal(emailTokenWrites, 0);
-    if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
-    else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
+      assert.equal(result.user.email, "maya@example.com");
+      assert.equal(sessionCreated, true);
+      assert.equal(cookieSet, true);
+    } finally {
+      if (previousVerificationSetting === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+      else process.env.REQUIRE_EMAIL_VERIFICATION = previousVerificationSetting;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   it("returns the same password-reset request message for an unknown account", async () => {

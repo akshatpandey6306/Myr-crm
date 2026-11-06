@@ -31,6 +31,14 @@ enum SubscriptionStatus {
   @@map("subscription_status")
 }
 
+enum ActivationRequestStatus {
+  PENDING   @map("pending")
+  ACTIVATED @map("activated")
+  DECLINED  @map("declined")
+
+  @@map("activation_request_status")
+}
+
 enum MembershipRole {
   OWNER         @map("owner")
   ADMIN         @map("admin")
@@ -161,6 +169,7 @@ model User {
   memberships     Membership[]
   sessions        Session[]
   emailTokens     EmailToken[]
+  activationRequests SubscriptionActivationRequest[]
 
   @@map("users")
 }
@@ -175,7 +184,7 @@ model Organization {
   subscriptionEndsAt     DateTime?          @map("subscription_ends_at") @db.Timestamptz(3)
   billingProvider        String?            @map("billing_provider") @db.VarChar(32)
   razorpaySubscriptionId String?            @map("razorpay_subscription_id") @db.VarChar(128)
-  enabledModules         String[]            @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "reports"]) @map("enabled_modules")
+  enabledModules         String[]            @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"]) @map("enabled_modules")
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships            Membership[]
@@ -192,6 +201,7 @@ model Organization {
   auditLogs              AuditLog[]
   settings               OrganizationSettings?
   invitations            OrganizationInvitation[]
+  activationRequests     SubscriptionActivationRequest[]
 
   @@map("organizations")
 }
@@ -212,6 +222,22 @@ model SubscriptionPlan {
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("subscription_plans")
+}
+
+model SubscriptionActivationRequest {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @map("organization_id") @db.Uuid
+  requestedById  String                  @map("requested_by_id") @db.Uuid
+  planCode       String                  @map("plan_code") @db.VarChar(32)
+  status         ActivationRequestStatus @default(PENDING)
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy    User                    @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("subscription_activation_requests")
 }
 
 model PlatformAuditLog {

@@ -25,15 +25,18 @@ async function main() {
       update: { emailVerifiedAt: new Date() },
       create: { id: "00000000-0000-4000-8000-000000000001", email, name: "Maya Chen", passwordHash: hashPassword("password123"), emailVerifiedAt: new Date() },
     });
-    await tx.user.upsert({
-      where: { email: "admin@myrcrm.local" },
-      update: {},
-      create: {
-        email: "admin@myrcrm.local",
-        name: "Myr Test Admin",
-        passwordHash: hashPassword("MyrAdmin123!"),
-      },
-    });
+    if (process.env.NODE_ENV !== "production") {
+      await tx.user.upsert({
+        where: { email: "admin@myrcrm.local" },
+        update: { emailVerifiedAt: new Date(), passwordHash: hashPassword("MyrAdmin123!") },
+        create: {
+          email: "admin@myrcrm.local",
+          name: "Myr Test Admin",
+          passwordHash: hashPassword("MyrAdmin123!"),
+          emailVerifiedAt: new Date(),
+        },
+      });
+    }
     await tx.organization.upsert({
       where: { id: "11111111-1111-4111-8111-111111111111" },
       update: {

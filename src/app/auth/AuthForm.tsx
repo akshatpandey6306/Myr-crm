@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
 
 type AuthMode = 'signin' | 'signup';
@@ -12,6 +12,11 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,7 +60,8 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         <span className="auth-story-foot">MYR CRM <i /> Built for teams that care.</span>
       </section>
       <section className="auth-main"><div className="auth-card"><div className="auth-mobile-brand"><Link className="brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link></div><span className="auth-step">{isSignup ? 'GET STARTED' : 'WELCOME BACK'}</span><h2>{isSignup ? 'Create your workspace' : 'Sign in to Myr'}</h2><p className="auth-subtitle">{isSignup ? 'Start organizing your team’s customer relationships.' : 'Pick up where you left off with your team.'}</p>
-        <form className="auth-form" onSubmit={submit}>
+        <form className="auth-form" method="post" onSubmit={submit}>
+          {hydrated ? <>
           {isSignup && <><label htmlFor="auth-name">Your name</label><input id="auth-name" name="name" type="text" autoComplete="name" placeholder="Maya Chen" required minLength={2} /><label htmlFor="auth-org">Workspace name</label><input id="auth-org" name="organizationName" type="text" placeholder="Studio North" required minLength={2} />
           </>}
           <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
@@ -64,6 +70,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
           {error && <div className="auth-error" role="alert">{error}{error.includes('Verify your email') && <> <Link href="/verify-email">Resend verification email</Link></>}</div>}
           {success && <div className="auth-success" role="status">{success} <Link href="/sign-in">Go to sign in</Link></div>}
           <button className="auth-submit" type="submit" disabled={busy || Boolean(success)}>{busy ? <><span className="auth-spinner" /> {isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>
+          </> : <p className="auth-form-loading" role="status">Preparing secure sign-in…</p>}
         </form>
         {!isSignup && <p className="auth-switch"><Link href="/forgot-password">Forgot your password?</Link></p>}
         <p className="auth-switch">{isSignup ? 'Already have an account?' : 'New to Myr?'} <Link href={isSignup ? '/sign-in' : '/sign-up'}>{isSignup ? 'Sign in' : 'Create an account'}</Link></p>

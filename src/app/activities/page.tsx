@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -459,10 +460,10 @@ export default function Home() {
     <div className="activities-screen">
       <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#" aria-label="Myr CRM home">
+        <Link className="brand" href="/" aria-label="Myr CRM home">
           <span className="brand-mark">m</span>
           <span>myr<span className="brand-light">crm</span></span>
-        </a>
+        </Link>
 
         <div className="workspace-label">WORKSPACE</div>
         <button className="workspace-switcher" type="button">
@@ -508,6 +509,7 @@ export default function Home() {
           </div>
           <div className="topbar-actions">
             <span className="demo-badge"><span /> CRM data</span>
+            <Link className="back-to-crm" href="/">Back to CRM</Link>
             <button
               className="avatar-small"
               type="button"

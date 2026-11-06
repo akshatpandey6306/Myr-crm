@@ -10,6 +10,7 @@ const policies = new Map<string, Policy>([
   ["POST /auth/signup", { limit: 5, windowSeconds: 3600 }],
   ["POST /auth/password-reset/request", { limit: 5, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/password-reset/confirm", { limit: 10, windowSeconds: 3600 }],
+  ["POST /billing/request-activation", { limit: 3, windowSeconds: 3600, userKey: true }],
   ["POST /auth/email-verification/resend", { limit: 5, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/email-verification/confirm", { limit: 10, windowSeconds: 3600 }],
   ["POST /organizations/invitations", { limit: 20, windowSeconds: 3600, emailKey: true, userKey: true }],

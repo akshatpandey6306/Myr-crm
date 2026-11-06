@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { IS_PUBLIC_KEY } from "./public.decorator.js";
-import { isEmailVerificationRequired } from "./email-verification.js";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -16,7 +15,15 @@ export class AuthGuard implements CanActivate {
     if (unsafeRequest) {
       const origin = request.headers.origin;
       const expectedOrigin = (process.env.WEB_ORIGIN ?? "http://localhost:3000").replace(/\/+$/, "");
-      if (origin !== undefined && (typeof origin !== "string" || origin !== expectedOrigin)) {
+      const allowedOrigins = new Set([expectedOrigin]);
+      const localOrigin = /^http:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?$/.exec(expectedOrigin);
+      if (process.env.NODE_ENV !== "production" && localOrigin) {
+        const port = localOrigin[1] ?? "";
+        for (const hostname of ["localhost", "127.0.0.1"]) {
+          allowedOrigins.add(`http://${hostname}${port}`);
+        }
+      }
+      if (origin !== undefined && (typeof origin !== "string" || !allowedOrigins.has(origin))) {
         throw new ForbiddenException({ code: "csrf_rejected", message: "Request origin could not be verified" });
       }
       if (cookieToken && process.env.NODE_ENV === "production" && origin !== expectedOrigin) {
@@ -31,12 +38,9 @@ export class AuthGuard implements CanActivate {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const session = await this.prisma.session.findFirst({
       where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "ACTIVE" } },
-      select: { userId: true, user: { select: { emailVerifiedAt: true } } },
+      select: { userId: true },
     });
     if (!session) throw new UnauthorizedException({ code: "unauthorized", message: "Invalid or expired session" });
-    if (isEmailVerificationRequired() && !session.user.emailVerifiedAt && !this.isVerificationExempt(request.path)) {
-      throw new ForbiddenException({ code: "email_not_verified", message: "Verify your email address before continuing" });
-    }
     request.userId = session.userId;
     request.token = token;
     return true;
@@ -46,10 +50,5 @@ export class AuthGuard implements CanActivate {
     if (typeof header !== "string") return undefined;
     const cookie = header.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
     return cookie?.slice(name.length + 1);
-  }
-
-  private isVerificationExempt(path = "") {
-    const route = path.replace(/^\/api\/v\d+/, "");
-    return ["/auth/me", "/auth/logout", "/auth/email-verification/resend", "/auth/email-verification/confirm"].includes(route);
   }
 }

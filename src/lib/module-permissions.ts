@@ -8,7 +8,10 @@ const availableModules = new Set([
   'activities',
   'team',
   'automation',
+  'email',
   'reports',
+  'audit-logs',
+  'settings',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

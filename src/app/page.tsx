@@ -14,7 +14,10 @@ const navigation = [
   { label: "Deals", icon: "briefcase" },
   { label: "Activities", icon: "calendar" },
   { label: "Automation", icon: "sparkles" },
+  { label: "Email", icon: "bell" },
   { label: "Reports", icon: "chart" },
+  { label: "Audit Logs", icon: "search" },
+  { label: "Settings", icon: "coins" },
   { label: "Team", icon: "users" },
 ];
 

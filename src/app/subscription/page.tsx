@@ -18,8 +18,8 @@ type Plan = {
 type BillingData = {
   organization: { id: string; name: string; status: string };
   subscription: { planCode: string | null; status: string; startsAt: string | null; endsAt: string | null; provider: string | null };
+  activationRequest: { id: string; planCode: string; requestedAt: string } | null;
   plans: Plan[];
-  testMode: boolean;
   canManageBilling: boolean;
 };
 
@@ -42,10 +42,16 @@ function isPlan(value: unknown): value is Plan {
 
 function isBillingData(value: unknown): value is BillingData {
   if (!isRecord(value) || !isRecord(value.organization) || !isRecord(value.subscription)) return false;
+  const activationRequest = value.activationRequest;
   return typeof value.organization.name === 'string' &&
     typeof value.subscription.status === 'string' &&
+    (activationRequest === null || (
+      isRecord(activationRequest) &&
+      typeof activationRequest.id === 'string' &&
+      typeof activationRequest.planCode === 'string' &&
+      typeof activationRequest.requestedAt === 'string'
+    )) &&
     Array.isArray(value.plans) && value.plans.every(isPlan) &&
-    typeof value.testMode === 'boolean' &&
     typeof value.canManageBilling === 'boolean';
 }
 
@@ -54,6 +60,7 @@ export default function SubscriptionPage() {
   const [loading, setLoading] = useState(true);
   const [busyPlan, setBusyPlan] = useState('');
   const [error, setError] = useState('');
+  const [requestMessage, setRequestMessage] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -104,6 +111,38 @@ export default function SubscriptionPage() {
     }
   }
 
+  async function requestActivation(plan: Plan) {
+    setBusyPlan(plan.code);
+    setError('');
+    setRequestMessage('');
+    try {
+      const response = await crmApiFetch('/billing/request-activation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planCode: plan.code }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : {};
+        throw new Error(typeof apiError.message === 'string' ? apiError.message : 'Could not request plan activation.');
+      }
+      const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+      if (!data || typeof data.id !== 'string' || typeof data.planCode !== 'string' || typeof data.requestedAt !== 'string') {
+        throw new Error('The activation request response was invalid.');
+      }
+      const activationRequest = { id: data.id, planCode: data.planCode, requestedAt: data.requestedAt };
+      setBilling((current) => current ? {
+        ...current,
+        activationRequest,
+      } : current);
+      setRequestMessage('Your activation request was sent to the platform team. They will review it and activate your selected plan manually.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not request plan activation.');
+    } finally {
+      setBusyPlan('');
+    }
+  }
+
   async function signOut() {
     try {
       await crmApiFetch('/auth/logout', { method: 'POST' });
@@ -117,7 +156,10 @@ export default function SubscriptionPage() {
   }
 
   const currentPlan = billing?.plans.find((plan) => plan.code === billing.subscription.planCode);
-  const canStartTestPlan = billing?.testMode && billing.subscription.status === 'pending' && billing.canManageBilling;
+  const canStartTrial = billing?.subscription.status === 'pending' && billing.canManageBilling;
+  const canRequestActivation = billing?.canManageBilling &&
+    ['expired', 'cancelled'].includes(billing.subscription.status) &&
+    !billing.activationRequest;
 
   return (
     <main className="subscription-page">
@@ -138,6 +180,13 @@ export default function SubscriptionPage() {
 
         {loading && <p className="subscription-state" role="status">Loading subscription plans…</p>}
         {error && <div className="control-panel-error" role="alert">{error}</div>}
+        {requestMessage && <div className="subscription-state" role="status">{requestMessage}</div>}
+        {billing?.activationRequest && (
+          <div className="subscription-state" role="status">
+            Plan activation requested for {billing.plans.find((plan) => plan.code === billing.activationRequest?.planCode)?.name ?? billing.activationRequest.planCode}
+            {' '}on {new Date(billing.activationRequest.requestedAt).toLocaleDateString()}. The platform team will review your request.
+          </div>
+        )}
         {billing && billing.subscription.status !== 'pending' && (
           <div className="subscription-state" role="status">
             {currentPlan
@@ -161,16 +210,24 @@ export default function SubscriptionPage() {
                   <p className="subscription-price">{plan.currency} {plan.monthlyPrice.toLocaleString('en-IN')}<small> / {plan.billingInterval === 'yearly' ? 'year' : 'month'}</small></p>
                   <p className="subscription-seats">{plan.seats ? `Up to ${plan.seats} team members` : 'Unlimited team members'}</p>
                   <ul>{plan.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
-                  {canStartTestPlan ? (
+                  {canStartTrial ? (
                     <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void startPlan(plan)}>
-                      {busyPlan === plan.code ? 'Starting trial…' : `Start ${plan.trialDays || 2}-day test trial`}
+                      {busyPlan === plan.code ? 'Starting trial…' : 'Start 2-day free trial'}
+                    </button>
+                  ) : canRequestActivation ? (
+                    <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void requestActivation(plan)}>
+                      {busyPlan === plan.code ? 'Sending request…' : `Buy ${plan.name} · request activation`}
                     </button>
                   ) : <button className="button button-secondary subscription-button" type="button" disabled>
                     {billing.subscription.status === 'pending' && !billing.canManageBilling
                       ? 'Ask your workspace owner'
+                      : billing.activationRequest
+                        ? 'Activation requested'
                       : billing.subscription.status === 'expired'
                         ? `Manual activation · ${plan.currency} ${plan.monthlyPrice.toLocaleString('en-IN')} / ${plan.billingInterval === 'yearly' ? 'year' : 'month'}`
-                        : billing.testMode ? 'Trial already used' : 'Checkout coming soon'}
+                        : billing.subscription.status === 'trial' || billing.subscription.status === 'active'
+                          ? 'Included in your current plan'
+                          : 'Request activation below'}
                   </button>}
                 </article>
               ))}
@@ -181,17 +238,15 @@ export default function SubscriptionPage() {
                 <div>
                   <strong>Online payments are not configured yet</strong>
                   <p>
-                    {billing.testMode
-                      ? 'PayU checkout is not connected. Starting a test trial does not collect payment.'
-                      : 'No payment is collected on this page. Contact the platform team for manual plan activation.'}
+                    {billing.subscription.status === 'expired'
+                      ? 'Your free trial has ended. Request plan activation and the platform team will contact you.'
+                      : 'Start a free two-day trial; no payment is collected. Online checkout is not configured yet.'}
                   </p>
                 </div>
               </aside>
             )}
             <p className="subscription-disclaimer">
-              {billing.testMode
-                ? 'TEST MODE: Starting a plan activates a trial only. The duration follows the selected plan, or defaults to 2 days when no trial duration is configured. No payment is collected.'
-                : 'Online checkout is not configured yet. Contact the platform team to activate your subscription.'}
+              {'Starting a plan activates a free two-day trial. No payment is collected; online checkout is not configured yet.'}
             </p>
           </>
         )}

@@ -149,4 +149,38 @@ describe("OrgGuard", () => {
       (error.getResponse() as { code?: string }).code === "module_disabled",
     );
   });
+
+  it("enforces email, audit-log, and settings module access on their API routes", async () => {
+    for (const [path, enabledModules] of [
+      ["/api/v1/emails", ["leads"]],
+      ["/api/v1/automations", ["leads"]],
+      ["/api/v1/reports/summary", ["leads"]],
+      ["/api/v1/audit-logs", ["leads"]],
+      ["/api/v1/settings", ["leads"]],
+    ] as const) {
+      const request = {
+        headers: { "x-organization-id": "org-a" },
+        params: {},
+        path,
+        userId: "user-a",
+      };
+      const guard = new OrgGuard({
+        membership: { findFirst: async () => ({
+          organizationId: "org-a",
+          role: "OWNER",
+          organization: {
+            status: "ACTIVE",
+            subscriptionStatus: "ACTIVE",
+            subscriptionEndsAt: new Date(Date.now() + 60_000),
+            enabledModules,
+          },
+        }) },
+      } as never);
+
+      await assert.rejects(guard.canActivate(makeContext(request) as never), (error: unknown) =>
+        error instanceof ForbiddenException &&
+        (error.getResponse() as { code?: string }).code === "module_disabled",
+      );
+    }
+  });
 });

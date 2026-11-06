@@ -15,7 +15,8 @@ import { useEffect, useState } from 'react';
 const navigation = [
   ['Overview', '/', '◫'], ['Leads', '/leads', '♙'], ['Contacts', '/contacts', '◎'],
   ['Companies', '/companies', '▦'], ['Deals', '/deals', '◇'], ['Activities', '/activities', '◷'],
-  ['Team', '/team', '♙'], ['Automation', '/automation', '✳'], ['Reports', '/reports', '⌁'],
+  ['Team', '/team', '♙'], ['Automation', '/automation', '✳'], ['Email', '/email', '✉'],
+  ['Reports', '/reports', '⌁'], ['Audit Logs', '/audit-logs', '◉'], ['Settings', '/settings', '⚙'],
 ];
 
 export default function CrmShell({ active, children }: { active: string; children: ReactNode }) {

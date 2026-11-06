@@ -11,6 +11,10 @@ type Organization = {
   status: 'active' | 'suspended';
   memberCount: number;
   pendingInvitationCount: number;
+  dealCount: number;
+  openPipelineValue: number;
+  wonRevenue: number;
+  currency: string;
   createdAt: string;
   enabledModules: string[];
   owner: { name: string; email: string } | null;
@@ -34,11 +38,34 @@ type SubscriptionPlan = {
   usageLimits: Record<string, number>;
   isActive: boolean;
 };
+type SubscriptionActivationRequest = {
+  id: string;
+  planCode: string;
+  requestedAt: string;
+  organization: { id: string; name: string };
+  requestedBy: { name: string; email: string };
+};
 type WorkspaceMember = {
   id: string;
   name: string;
   email: string;
   role: string;
+};
+type WorkspaceDeal = {
+  id: string;
+  name: string;
+  value: number;
+  status: string;
+  closeDate: string | null;
+  company: string | null;
+  pipeline: string;
+  stage: string;
+  owner: { name: string; email: string };
+};
+type WorkspaceDealPage = {
+  deals: WorkspaceDeal[];
+  page: number;
+  total: number;
 };
 
 
@@ -58,7 +85,10 @@ const crmModules = [
   ['activities', 'Activities'],
   ['team', 'Team'],
   ['automation', 'Automation'],
+  ['email', 'Email'],
   ['reports', 'Reports'],
+  ['audit-logs', 'Audit Logs'],
+  ['settings', 'Settings'],
 ] as const;
 
 const emptyPlan = {
@@ -97,6 +127,13 @@ function isOrganization(value: unknown): value is Organization {
     (organization.status === 'active' || organization.status === 'suspended') &&
     Number.isInteger(organization.memberCount) &&
     Number.isInteger(organization.pendingInvitationCount) &&
+    Number.isInteger(organization.dealCount) &&
+    typeof organization.openPipelineValue === 'number' &&
+    Number.isFinite(organization.openPipelineValue) &&
+    typeof organization.wonRevenue === 'number' &&
+    Number.isFinite(organization.wonRevenue) &&
+    typeof organization.currency === 'string' &&
+    /^[A-Z]{3}$/.test(organization.currency) &&
     typeof organization.createdAt === 'string' &&
     Array.isArray(organization.enabledModules) &&
     organization.enabledModules.every((module) => typeof module === 'string') &&
@@ -127,6 +164,25 @@ function isSubscriptionPlan(value: unknown): value is SubscriptionPlan {
     typeof plan.isActive === 'boolean';
 }
 
+function isWorkspaceDeal(value: unknown): value is WorkspaceDeal {
+  if (typeof value !== 'object' || value === null) return false;
+  const deal = value as Record<string, unknown>;
+  const owner = deal.owner;
+  return typeof deal.id === 'string' &&
+    typeof deal.name === 'string' &&
+    typeof deal.value === 'number' &&
+    Number.isFinite(deal.value) &&
+    typeof deal.status === 'string' &&
+    (deal.closeDate === null || typeof deal.closeDate === 'string') &&
+    (deal.company === null || typeof deal.company === 'string') &&
+    typeof deal.pipeline === 'string' &&
+    typeof deal.stage === 'string' &&
+    typeof owner === 'object' &&
+    owner !== null &&
+    typeof (owner as Record<string, unknown>).name === 'string' &&
+    typeof (owner as Record<string, unknown>).email === 'string';
+}
+
 function auditSummary(value: unknown) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return '—';
   const summary = JSON.stringify(value);
@@ -150,6 +206,7 @@ function localDateValue(value: string) {
 export default function ControlPanelPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
+  const [activationRequests, setActivationRequests] = useState<SubscriptionActivationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyOrganizationId, setBusyOrganizationId] = useState('');
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
@@ -173,6 +230,9 @@ export default function ControlPanelPage() {
   const [expandedMembers, setExpandedMembers] = useState<Record<string, WorkspaceMember[] | undefined>>({});
   const [loadingMembers, setLoadingMembers] = useState<Record<string, boolean>>({});
   const [memberErrors, setMemberErrors] = useState<Record<string, string>>({});
+  const [expandedDeals, setExpandedDeals] = useState<Record<string, WorkspaceDealPage | undefined>>({});
+  const [loadingDeals, setLoadingDeals] = useState<Record<string, boolean>>({});
+  const [dealErrors, setDealErrors] = useState<Record<string, string>>({});
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
   const [selectedModules, setSelectedModules] = useState<Record<string, string[]>>({});
   const [accessEndDates, setAccessEndDates] = useState<Record<string, string>>({});
@@ -316,10 +376,42 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function loadActivationRequests(signal?: AbortSignal) {
+    try {
+      const response = await crmApiFetch('/control-panel/subscription-activation-requests', signal ? { signal } : {});
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const body = typeof payload === 'object' && payload !== null && 'error' in payload
+          ? (payload as { error?: { message?: string } }).error
+          : undefined;
+        throw new Error(body?.message ?? 'Could not load subscription activation requests.');
+      }
+      if (typeof payload !== 'object' || payload === null ||
+        !Array.isArray((payload as { data?: unknown }).data) ||
+        !(payload as { data: unknown[] }).data.every((request) =>
+          typeof request === 'object' && request !== null &&
+          typeof (request as SubscriptionActivationRequest).id === 'string' &&
+          typeof (request as SubscriptionActivationRequest).planCode === 'string' &&
+          typeof (request as SubscriptionActivationRequest).requestedAt === 'string' &&
+          typeof (request as SubscriptionActivationRequest).organization?.id === 'string' &&
+          typeof (request as SubscriptionActivationRequest).organization?.name === 'string' &&
+          typeof (request as SubscriptionActivationRequest).requestedBy?.email === 'string',
+        )) {
+        throw new Error('The control panel returned invalid activation requests.');
+      }
+      setActivationRequests((payload as { data: SubscriptionActivationRequest[] }).data);
+    } catch (caught) {
+      if (!(caught instanceof Error) || caught.name !== 'AbortError') {
+        setError(caught instanceof Error ? caught.message : 'Could not load subscription activation requests.');
+      }
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     void loadOrganizations(controller.signal);
     void loadPlans(controller.signal);
+    void loadActivationRequests(controller.signal);
     void loadAuditLogs();
     return () => controller.abort();
   }, []);
@@ -377,6 +469,7 @@ export default function ControlPanelPage() {
     setRefreshing(true);
     setLoading(true);
     await loadOrganizations();
+    await loadActivationRequests();
   }
 
   async function createWorkspace(event: React.FormEvent<HTMLFormElement>) {
@@ -579,6 +672,70 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function loadOrganizationDeals(organization: Organization, page: number, append: boolean) {
+    setLoadingDeals((current) => ({ ...current, [organization.id]: true }));
+    setDealErrors((current) => ({ ...current, [organization.id]: '' }));
+    try {
+      const response = await crmApiFetch(
+        `/control-panel/organizations/${encodeURIComponent(organization.id)}/deals?page=${page}&pageSize=25`,
+      );
+      let payload: unknown;
+      try { payload = await response.json(); } catch { throw new Error('The control panel returned an invalid response.'); }
+      if (!response.ok) {
+        const body = typeof payload === 'object' && payload !== null && 'error' in payload ? (payload as { error?: { message?: string } }).error : undefined;
+        throw new Error(body?.message ?? 'Could not load workspace deals.');
+      }
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        !Array.isArray((payload as { data?: unknown }).data) ||
+        !(payload as { data: unknown[] }).data.every(isWorkspaceDeal) ||
+        typeof (payload as { meta?: unknown }).meta !== 'object' ||
+        (payload as { meta?: unknown }).meta === null ||
+        !Number.isInteger((payload as { meta: { page?: unknown } }).meta.page) ||
+        !Number.isInteger((payload as { meta: { total?: unknown } }).meta.total) ||
+        ((payload as { meta: { total: number } }).meta.total < 0)
+      ) {
+        throw new Error('The control panel returned an invalid deal list.');
+      }
+      const data = (payload as { data: WorkspaceDeal[]; meta: { page: number; total: number } });
+      setExpandedDeals((current) => ({
+        ...current,
+        [organization.id]: {
+          deals: append ? [...(current[organization.id]?.deals ?? []), ...data.data] : data.data,
+          page: data.meta.page,
+          total: data.meta.total,
+        },
+      }));
+    } catch (caught) {
+      setDealErrors((current) => ({
+        ...current,
+        [organization.id]: caught instanceof Error ? caught.message : 'Could not load workspace deals.',
+      }));
+    } finally {
+      setLoadingDeals((current) => ({ ...current, [organization.id]: false }));
+    }
+  }
+
+  function toggleDeals(organization: Organization) {
+    if (expandedDeals[organization.id] !== undefined) {
+      setExpandedDeals((current) => ({ ...current, [organization.id]: undefined }));
+      return;
+    }
+    setExpandedDeals((current) => ({
+      ...current,
+      [organization.id]: { deals: [], page: 0, total: organization.dealCount },
+    }));
+    void loadOrganizationDeals(organization, 1, false);
+  }
+
+  function loadMoreDeals(organization: Organization) {
+    const current = expandedDeals[organization.id];
+    if (current && !loadingDeals[organization.id] && current.deals.length < current.total) {
+      void loadOrganizationDeals(organization, current.page + 1, true);
+    }
+  }
+
 
 
   function requestOrganizationStatus(organization: Organization) {
@@ -757,14 +914,45 @@ export default function ControlPanelPage() {
             <div><p>Need attention</p><strong>{loading ? '—' : attentionWorkspaces}</strong></div>
           </article>
         </section>
-        <p className="control-panel-billing-note">Revenue reporting is unavailable: this app has no connected payment ledger. Manually assigned plans and access changes are not collected payments.</p>
+        <p className="control-panel-billing-note">Workspace revenue shows won CRM deal value; open deal value is shown separately as pipeline. Payment revenue is unavailable because no payment ledger is connected.</p>
         <nav className="control-panel-nav" aria-label="Control panel sections">
           <a href="#overview">Overview</a>
           <a href="#onboarding">Onboard workspace</a>
           <a href="#plans">Subscription plans</a>
+          <a href="#activation-requests">Activation requests</a>
           <a href="#workspaces">Workspaces</a>
           <a href="#audit-log">Audit log</a>
         </nav>
+
+        <section id="activation-requests" className="panel control-panel-table" aria-label="Subscription activation requests">
+          <div className="panel-heading">
+            <div className="control-panel-section-title">
+              <h2>Activation requests</h2>
+              <p>{activationRequests.length} awaiting manual review</p>
+            </div>
+          </div>
+          {activationRequests.length ? (
+            <div className="table-scroll">
+              <table>
+                <thead><tr><th>WORKSPACE</th><th>REQUESTED BY</th><th>PLAN</th><th>REQUESTED</th><th>ACTION</th></tr></thead>
+                <tbody>{activationRequests.map((activationRequest) => (
+                  <tr key={activationRequest.id}>
+                    <td><strong>{activationRequest.organization.name}</strong></td>
+                    <td>{activationRequest.requestedBy.name}<small>{activationRequest.requestedBy.email}</small></td>
+                    <td>{subscriptionPlans.find((plan) => plan.code === activationRequest.planCode)?.name ?? activationRequest.planCode}</td>
+                    <td>{new Date(activationRequest.requestedAt).toLocaleDateString()}</td>
+                    <td><button className="control-panel-action" type="button" onClick={() => {
+                      setSearch(activationRequest.organization.name);
+                      setFilter('all');
+                      setSubscriptionStatusFilter('all');
+                      document.getElementById('workspaces')?.scrollIntoView({ behavior: 'smooth' });
+                    }}>Review workspace</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ) : <p className="control-panel-empty">No subscription activation requests are waiting.</p>}
+        </section>
 
         <section id="onboarding" className="panel control-panel-onboarding" aria-label="Onboard customer workspace">
           <div className="panel-heading">
@@ -961,7 +1149,12 @@ export default function ControlPanelPage() {
                     return (
                     <Fragment key={organization.id}>
                     <tr>
-                      <td><div className="control-panel-workspace"><span className="control-panel-workspace-avatar">{organization.name.slice(0, 1).toUpperCase()}</span><strong>{organization.name}</strong></div></td>
+                      <td>
+                        <div className="control-panel-workspace"><span className="control-panel-workspace-avatar">{organization.name.slice(0, 1).toUpperCase()}</span><strong>{organization.name}</strong></div>
+                        <small className="control-panel-revenue-summary">
+                          {organization.dealCount} deals · {organization.currency} {organization.wonRevenue.toLocaleString()} won · {organization.currency} {organization.openPipelineValue.toLocaleString()} open
+                        </small>
+                      </td>
                       <td>{organization.owner ? <div className="control-panel-owner"><strong>{organization.owner.name}</strong><span>{organization.owner.email}</span></div> : '—'}</td>
                       <td>
                         <div className={`control-panel-seat-usage${seatLimitStatus ? ' at-limit' : ''}`}>
@@ -974,6 +1167,15 @@ export default function ControlPanelPage() {
                             aria-label={`View ${organization.memberCount} active members for ${organization.name}`}
                           >
                             {organization.memberCount} active {expandedMembers[organization.id] ? '▲' : '▼'}
+                          </button>
+                          <button
+                            className="control-panel-member-count control-panel-member-toggle"
+                            type="button"
+                            onClick={() => toggleDeals(organization)}
+                            aria-expanded={expandedDeals[organization.id] !== undefined}
+                            aria-label={`View ${organization.dealCount} deals for ${organization.name}`}
+                          >
+                            {expandedDeals[organization.id] !== undefined ? 'Hide deals' : 'View deals'} ({organization.dealCount})
                           </button>
                           <small>
                             {tenantPlan
@@ -1058,6 +1260,45 @@ export default function ControlPanelPage() {
                              </table>
                            ) : (
                              <p className="control-panel-empty">No active members.</p>
+                           )}
+                         </td>
+                       </tr>
+                     )}
+                     {expandedDeals[organization.id] !== undefined && (
+                       <tr className="control-panel-members-row">
+                         <td colSpan={8}>
+                           {loadingDeals[organization.id] ? (
+                             <p className="control-panel-empty">Loading deals…</p>
+                           ) : dealErrors[organization.id] ? (
+                             <p className="control-panel-error" role="alert">{dealErrors[organization.id]}</p>
+                           ) : expandedDeals[organization.id]?.deals.length ? (
+                             <>
+                               <div className="control-panel-deals-scroll">
+                                 <table className="control-panel-members-table control-panel-deals-table">
+                                   <thead><tr><th>DEAL</th><th>COMPANY</th><th>STATUS</th><th>PIPELINE</th><th>OWNER</th><th>CLOSE DATE</th><th>VALUE</th></tr></thead>
+                                   <tbody>
+                                     {expandedDeals[organization.id]?.deals.map((deal) => (
+                                       <tr key={deal.id}>
+                                         <td>{deal.name}</td>
+                                         <td>{deal.company ?? '—'}</td>
+                                         <td><span className={`control-panel-status ${deal.status}`}>{deal.status}</span></td>
+                                         <td>{deal.pipeline} · {deal.stage}</td>
+                                         <td>{deal.owner.name}<br /><small>{deal.owner.email}</small></td>
+                                         <td>{deal.closeDate ? new Date(deal.closeDate).toLocaleDateString() : '—'}</td>
+                                         <td>{organization.currency} {deal.value.toLocaleString()}</td>
+                                       </tr>
+                                     ))}
+                                   </tbody>
+                                 </table>
+                               </div>
+                               {expandedDeals[organization.id]!.deals.length < expandedDeals[organization.id]!.total && (
+                                 <button className="control-panel-action" type="button" disabled={loadingDeals[organization.id]} onClick={() => loadMoreDeals(organization)}>
+                                   {loadingDeals[organization.id] ? 'Loading…' : `Load more deals (${expandedDeals[organization.id]!.deals.length} of ${expandedDeals[organization.id]!.total})`}
+                                 </button>
+                               )}
+                             </>
+                           ) : (
+                             <p className="control-panel-empty">No active CRM deals.</p>
                            )}
                          </td>
                        </tr>

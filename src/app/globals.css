@@ -1787,6 +1787,7 @@ td:first-child strong {
 .auth-card h2 { margin: 11px 0 7px; color: #293730; font-size: 25px; letter-spacing: -.7px; }
 .auth-subtitle { margin: 0 0 28px; color: #87928b; font-size: 11px; line-height: 1.6; }
 .auth-form { display: grid; gap: 9px; }
+.auth-form-loading { min-height: 42px; margin: 0; color: #89948d; font-size: 10px; line-height: 42px; text-align: center; }
 .auth-form > label,
 .auth-password-label label { margin-top: 5px; color: #526057; font-size: 10px; font-weight: 600; }
 .auth-form > input,
@@ -2051,6 +2052,13 @@ td:first-child strong {
   .mobile-nav-link > i { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: #7059df; }
   .mobile-nav-footer { display: flex; gap: 6px; margin-top: 7px; border-top: 1px solid #efedf5; padding: 8px 5px 1px; color: #aaa6b7; font-size: 8px; letter-spacing: .04em; }
   .mobile-nav-footer span { color: #d0cdda; }
+  .mobile-nav-account { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; border-top: 1px solid #efedf5; padding: 9px 5px 2px; }
+  .mobile-nav-account > div { display: grid; min-width: 0; gap: 2px; color: #686680; font-size: 10px; }
+  .mobile-nav-account > div strong,
+  .mobile-nav-account > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-nav-account > div span { color: #9894aa; font-size: 9px; }
+  .mobile-nav-account > button { flex: 0 0 auto; border: 0; border-radius: 7px; background: #f0edff; padding: 8px 11px; color: #5141b0; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .mobile-nav-account > button:hover { background: #e8e3ff; }
   @keyframes mobile-nav-expand { from { transform: translateY(-4px); opacity: .65; } to { transform: translateY(0); opacity: 1; } }
 
   .breadcrumbs {
@@ -2779,6 +2787,14 @@ td:first-child strong {
   font-weight: 700;
 }
 
+.control-panel-revenue-summary {
+  display: block;
+  margin: 5px 0 0 39px;
+  color: #77758b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .control-panel-owner {
   display: grid;
   gap: 4px;
@@ -2979,6 +2995,7 @@ td:first-child strong {
 }
 
 .control-panel-member-toggle {
+  display: block;
   border: 0;
   background: transparent;
   color: #6653d7;
@@ -2986,6 +3003,7 @@ td:first-child strong {
   font-weight: 700;
   cursor: pointer;
   padding: 0;
+  text-align: left;
 }
 
 .control-panel-members-row td {
@@ -3011,6 +3029,15 @@ td:first-child strong {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.control-panel-deals-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.control-panel-deals-table {
+  min-width: 760px;
 }
 
 

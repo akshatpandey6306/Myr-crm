@@ -224,6 +224,12 @@ describe("Activities & Tasks", () => {
     makeApi();
   });
 
+  it("provides a direct route back to the CRM overview", () => {
+    render(<Home />);
+
+    expect(screen.getByRole("link", { name: "Back to CRM" })).toHaveAttribute("href", "/");
+  });
+
   it("uses the CRM API for status filtering and search", async () => {
     const user = userEvent.setup();
     render(<Home />);

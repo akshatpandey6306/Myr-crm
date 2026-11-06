@@ -9,6 +9,8 @@ const actorRequest = { userId: "admin-a" } as never;
 function createController(prisma: Record<string, unknown>, audit = { record: async () => undefined, list: async () => [] }) {
   return new ControlPanelController({
     user: { findUnique: async () => ({ email: "admin@example.com" }) },
+    subscriptionActivationRequest: { updateMany: async () => ({ count: 0 }), findMany: async () => [] },
+    deal: { groupBy: async () => [], findMany: async () => [], count: async () => 0 },
     ...prisma,
   } as never, audit as never);
 }
@@ -29,6 +31,7 @@ describe("ControlPanelController", () => {
           subscriptionEndsAt: new Date("2027-01-15T00:00:00.000Z"),
           billingProvider: "manual",
           enabledModules: ["leads", "team"],
+          settings: { currency: "INR" },
           memberships: [{ user: { name: "Maya Chen", email: "maya@example.com" } }],
         }],
       },
@@ -41,17 +44,86 @@ describe("ControlPanelController", () => {
           return [{ organizationId: "org-a", _count: { _all: 1 } }];
         },
       },
+      deal: {
+        groupBy: async () => [
+          { organizationId: "org-a", status: "OPEN", _count: { _all: 2 }, _sum: { value: 1500 } },
+          { organizationId: "org-a", status: "WON", _count: { _all: 1 }, _sum: { value: 500 } },
+        ],
+      },
+    });
+
+    it("lists pending subscription activation requests for platform review", async () => {
+      const controller = createController({
+        subscriptionActivationRequest: {
+          findMany: async () => [{
+            id: "request-a",
+            planCode: "growth",
+            createdAt: new Date("2026-11-05T12:00:00.000Z"),
+            organization: { id: organizationId, name: "Acme" },
+            requestedBy: { name: "Maya Chen", email: "maya@example.com" },
+          }],
+        },
+      });
+
+      const result = await controller.listSubscriptionActivationRequests();
+
+      assert.equal(result.data[0]?.organization.name, "Acme");
+      assert.equal(result.data[0]?.requestedBy.email, "maya@example.com");
+      assert.equal(result.data[0]?.requestedAt, "2026-11-05T12:00:00.000Z");
     });
 
     const result = await controller.listOrganizations();
     assert.equal(result.data[0]?.memberCount, 2);
     assert.equal(result.data[0]?.pendingInvitationCount, 1);
+    assert.equal(result.data[0]?.dealCount, 3);
+    assert.equal(result.data[0]?.openPipelineValue, 1500);
+    assert.equal(result.data[0]?.wonRevenue, 500);
+    assert.equal(result.data[0]?.currency, "INR");
     const invitationWhere = invitationQuery?.where as { acceptedAt?: unknown; expiresAt?: { gt?: unknown } };
     assert.equal(invitationWhere.acceptedAt, null);
     assert.ok(invitationWhere.expiresAt?.gt instanceof Date);
     assert.deepEqual(result.data[0]?.enabledModules, ["leads", "team"]);
     assert.deepEqual(result.data[0]?.owner, { name: "Maya Chen", email: "maya@example.com" });
     assert.equal(result.data[0]?.subscription.status, "trial");
+  });
+
+  it("lists tenant deals with owner and pipeline details using the requested workspace scope", async () => {
+    let dealQuery: Record<string, unknown> | undefined;
+    let countQuery: Record<string, unknown> | undefined;
+    const controller = createController({
+      organization: { findUnique: async () => ({ id: organizationId }) },
+      deal: {
+        findMany: async (args: Record<string, unknown>) => {
+          dealQuery = args;
+          return [{
+            id: "deal-a",
+            name: "Annual contract",
+            value: 1250,
+            status: "WON",
+            closeDate: new Date("2026-11-05T00:00:00.000Z"),
+            company: { name: "Acme" },
+            pipeline: { name: "Sales" },
+            stage: { name: "Closed won" },
+            owner: { user: { name: "Maya Chen", email: "maya@example.com" } },
+          }];
+        },
+        count: async (args: Record<string, unknown>) => {
+          countQuery = args;
+          return 31;
+        },
+      },
+    });
+
+    const result = await controller.listOrganizationDeals(organizationId, "2", "10");
+
+    assert.deepEqual(dealQuery?.where, { organizationId, archivedAt: null });
+    assert.equal(dealQuery?.skip, 10);
+    assert.equal(dealQuery?.take, 10);
+    assert.deepEqual(countQuery?.where, { organizationId, archivedAt: null });
+    assert.equal(result.data[0]?.owner.email, "maya@example.com");
+    assert.equal(result.data[0]?.value, 1250);
+    assert.equal(result.meta.total, 31);
+    assert.equal(result.meta.totalPages, 4);
   });
 
   it("searches workspace administrators without returning their account details", async () => {
@@ -188,6 +260,7 @@ describe("ControlPanelController", () => {
 
   it("extends a manual subscription by the selected plan billing interval", async () => {
     let updateArgs: Record<string, unknown> | undefined;
+    let activationRequestUpdate: Record<string, unknown> | undefined;
     let auditReason = "";
     const now = new Date();
     const currentEnd = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
@@ -210,6 +283,12 @@ describe("ControlPanelController", () => {
           };
         },
       },
+      subscriptionActivationRequest: {
+        updateMany: async (args: Record<string, unknown>) => {
+          activationRequestUpdate = args;
+          return { count: 1 };
+        },
+      },
     }, {
       record: async ({ reason }: { reason?: string }) => { auditReason = reason ?? ""; },
       list: async () => [],
@@ -225,6 +304,8 @@ describe("ControlPanelController", () => {
     expectedEnd.setUTCMonth(expectedEnd.getUTCMonth() + 1);
     assert.equal(result.data.status, "active");
     assert.equal(result.data.provider, "manual");
+    assert.deepEqual(activationRequestUpdate?.where, { organizationId, status: "PENDING" });
+    assert.deepEqual(activationRequestUpdate?.data, { status: "ACTIVATED" });
     assert.equal(auditReason, "Approved renewal");
     assert.equal(new Date(data.subscriptionEndsAt as Date).getTime(), expectedEnd.getTime());
   });
@@ -280,11 +361,11 @@ describe("ControlPanelController", () => {
 
     const result = await controller.updateOrganizationModules(
       organizationId,
-      { modules: ["leads", "deals", "leads"], reason: "Enable the sales team workflow" },
+      { modules: ["leads", "deals", "email", "audit-logs", "settings", "leads"], reason: "Enable the sales team workflow" },
       actorRequest,
     );
-    assert.deepEqual(updatedModules, ["leads", "deals"]);
-    assert.deepEqual(result.data.enabledModules, ["leads", "deals"]);
+    assert.deepEqual(updatedModules, ["leads", "deals", "email", "audit-logs", "settings"]);
+    assert.deepEqual(result.data.enabledModules, ["leads", "deals", "email", "audit-logs", "settings"]);
     assert.equal(auditAction, "organization.modules.update");
     assert.equal(auditReason, "Enable the sales team workflow");
   });

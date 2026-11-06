@@ -7,7 +7,7 @@ export function proxy(request: NextRequest) {
   if (PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return NextResponse.next();
   }
-  const session = request.cookies.get('myr.session')?.value;
+  const session = request.cookies.get('myr_session')?.value;
   if (!session) {
     const url = request.nextUrl.clone();
     url.pathname = '/sign-in';

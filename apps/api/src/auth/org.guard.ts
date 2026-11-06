@@ -55,7 +55,7 @@ export class OrgGuard implements CanActivate {
     request.orgId = membership.organizationId;
     request.organizationRole = membership.role.toLowerCase() as HttpRequest["organizationRole"];
     const enabledModules = membership.organization.enabledModules ?? [
-      "leads", "contacts", "companies", "deals", "activities", "team", "automation", "reports",
+      "leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings",
     ];
     request.enabledModules = enabledModules;
     const module = this.moduleForPath(path);
@@ -74,6 +74,11 @@ export class OrgGuard implements CanActivate {
       ["deals", ["/deals", "/pipelines"]],
       ["activities", ["/activities"]],
       ["team", ["/organizations/members", "/organizations/invitations", "/organizations/memberships"]],
+      ["automation", ["/automations"]],
+      ["email", ["/emails"]],
+      ["reports", ["/reports"]],
+      ["audit-logs", ["/audit-logs"]],
+      ["settings", ["/settings"]],
     ];
     return moduleRoutes.find(([, prefixes]) =>
       prefixes.some((prefix) => route === prefix || route.startsWith(`${prefix}/`)),

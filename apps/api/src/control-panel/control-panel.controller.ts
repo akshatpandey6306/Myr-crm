@@ -21,7 +21,7 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard.js";
 import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 
-const MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "reports"];
+const MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -138,6 +138,30 @@ export class ControlPanelController {
     return { data: plans };
   }
 
+  @Get("subscription-activation-requests")
+  async listSubscriptionActivationRequests() {
+    const requests = await this.prisma.subscriptionActivationRequest.findMany({
+      where: { status: "PENDING" },
+      select: {
+        id: true,
+        planCode: true,
+        createdAt: true,
+        organization: { select: { id: true, name: true } },
+        requestedBy: { select: { name: true, email: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+      data: requests.map((request) => ({
+        id: request.id,
+        planCode: request.planCode,
+        requestedAt: request.createdAt.toISOString(),
+        organization: request.organization,
+        requestedBy: request.requestedBy,
+      })),
+    };
+  }
+
   @Post("plans")
   async createPlan(@Body() body: unknown, @Req() request: HttpRequest) {
     const plan = parsePlanDraft(body);
@@ -191,7 +215,7 @@ export class ControlPanelController {
   @Get("organizations")
   async listOrganizations() {
     const now = new Date();
-    const [organizations, memberCounts, pendingInvitationCounts] = await Promise.all([
+    const [organizations, memberCounts, pendingInvitationCounts, dealTotals] = await Promise.all([
       this.prisma.organization.findMany({
         select: {
           id: true,
@@ -204,6 +228,7 @@ export class ControlPanelController {
           subscriptionEndsAt: true,
           billingProvider: true,
           enabledModules: true,
+          settings: { select: { currency: true } },
           memberships: {
             where: { status: "ACTIVE", role: "OWNER", user: { status: "ACTIVE" } },
             select: { user: { select: { name: true, email: true } } },
@@ -222,11 +247,33 @@ export class ControlPanelController {
         where: { acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
         _count: { _all: true },
       }),
+      this.prisma.deal.groupBy({
+        by: ["organizationId", "status"],
+        where: { archivedAt: null },
+        _count: { _all: true },
+        _sum: { value: true },
+      }),
     ]);
     const countsByOrganization = new Map(memberCounts.map((entry) => [entry.organizationId, entry._count._all]));
     const pendingInvitationsByOrganization = new Map(
       pendingInvitationCounts.map((entry) => [entry.organizationId, entry._count._all]),
     );
+    const dealTotalsByOrganization = new Map<string, {
+      count: number;
+      openPipelineValue: number;
+      wonRevenue: number;
+    }>();
+    for (const entry of dealTotals) {
+      const current = dealTotalsByOrganization.get(entry.organizationId) ?? {
+        count: 0,
+        openPipelineValue: 0,
+        wonRevenue: 0,
+      };
+      current.count += entry._count._all;
+      if (entry.status === "OPEN") current.openPipelineValue += Number(entry._sum.value ?? 0);
+      if (entry.status === "WON") current.wonRevenue += Number(entry._sum.value ?? 0);
+      dealTotalsByOrganization.set(entry.organizationId, current);
+    }
 
     return {
       data: organizations.map((organization) => ({
@@ -235,6 +282,10 @@ export class ControlPanelController {
         status: organization.status.toLowerCase(),
         memberCount: countsByOrganization.get(organization.id) ?? 0,
         pendingInvitationCount: pendingInvitationsByOrganization.get(organization.id) ?? 0,
+        dealCount: dealTotalsByOrganization.get(organization.id)?.count ?? 0,
+        openPipelineValue: dealTotalsByOrganization.get(organization.id)?.openPipelineValue ?? 0,
+        wonRevenue: dealTotalsByOrganization.get(organization.id)?.wonRevenue ?? 0,
+        currency: organization.settings?.currency.trim() ?? "USD",
         createdAt: organization.createdAt,
         owner: organization.memberships[0]?.user ?? null,
         enabledModules: organization.enabledModules,
@@ -457,6 +508,10 @@ export class ControlPanelController {
         billingProvider: true,
       },
     }).catch((error: unknown) => this.throwIfNotFound(error, "Organization not found"));
+    await this.prisma.subscriptionActivationRequest.updateMany({
+      where: { organizationId, status: "PENDING" },
+      data: { status: body.status === "active" ? "ACTIVATED" : "DECLINED" },
+    });
     await this.recordAudit(request, body.status === "active" ? "subscription.activate" : body.status === "cancelled" ? "subscription.cancel" : "subscription.expire", "organization", organization.id, {
       before: { planCode: current.subscriptionPlan, endsAt: current.subscriptionEndsAt },
       after: { status: organization.subscriptionStatus.toLowerCase(), planCode: organization.subscriptionPlan, endsAt: organization.subscriptionEndsAt },
@@ -538,6 +593,69 @@ export class ControlPanelController {
         role: role.toLowerCase(),
       })),
     };
+  }
+
+  @Get("organizations/:organizationId/deals")
+  async listOrganizationDeals(
+    @Param("organizationId") organizationId: string,
+    @Query("page") pageValue?: string,
+    @Query("pageSize") pageSizeValue?: string,
+  ) {
+    this.validateOrganizationId(organizationId);
+    const { page, pageSize } = this.pagination(pageValue, pageSizeValue);
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true },
+    });
+    if (!organization) throw new NotFoundException({ code: "not_found", message: "Organization not found" });
+
+    const where = { organizationId, archivedAt: null };
+    const [deals, total] = await Promise.all([
+      this.prisma.deal.findMany({
+        where,
+        orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          name: true,
+          value: true,
+          status: true,
+          closeDate: true,
+          company: { select: { name: true } },
+          pipeline: { select: { name: true } },
+          stage: { select: { name: true } },
+          owner: { select: { user: { select: { name: true, email: true } } } },
+        },
+      }),
+      this.prisma.deal.count({ where }),
+    ]);
+    return {
+      data: deals.map((deal) => ({
+        id: deal.id,
+        name: deal.name,
+        value: Number(deal.value),
+        status: deal.status.toLowerCase(),
+        closeDate: deal.closeDate?.toISOString() ?? null,
+        company: deal.company?.name ?? null,
+        pipeline: deal.pipeline.name,
+        stage: deal.stage.name,
+        owner: deal.owner.user,
+      })),
+      meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    };
+  }
+
+  private pagination(pageValue?: string, pageSizeValue?: string) {
+    const page = pageValue === undefined ? 1 : Number(pageValue);
+    const pageSize = pageSizeValue === undefined ? 25 : Number(pageSizeValue);
+    if (!Number.isInteger(page) || page < 1) {
+      throw new BadRequestException({ code: "validation_error", message: "page must be a positive whole number" });
+    }
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new BadRequestException({ code: "validation_error", message: "pageSize must be between 1 and 100" });
+    }
+    return { page, pageSize };
   }
 
   private validateOrganizationId(organizationId: string) {

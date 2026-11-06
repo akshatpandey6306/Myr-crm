@@ -12,6 +12,7 @@
 
 .form {
   display: grid;
+  width: 100%;
   max-width: 760px;
   gap: 18px;
   padding: 22px;

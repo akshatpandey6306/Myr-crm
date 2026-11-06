@@ -27,34 +27,73 @@ npm run api:build
 
 The API listens on port `4000` by default. Set `PORT` to use a different port.
 `GET /api/v1/health` is an unauthenticated liveness check. Protected CRM routes
-require a persisted session and a verified organization membership.
+require a persisted session and an active organization membership.
 
 ## Authentication and account recovery
 
 The web app provides `/sign-in`, `/sign-up`, `/forgot-password`,
-`/reset-password`, and `/verify-email`. Signup creates the user, workspace,
-Owner membership, and default pipeline atomically, then sends a verification
-link; login is refused until the email is verified. The API exposes
-`POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
+`/reset-password`, and `/verify-email` for old verification links. Signup
+creates the user, workspace, Owner membership, and default pipeline atomically;
+new accounts can sign in immediately without email verification. The API
+exposes `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
 `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`,
 `POST /api/v1/auth/password-reset/request`,
 `POST /api/v1/auth/password-reset/confirm`,
 `POST /api/v1/auth/email-verification/resend`, and
-`POST /api/v1/auth/email-verification/confirm`. Email verification is required
-in production. Non-production demos may set `REQUIRE_EMAIL_VERIFICATION=false`
-to mark newly created demo accounts verified without sending a verification
-message; production always enforces verification regardless of this setting.
+`POST /api/v1/auth/email-verification/confirm`. The verification endpoints
+remain for compatibility with links already sent, but verification is not
+required for signup, login, or protected API requests. The old
+`REQUIRE_EMAIL_VERIFICATION` setting is ignored.
 
 Login sets a seven-day `myr_session` HttpOnly, SameSite=Lax cookie, with Secure
 enabled in production. The API stores only the SHA-256 session digest and accepts
 that cookie for protected requests; the raw session token is never returned in
 JSON or stored in browser storage. Unsafe requests with an Origin header must
 match `WEB_ORIGIN`, and production cookie-authenticated mutations require the
-expected Origin. Password-reset and verification tokens are random, one-use
-values stored only as SHA-256 digests; reset links expire after one hour and
-verification links after 24 hours. Successful password resets revoke every
-existing session for that user. Reset and resend responses are generic to avoid
-account enumeration.
+expected Origin. Password-reset tokens are random, one-use values stored only
+as SHA-256 digests; reset links expire after one hour. Successful password
+resets revoke every existing session for that user. Reset responses are generic
+to avoid account enumeration.
+
+The local, non-production seed creates `admin@myrcrm.local` with password
+`MyrAdmin123!`; this account can access `/control-panel` when no
+`PLATFORM_ADMIN_EMAIL` is configured. Production never creates this demo
+account. Configure `PLATFORM_ADMIN_EMAIL` with exactly one existing active
+account to grant access to the platform control panel. The legacy
+`PLATFORM_ADMIN_EMAILS` setting is accepted only when it contains one distinct
+email; multiple addresses fail closed.
+
+Platform administration is separate from customer workspace administration.
+The configured platform account can manage platform-wide plans and workspaces.
+Customer Owners and Admins are organization memberships, not platform admins:
+their API requests are scoped to a workspace where they have an active
+membership, and changing the organization ID does not grant access to another
+customer's records or team. Team roles then limit record management inside
+that workspace.
+
+## Workspace trial and activation
+
+Signup creates the Owner's organization with a pending subscription. After
+sign-in, the web app routes the Owner to `/subscription`, where they can select
+a plan and start a no-charge two-day trial. The trial is available in
+production and can only be started once per workspace. When it expires, an
+Owner or Admin can submit a plan activation request; it appears under
+**Activation requests** in `/control-panel` for manual review. Platform admins
+activate the plan from the workspace row. Online checkout is not connected, so
+the request does not collect payment.
+
+Apply database changes with `npm run db:deploy` before starting an API version
+that includes subscription activation requests.
+
+Platform admins can control workspace access to Leads, Contacts, Companies,
+Deals, Activities, Team, Automation, Email, Reports, Audit Logs, and Settings
+from each workspace's module-access controls in `/control-panel`. Module access
+is enforced by the API as well as reflected in workspace navigation. The
+platform control panel also lists each workspace Owner and active team members,
+summarizes won deal value and open pipeline value, and provides a paginated
+deal list with company, stage, owner, and value details. These cross-workspace
+read endpoints are protected by the single platform-admin identity; customer
+workspace admins remain limited to their own organization.
 
 Authentication and invitation endpoints use PostgreSQL-backed rate-limit
 windows keyed by hashed IP and, where applicable, normalized email or user ID.
@@ -64,8 +103,8 @@ accept attempts per hour; and 20 invitations per hour per inviter/email.
 Expired buckets are periodically removed by the API.
 
 Configure `EMAIL_DELIVERY_URL` and `EMAIL_DELIVERY_TOKEN` on the API to send
-verification, reset, invitation, and CRM contact messages through the private
-email service. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional
+password-reset, invitation, and CRM contact messages through the private email
+service. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional
 `SMTP_USER` / `SMTP_PASSWORD` only on that service. TLS is required by default
 for STARTTLS connections; use `SMTP_SECURE=true` for implicit TLS. In
 development without an API delivery URL, one-time links are logged locally;
