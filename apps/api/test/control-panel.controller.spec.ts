@@ -461,6 +461,32 @@ describe("ControlPanelController", () => {
     assert.equal(auditReason, "Enable the sales team workflow");
   });
 
+  it("allows platform admins to grant extra modules to trial workspaces", async () => {
+    let updatedModules: string[] | undefined;
+    const controller = createController({
+      organization: {
+        findUnique: async () => ({
+          enabledModules: ["leads", "team"],
+          subscriptionStatus: "TRIAL",
+          subscriptionEndsAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+        update: async ({ data }: { data: { enabledModules: string[] } }) => {
+          updatedModules = data.enabledModules;
+          return { id: organizationId, enabledModules: data.enabledModules };
+        },
+      },
+    });
+
+    const result = await controller.updateOrganizationModules(
+      organizationId,
+      { modules: ["leads", "team", "automation", "reports"], reason: "Grant additional trial access" },
+      actorRequest,
+    );
+
+    assert.deepEqual(updatedModules, ["leads", "team", "automation", "reports"]);
+    assert.deepEqual(result.data.enabledModules, ["leads", "team", "automation", "reports"]);
+  });
+
   it("requires a non-empty reason for sensitive tenant changes", async () => {
     const controller = createController({});
     await assert.rejects(

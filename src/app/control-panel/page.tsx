@@ -1466,7 +1466,10 @@ export default function ControlPanelPage() {
                            <div className="control-panel-module-editor">
                              <div>
                                <strong>Enabled CRM modules</strong>
-                               <p>Changes take effect immediately for this tenant’s users and API access.</p>
+                               <p>
+                                 Changes take effect immediately for this tenant’s users and API access.
+                                 {organization.subscription.status === 'trial' && ' Trial workspaces can be granted extra modules here.'}
+                               </p>
                              </div>
                              <div className="control-panel-module-options">
                                {crmModules.map(([module, label]) => {

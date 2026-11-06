@@ -126,7 +126,7 @@ export default function SubscriptionPage() {
         },
         activationRequest: null,
       } : current);
-      setRequestMessage('Your 2-day trial has started. You can use the included CRM features now.');
+      window.location.assign('/');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not start the trial.');
     } finally {

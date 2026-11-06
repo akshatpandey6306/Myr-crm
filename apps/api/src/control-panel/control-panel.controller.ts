@@ -716,15 +716,6 @@ export class ControlPanelController {
       select: { enabledModules: true, subscriptionStatus: true, subscriptionEndsAt: true },
     });
     if (!current) throw new NotFoundException({ code: "not_found", message: "Organization not found" });
-    if (
-      effectiveSubscriptionStatus(current.subscriptionStatus, current.subscriptionEndsAt) === "trial" &&
-      modules.some((module) => !TRIAL_MODULES.includes(module))
-    ) {
-      throw new ConflictException({
-        code: "trial_module_limit",
-        message: "Trial workspaces are limited to Leads, Contacts, Companies, Deals, Activities, Team, and Settings.",
-      });
-    }
     const updated = await this.prisma.organization.update({
       where: { id: organizationId },
       data: { enabledModules: modules },
