@@ -77,8 +77,10 @@ that workspace.
 
 Signup creates the Owner's organization with a pending subscription. After
 sign-in, the web app routes the Owner to `/subscription`, where they can select
-a plan and start a no-charge two-day trial. The trial is available in
-production and can only be started once per workspace. When it expires, an
+a plan and immediately start a no-charge two-day trial, with no platform-admin
+approval required. The platform control panel shows the workspace's trial
+status and expiry. The trial is available in production and can only be started
+once per workspace. When it expires, an
 Owner or Admin can submit a plan activation request; it appears under
 **Activation requests** in `/control-panel` for manual review. Platform admins
 activate the plan from the workspace row. Online checkout is not connected, so

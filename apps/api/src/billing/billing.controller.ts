@@ -71,7 +71,7 @@ export class BillingController {
   }
 
   @Post("subscribe")
-  async requestTrial(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
+  async startTrial(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
     if (typeof body?.planCode !== "string") {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid subscription plan" });
     }
@@ -95,32 +95,45 @@ export class BillingController {
         message: "This workspace already has a subscription or has requested its trial.",
       });
     }
-    if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
-    const existing = await this.prisma.subscriptionActivationRequest.findFirst({
-      where: { organizationId: membership.organization.id, status: "PENDING" },
-      select: { id: true, planCode: true, requestType: true, createdAt: true },
-    });
-    if (existing) return { data: this.activationRequestData(existing) };
-    try {
-      const created = await this.prisma.subscriptionActivationRequest.create({
+    const startsAt = new Date();
+    const endsAt = new Date(startsAt.getTime() + 2 * DAY_MS);
+    await this.prisma.$transaction(async (transaction) => {
+      const started = await transaction.organization.updateMany({
+        where: { id: membership.organization.id, subscriptionStatus: "PENDING" },
         data: {
-          organizationId: membership.organization.id,
-          requestedById: request.userId,
-          planCode: plan.code,
-          requestType: "TRIAL",
+          subscriptionPlan: plan.code,
+          subscriptionStatus: "TRIAL",
+          subscriptionStartedAt: startsAt,
+          subscriptionEndsAt: endsAt,
+          billingProvider: "trial",
+          enabledModules: TRIAL_MODULES,
         },
-        select: { id: true, planCode: true, requestType: true, createdAt: true },
       });
-      return { data: this.activationRequestData(created) };
-    } catch (error) {
-      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") throw error;
-      const concurrent = await this.prisma.subscriptionActivationRequest.findFirst({
-        where: { organizationId: membership.organization.id, status: "PENDING" },
-        select: { id: true, planCode: true, requestType: true, createdAt: true },
+      if (started.count !== 1) {
+        throw new ConflictException({
+          code: "subscription_exists",
+          message: "This workspace already has a subscription or has started its trial.",
+        });
+      }
+      await transaction.subscriptionActivationRequest.updateMany({
+        where: {
+          organizationId: membership.organization.id,
+          requestType: "TRIAL",
+          status: "PENDING",
+        },
+        data: { status: "ACTIVATED" },
       });
-      if (!concurrent) throw error;
-      return { data: this.activationRequestData(concurrent) };
-    }
+    });
+
+    return {
+      data: {
+        planCode: plan.code,
+        status: "trial",
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        provider: "trial",
+      },
+    };
   }
 
   @Post("request-activation")

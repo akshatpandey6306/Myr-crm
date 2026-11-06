@@ -178,8 +178,9 @@ for the current service map, ownership, local workflow, and remaining migration.
   Leads, Roles, and Users sections; lead choices and workspace roles are
   documented as fixed until their customization APIs are implemented.
 - New workspaces start pending and are directed to `/subscription` after sign-in.
-  Owners/Admins can start one free two-day trial; after it expires, a plan
-  activation request is queued for manual review in the platform control panel.
+  Owners/Admins can start one free two-day trial immediately, without platform
+  approval; platform admins can monitor trial status in the control panel.
+  After it expires, a plan activation request is queued for manual review.
   Online checkout is not connected.
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks

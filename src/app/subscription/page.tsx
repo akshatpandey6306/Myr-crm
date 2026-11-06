@@ -93,7 +93,7 @@ export default function SubscriptionPage() {
     return () => controller.abort();
   }, []);
 
-  async function requestTrial(plan: Plan) {
+  async function startTrial(plan: Plan) {
     setBusyPlan(plan.code);
     setError('');
     try {
@@ -105,22 +105,30 @@ export default function SubscriptionPage() {
       const payload: unknown = await response.json();
       if (!response.ok) {
         const apiError = isRecord(payload) && isRecord(payload.error) ? payload.error : {};
-        throw new Error(typeof apiError.message === 'string' ? apiError.message : 'Could not request the trial.');
+        throw new Error(typeof apiError.message === 'string' ? apiError.message : 'Could not start the trial.');
       }
       const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
-      if (!data || typeof data.id !== 'string' || typeof data.planCode !== 'string' || data.requestType !== 'trial' || typeof data.requestedAt !== 'string') {
-        throw new Error('The trial request response was invalid.');
+      const planCode = data && typeof data.planCode === 'string' ? data.planCode : null;
+      const startsAt = data && typeof data.startsAt === 'string' ? data.startsAt : null;
+      const endsAt = data && typeof data.endsAt === 'string' ? data.endsAt : null;
+      if (!data || data.status !== 'trial' || !planCode || !startsAt || !endsAt) {
+        throw new Error('The trial start response was invalid.');
       }
-      const activationRequest = {
-        id: data.id,
-        planCode: data.planCode,
-        requestType: 'trial' as const,
-        requestedAt: data.requestedAt,
-      };
-      setBilling((current) => current ? { ...current, activationRequest } : current);
-      setRequestMessage('Your 2-day trial request was sent to the platform admin. The trial starts after approval.');
+      setBilling((current) => current ? {
+        ...current,
+        subscription: {
+          ...current.subscription,
+          planCode,
+          status: 'trial',
+          startsAt,
+          endsAt,
+          provider: 'trial',
+        },
+        activationRequest: null,
+      } : current);
+      setRequestMessage('Your 2-day trial has started. You can use the included CRM features now.');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not request the trial.');
+      setError(caught instanceof Error ? caught.message : 'Could not start the trial.');
     } finally {
       setBusyPlan('');
     }
@@ -171,7 +179,9 @@ export default function SubscriptionPage() {
   }
 
   const currentPlan = billing?.plans.find((plan) => plan.code === billing.subscription.planCode);
-  const canStartTrial = billing?.subscription.status === 'pending' && billing.canManageBilling && !billing.activationRequest;
+  const canStartTrial = billing?.subscription.status === 'pending' &&
+    billing.canManageBilling &&
+    (!billing.activationRequest || billing.activationRequest.requestType === 'trial');
   const canRequestActivation = billing?.canManageBilling &&
     ['expired', 'cancelled'].includes(billing.subscription.status) &&
     !billing.activationRequest;
@@ -191,17 +201,17 @@ export default function SubscriptionPage() {
       <section className="subscription-content">
         <p className="date-label">WORKSPACE SUBSCRIPTION</p>
         <h1>{billing?.organization.name ? `Plans for ${billing.organization.name}` : 'Choose your CRM plan'}</h1>
-        <p className="subscription-intro">Choose a plan to request your two-day trial. The trial starts after platform-admin approval; prices use each plan’s configured billing interval.</p>
+        <p className="subscription-intro">Choose a plan to start your two-day trial immediately. The platform admin can monitor your workspace’s trial status; prices use each plan’s configured billing interval.</p>
 
         {loading && <p className="subscription-state" role="status">Loading subscription plans…</p>}
         {error && <div className="control-panel-error" role="alert">{error}</div>}
         {requestMessage && <div className="subscription-state" role="status">{requestMessage}</div>}
         {billing?.activationRequest && (
           <div className="subscription-state" role="status">
-            {billing.activationRequest.requestType === 'trial' ? 'Trial approval requested' : 'Plan activation requested'} for{' '}
+            {billing.activationRequest.requestType === 'trial' ? 'Previous trial request' : 'Plan activation requested'} for{' '}
             {billing.plans.find((plan) => plan.code === billing.activationRequest?.planCode)?.name ?? billing.activationRequest.planCode}
             {' '}on {new Date(billing.activationRequest.requestedAt).toLocaleDateString()}. {billing.activationRequest.requestType === 'trial'
-              ? 'The 2-day trial starts after platform approval.'
+              ? 'You can start the trial now; platform-admin approval is not required.'
               : 'The platform team will review your activation request.'}
           </div>
         )}
@@ -235,8 +245,8 @@ export default function SubscriptionPage() {
                   <ul>{plan.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
                   <p className="subscription-seats">Modules: {plan.modules.join(', ') || 'No modules configured'}</p>
                   {canStartTrial ? (
-                    <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void requestTrial(plan)}>
-                      {busyPlan === plan.code ? 'Requesting trial…' : 'Request 2-day free trial'}
+                    <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void startTrial(plan)}>
+                      {busyPlan === plan.code ? 'Starting trial…' : 'Start 2-day free trial'}
                     </button>
                   ) : canRequestActivation ? (
                     <button className="button button-primary subscription-button" type="button" disabled={Boolean(busyPlan)} onClick={() => void requestActivation(plan)}>
@@ -246,7 +256,7 @@ export default function SubscriptionPage() {
                     {billing.subscription.status === 'pending' && !billing.canManageBilling
                       ? 'Ask your workspace owner'
                       : billing.activationRequest
-                        ? (billing.activationRequest.requestType === 'trial' ? 'Trial approval requested' : 'Activation requested')
+                        ? (billing.activationRequest.requestType === 'trial' ? 'Start trial now' : 'Activation requested')
                       : billing.subscription.status === 'pending'
                         ? 'Awaiting platform approval'
                       : billing.subscription.status === 'expired'
@@ -266,13 +276,13 @@ export default function SubscriptionPage() {
                   <p>
                     {billing.subscription.status === 'expired'
                       ? 'Your free trial has ended. Request plan activation and the platform team will contact you.'
-                      : 'Start a free two-day trial; no payment is collected. Online checkout is not configured yet.'}
+                      : 'Start a free two-day trial immediately; no payment is collected. Online checkout is not configured yet.'}
                   </p>
                 </div>
               </aside>
             )}
             <p className="subscription-disclaimer">
-              {'Trial access begins only after platform-admin approval and lasts two days. The platform admin must manually activate paid plans; no payment is collected or verified in the app.'}
+              {'Your two-day trial starts as soon as you choose a plan. The platform admin can monitor it and must manually activate paid plans; no payment is collected or verified in the app.'}
             </p>
           </>
         )}
