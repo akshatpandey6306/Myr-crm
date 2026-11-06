@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { HttpExceptionFilter } from "./common/http-exception.filter.js";
+import { getWebOrigin } from "./common/web-origin.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const envPath = [
@@ -15,8 +16,9 @@ const envPath = [
 dotenv.config(envPath ? { path: envPath } : {});
 
 async function bootstrap() {
+  const webOrigin = getWebOrigin();
   const app = await NestFactory.create(AppModule);
-  app.enableCors({ origin: process.env.WEB_ORIGIN ?? "http://localhost:3000", credentials: false });
+  app.enableCors({ origin: webOrigin, credentials: false });
   const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
   if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0) {
     throw new Error("TRUST_PROXY_HOPS must be a non-negative integer");

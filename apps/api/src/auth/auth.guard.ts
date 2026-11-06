@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, 
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
+import { getWebOrigin } from "../common/web-origin.js";
 import { IS_PUBLIC_KEY } from "./public.decorator.js";
 
 @Injectable()
@@ -14,7 +15,7 @@ export class AuthGuard implements CanActivate {
     const cookieToken = this.cookieValue(request.headers.cookie, "myr_session");
     if (unsafeRequest) {
       const origin = request.headers.origin;
-      const expectedOrigin = (process.env.WEB_ORIGIN ?? "http://localhost:3000").replace(/\/+$/, "");
+      const expectedOrigin = getWebOrigin();
       const allowedOrigins = new Set([expectedOrigin]);
       const localOrigin = /^http:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?$/.exec(expectedOrigin);
       if (process.env.NODE_ENV !== "production" && localOrigin) {
