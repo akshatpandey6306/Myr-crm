@@ -17,6 +17,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
+import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 
 const administrators = new Set(["owner", "admin"]);
 const assignmentManagers = new Set(["owner", "admin", "sales_manager"]);
@@ -283,13 +284,50 @@ export class MembersController {
       throw new BadRequestException({ code: "validation_error", message: "Choose an assignable organization role" });
     }
     const decision = body.decision;
-    const updated = await this.prisma.membership.updateMany({
-      where: { organizationId, userId: targetUserId, status: "PENDING", user: { status: "ACTIVE" } },
-      data: decision === "approve"
-        ? { status: "ACTIVE", role: approvedRole }
-        : { status: "REMOVED" },
-    });
-    if (!updated.count) throw new NotFoundException({ code: "not_found", message: "Pending membership request not found" });
+    try {
+      await this.prisma.$transaction(async (transaction) => {
+        if (decision === "approve") {
+          const organization = await transaction.organization.findUnique({
+            where: { id: organizationId },
+            select: { subscriptionStatus: true, subscriptionEndsAt: true, subscriptionPlan: true },
+          });
+          if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
+          const plan = organization.subscriptionPlan
+            ? await transaction.subscriptionPlan.findUnique({
+                where: { code: organization.subscriptionPlan },
+                select: { employeeLimit: true },
+              })
+            : null;
+          const isTrial = effectiveSubscriptionStatus(organization.subscriptionStatus, organization.subscriptionEndsAt) === "trial";
+          const memberLimit = isTrial ? 2 : plan?.employeeLimit ?? null;
+          if (memberLimit !== null) {
+            const activeCount = await transaction.membership.count({
+              where: { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } },
+            });
+            if (activeCount >= memberLimit) {
+              throw new ConflictException({
+                code: "member_limit_reached",
+                message: isTrial
+                  ? "The two-member trial limit has been reached. Choose a plan to add more team members."
+                  : "This plan's team-member limit has been reached.",
+              });
+            }
+          }
+        }
+        const updated = await transaction.membership.updateMany({
+          where: { organizationId, userId: targetUserId, status: "PENDING", user: { status: "ACTIVE" } },
+          data: decision === "approve"
+            ? { status: "ACTIVE", role: approvedRole }
+            : { status: "REMOVED" },
+        });
+        if (!updated.count) throw new NotFoundException({ code: "not_found", message: "Pending membership request not found" });
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (this.prismaCode(error) === "P2034") {
+        throw new ConflictException({ code: "member_limit_reached", message: "Workspace membership changed while approving this request. Refresh and try again." });
+      }
+      throw error;
+    }
 
     await this.prisma.auditLog.create({
       data: {

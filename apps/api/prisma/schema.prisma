@@ -40,6 +40,13 @@ enum ActivationRequestStatus {
   @@map("activation_request_status")
 }
 
+enum SubscriptionRequestType {
+  TRIAL      @map("trial")
+  ACTIVATION @map("activation")
+
+  @@map("subscription_request_type")
+}
+
 enum MembershipRole {
   OWNER         @map("owner")
   ADMIN         @map("admin")
@@ -219,6 +226,7 @@ model SubscriptionPlan {
   billingInterval String   @default("monthly") @map("billing_interval") @db.VarChar(16)
   trialDays       Int      @default(0) @map("trial_days")
   features        String[] @default([])
+  modules         String[] @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"])
   employeeLimit   Int?     @map("employee_limit")
   usageLimits     Json     @default("{}") @map("usage_limits")
   isActive        Boolean  @default(true) @map("is_active")
@@ -233,6 +241,7 @@ model SubscriptionActivationRequest {
   organizationId String                  @map("organization_id") @db.Uuid
   requestedById  String                  @map("requested_by_id") @db.Uuid
   planCode       String                  @map("plan_code") @db.VarChar(32)
+  requestType    SubscriptionRequestType @default(ACTIVATION) @map("request_type")
   status         ActivationRequestStatus @default(PENDING)
   createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)

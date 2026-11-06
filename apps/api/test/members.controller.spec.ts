@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { MembersController } from "../src/organizations/members.controller.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -114,10 +114,16 @@ describe("MembersController", () => {
     let updateArgs: Record<string, unknown> | undefined;
     let auditData: Record<string, unknown> | undefined;
     let notificationQuery: Record<string, unknown> | undefined;
-    const controller = new MembersController({
+    const transaction = {
+      organization: { findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }) },
+      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
       membership: {
+        count: async () => 1,
         updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
       },
+    };
+    const controller = new MembersController({
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
       auditLog: { create: async (args: { data: Record<string, unknown> }) => { auditData = args.data; } },
       notification: {
         updateMany: async (args: { where: Record<string, unknown> }) => { notificationQuery = args.where; return { count: 1 }; },
@@ -141,5 +147,30 @@ describe("MembersController", () => {
     assert.equal(notificationQuery?.resourceId, "22222222-2222-4222-8222-222222222222");
     assert.equal(result.data.decision, "approve");
     assert.equal(result.data.role, "admin");
+  });
+
+  it("enforces the two-total-member trial limit before approving a join request", async () => {
+    let updated = false;
+    const transaction = {
+      organization: { findUnique: async () => ({ subscriptionStatus: "TRIAL", subscriptionEndsAt: new Date(Date.now() + 60_000), subscriptionPlan: "growth" }) },
+      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
+      membership: {
+        count: async () => 2,
+        updateMany: async () => { updated = true; return { count: 1 }; },
+      },
+    };
+    const controller = new MembersController({
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    } as never);
+
+    await assert.rejects(
+      controller.reviewMembershipRequest(
+        request("admin"),
+        "22222222-2222-4222-8222-222222222222",
+        { decision: "approve" },
+      ),
+      ConflictException,
+    );
+    assert.equal(updated, false);
   });
 });

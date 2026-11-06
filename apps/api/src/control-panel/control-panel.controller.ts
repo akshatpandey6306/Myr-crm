@@ -35,9 +35,12 @@ type PlanDraft = {
   features: string[];
   employeeLimit: number | null;
   usageLimits: Record<string, number>;
+  modules: string[];
   isActive: boolean;
 };
 
+const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
+const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -53,6 +56,7 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
   const features = body.features ?? current?.features ?? [];
   const employeeLimit = body.employeeLimit === undefined ? current?.employeeLimit ?? null : body.employeeLimit;
   const usageLimits = body.usageLimits ?? current?.usageLimits ?? {};
+  const modules = body.modules ?? current?.modules ?? PLAN_MODULES;
   const isActive = body.isActive ?? current?.isActive ?? true;
 
   if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(code)) {
@@ -80,6 +84,9 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
   )) {
     throw new BadRequestException({ code: "validation_error", message: "Usage limits must be an object with non-negative whole-number values" });
   }
+  if (!Array.isArray(modules) || modules.some((module) => typeof module !== "string" || !PLAN_MODULES.includes(module))) {
+    throw new BadRequestException({ code: "validation_error", message: "Choose valid CRM modules for this plan" });
+  }
   if (typeof isActive !== "boolean") throw new BadRequestException({ code: "validation_error", message: "Plan active status must be true or false" });
 
   return {
@@ -92,6 +99,7 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
     features: (features as string[]).map((feature) => feature.trim()).filter(Boolean),
     employeeLimit: employeeLimit as number | null,
     usageLimits: usageLimits as Record<string, number>,
+    modules: [...new Set(modules as string[])],
     isActive,
   };
 }
@@ -145,6 +153,7 @@ export class ControlPanelController {
       select: {
         id: true,
         planCode: true,
+        requestType: true,
         createdAt: true,
         organization: { select: { id: true, name: true } },
         requestedBy: { select: { name: true, email: true } },
@@ -155,11 +164,100 @@ export class ControlPanelController {
       data: requests.map((request) => ({
         id: request.id,
         planCode: request.planCode,
+        requestType: request.requestType.toLowerCase(),
         requestedAt: request.createdAt.toISOString(),
         organization: request.organization,
         requestedBy: request.requestedBy,
       })),
     };
+  }
+
+  @Post("subscription-activation-requests/:requestId/review")
+  async reviewSubscriptionRequest(
+    @Param("requestId") requestId: string,
+    @Body() body: { decision?: unknown; reason?: unknown },
+    @Req() request: HttpRequest,
+  ) {
+    if (!UUID.test(requestId)) throw new BadRequestException({ code: "validation_error", message: "A valid subscription request ID is required" });
+    if (body?.decision !== "approve" && body?.decision !== "decline") {
+      throw new BadRequestException({ code: "validation_error", message: "Choose approve or decline" });
+    }
+    const subscriptionRequest = await this.prisma.subscriptionActivationRequest.findFirst({
+      where: { id: requestId, status: "PENDING" },
+      select: {
+        id: true,
+        organizationId: true,
+        planCode: true,
+        requestType: true,
+      },
+    });
+    if (!subscriptionRequest) throw new NotFoundException({ code: "not_found", message: "Pending subscription request not found" });
+
+    const approved = body.decision === "approve";
+    const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+    await this.prisma.$transaction(async (transaction) => {
+      const currentOrganization = await transaction.organization.findUnique({
+        where: { id: subscriptionRequest.organizationId },
+        select: { subscriptionStatus: true, subscriptionEndsAt: true },
+      });
+      if (!currentOrganization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
+
+      if (approved) {
+        const plan = await transaction.subscriptionPlan.findFirst({
+          where: { code: subscriptionRequest.planCode, isActive: true },
+          select: { code: true, billingInterval: true, modules: true },
+        });
+        if (!plan) throw new ConflictException({ code: "plan_unavailable", message: "The requested plan is no longer available" });
+
+        const now = new Date();
+        if (subscriptionRequest.requestType === "TRIAL") {
+          if (currentOrganization.subscriptionStatus !== "PENDING") {
+            throw new ConflictException({ code: "subscription_exists", message: "This workspace is no longer awaiting trial approval" });
+          }
+          await transaction.organization.update({
+            where: { id: subscriptionRequest.organizationId },
+            data: {
+              subscriptionPlan: plan.code,
+              subscriptionStatus: "TRIAL",
+              subscriptionStartedAt: now,
+              subscriptionEndsAt: new Date(now.getTime() + 2 * DAY_MS),
+              billingProvider: "trial",
+              enabledModules: TRIAL_MODULES,
+            },
+          });
+        } else {
+          const currentStatus = effectiveSubscriptionStatus(currentOrganization.subscriptionStatus, currentOrganization.subscriptionEndsAt);
+          if (!["expired", "cancelled"].includes(currentStatus)) {
+            throw new ConflictException({ code: "subscription_not_ended", message: "Workspace subscription is not awaiting activation" });
+          }
+          await transaction.organization.update({
+            where: { id: subscriptionRequest.organizationId },
+            data: {
+              subscriptionPlan: plan.code,
+              subscriptionStatus: "ACTIVE",
+              subscriptionStartedAt: now,
+              subscriptionEndsAt: intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"]),
+              billingProvider: "manual",
+              enabledModules: plan.modules,
+            },
+          });
+        }
+      }
+
+      const updated = await transaction.subscriptionActivationRequest.updateMany({
+        where: { id: requestId, status: "PENDING" },
+        data: { status: approved ? "ACTIVATED" : "DECLINED" },
+      });
+      if (updated.count !== 1) throw new ConflictException({ code: "conflict", message: "This subscription request has already been reviewed" });
+    });
+
+    await this.recordAudit(request, `subscription_request.${subscriptionRequest.requestType.toLowerCase()}.${body.decision}`, "organization", subscriptionRequest.organizationId, {
+      requestId,
+      planCode: subscriptionRequest.planCode,
+      reason,
+      paymentProvider: "not_integrated",
+    });
+    return { data: { id: requestId, decision: body.decision, requestType: subscriptionRequest.requestType.toLowerCase() } };
   }
 
   @Get("workspace-signups")
@@ -261,6 +359,7 @@ export class ControlPanelController {
       features: existing.features,
       employeeLimit: existing.employeeLimit,
       usageLimits: existing.usageLimits as Record<string, number>,
+      modules: existing.modules,
       isActive: existing.isActive,
     };
     const plan = parsePlanDraft(body, current);
@@ -275,6 +374,7 @@ export class ControlPanelController {
         features: plan.features,
         employeeLimit: plan.employeeLimit,
         usageLimits: plan.usageLimits,
+        modules: plan.modules,
         isActive: plan.isActive,
       },
     });
@@ -562,6 +662,7 @@ export class ControlPanelController {
             subscriptionStartedAt: startsAt,
             subscriptionEndsAt: endsAt,
             billingProvider: "manual",
+            enabledModules: plan!.modules,
           }
         : {
             ...(planCode ? { subscriptionPlan: planCode } : {}),
@@ -612,9 +713,18 @@ export class ControlPanelController {
     const modules = [...new Set(body.modules as string[])];
     const current = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { enabledModules: true },
+      select: { enabledModules: true, subscriptionStatus: true, subscriptionEndsAt: true },
     });
     if (!current) throw new NotFoundException({ code: "not_found", message: "Organization not found" });
+    if (
+      effectiveSubscriptionStatus(current.subscriptionStatus, current.subscriptionEndsAt) === "trial" &&
+      modules.some((module) => !TRIAL_MODULES.includes(module))
+    ) {
+      throw new ConflictException({
+        code: "trial_module_limit",
+        message: "Trial workspaces are limited to Leads, Contacts, Companies, Deals, Activities, Team, and Settings.",
+      });
+    }
     const updated = await this.prisma.organization.update({
       where: { id: organizationId },
       data: { enabledModules: modules },

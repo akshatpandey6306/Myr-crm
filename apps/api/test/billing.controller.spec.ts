@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { ForbiddenException } from "@nestjs/common";
 import { BillingController } from "../src/billing/billing.controller.js";
 
 function makeMembership(status = "PENDING", role = "OWNER") {
@@ -51,7 +51,7 @@ describe("BillingController", () => {
         organization: { ...makeMembership("EXPIRED").organization, subscriptionEndsAt: new Date(Date.now() - 60_000) },
       }) },
       subscriptionPlan: { findMany: async () => [] },
-      subscriptionActivationRequest: { findFirst: async () => ({ id: "request-a", planCode: "growth", createdAt: requestedAt }) },
+      subscriptionActivationRequest: { findFirst: async () => ({ id: "request-a", planCode: "growth", requestType: "TRIAL", createdAt: requestedAt }) },
     } as never);
 
     const result = await controller.current({ userId: "user-a", headers: { "x-organization-id": "org-a" } } as never);
@@ -59,37 +59,43 @@ describe("BillingController", () => {
     assert.deepEqual(result.data.activationRequest, {
       id: "request-a",
       planCode: "growth",
+      requestType: "trial",
       requestedAt: requestedAt.toISOString(),
     });
   });
 
-  it("starts a no-charge two-day trial exactly once", async () => {
-    let updateArgs: Record<string, unknown> | undefined;
+  it("submits a trial request for platform-admin approval without starting the trial", async () => {
+    let requestData: Record<string, unknown> | undefined;
+    const requestedAt = new Date();
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
       subscriptionPlan: { findFirst: async () => ({ code: "growth" }) },
-      organization: {
-        updateMany: async (args: Record<string, unknown>) => {
-          updateArgs = args;
-          return { count: 1 };
+      subscriptionActivationRequest: {
+        findFirst: async () => null,
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          requestData = data;
+          return { id: "request-a", planCode: "growth", requestType: "TRIAL", createdAt: requestedAt };
         },
       },
     } as never);
 
-    const result = await controller.startFreeTrial({
+    const result = await controller.requestTrial({
       userId: "user-a",
       headers: { "x-organization-id": "org-a" },
     } as never, { planCode: "growth" });
 
-    assert.deepEqual(updateArgs?.where, { id: "org-a", subscriptionStatus: "PENDING" });
-    assert.equal((updateArgs?.data as Record<string, unknown>).subscriptionPlan, "growth");
-    assert.equal(result.data.status, "trial");
-    assert.equal(result.data.provider, "trial");
-    assert.ok(result.data.endsAt > result.data.startsAt);
-    assert.equal(
-      new Date(result.data.endsAt).getTime() - new Date(result.data.startsAt).getTime(),
-      2 * 24 * 60 * 60 * 1000,
-    );
+    assert.deepEqual(requestData, {
+      organizationId: "org-a",
+      requestedById: "user-a",
+      planCode: "growth",
+      requestType: "TRIAL",
+    });
+    assert.deepEqual(result.data, {
+      id: "request-a",
+      planCode: "growth",
+      requestType: "trial",
+      requestedAt: requestedAt.toISOString(),
+    });
   });
 
   it("does not grant a trial to a non-owner member", async () => {
@@ -99,41 +105,47 @@ describe("BillingController", () => {
     } as never);
 
     await assert.rejects(
-      controller.startFreeTrial({ userId: "user-a", headers: {} } as never, { planCode: "starter" }),
+      controller.requestTrial({ userId: "user-a", headers: {} } as never, { planCode: "starter" }),
       ForbiddenException,
     );
   });
 
-  it("rejects duplicate trial activation", async () => {
+  it("returns an existing pending trial request instead of creating duplicates", async () => {
+    const requestedAt = new Date();
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
       subscriptionPlan: { findFirst: async () => ({ code: "starter" }) },
-      organization: { updateMany: async () => ({ count: 0 }) },
+      subscriptionActivationRequest: {
+        findFirst: async () => ({ id: "request-a", planCode: "starter", requestType: "TRIAL", createdAt: requestedAt }),
+      },
     } as never);
 
-    await assert.rejects(
-      controller.startFreeTrial({ userId: "user-a", headers: {} } as never, { planCode: "starter" }),
-      ConflictException,
+    const result = await controller.requestTrial(
+      { userId: "user-a", headers: {} } as never,
+      { planCode: "starter" },
     );
+    assert.equal(result.data.id, "request-a");
+    assert.equal(result.data.requestType, "trial");
   });
 
-  it("allows a free trial in production without requiring test billing mode", async () => {
+  it("allows a trial request in production without requiring test billing mode", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     const controller = new BillingController({
       membership: { findFirst: async () => makeMembership() },
       subscriptionPlan: { findFirst: async () => ({ code: "starter" }) },
-      organization: { updateMany: async () => ({ count: 1 }) },
+      subscriptionActivationRequest: {
+        findFirst: async () => null,
+        create: async () => ({ id: "request-a", planCode: "starter", requestType: "TRIAL", createdAt: new Date() }),
+      },
     } as never);
 
     try {
-      const result = await controller.startFreeTrial(
+      const result = await controller.requestTrial(
         { userId: "user-a", headers: {} } as never,
         { planCode: "starter" },
       );
-      assert.equal(result.data.status, "trial");
-      assert.equal(result.data.provider, "trial");
-      assert.equal(new Date(result.data.endsAt).getTime() - new Date(result.data.startsAt).getTime(), 2 * 24 * 60 * 60 * 1000);
+      assert.equal(result.data.requestType, "trial");
     } finally {
       if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = previousNodeEnv;
@@ -150,7 +162,7 @@ describe("BillingController", () => {
         findFirst: async () => null,
         create: async ({ data }: { data: Record<string, unknown> }) => {
           requestData = data;
-          return { id: "request-a", planCode: "growth", createdAt: requestedAt };
+          return { id: "request-a", planCode: "growth", requestType: "ACTIVATION", createdAt: requestedAt };
         },
       },
     } as never);
@@ -160,8 +172,9 @@ describe("BillingController", () => {
       { planCode: "growth" },
     );
 
-    assert.deepEqual(requestData, { organizationId: "org-a", requestedById: "user-a", planCode: "growth" });
+    assert.deepEqual(requestData, { organizationId: "org-a", requestedById: "user-a", planCode: "growth", requestType: "ACTIVATION" });
     assert.equal(result.data.planCode, "growth");
+    assert.equal(result.data.requestType, "activation");
     assert.equal(result.data.requestedAt, requestedAt.toISOString());
   });
 });

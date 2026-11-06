@@ -34,6 +34,7 @@ type SubscriptionPlan = {
   billingInterval: 'monthly' | 'yearly';
   trialDays: number;
   features: string[];
+  modules: string[];
   employeeLimit: number | null;
   usageLimits: Record<string, number>;
   isActive: boolean;
@@ -41,6 +42,7 @@ type SubscriptionPlan = {
 type SubscriptionActivationRequest = {
   id: string;
   planCode: string;
+  requestType: 'trial' | 'activation';
   requestedAt: string;
   organization: { id: string; name: string };
   requestedBy: { name: string; email: string };
@@ -105,6 +107,7 @@ const emptyPlan = {
   billingInterval: 'monthly' as const,
   trialDays: '0',
   features: '',
+  modules: ['leads', 'contacts', 'companies', 'deals', 'activities', 'team', 'settings'],
   employeeLimit: '',
   usageLimits: '{}',
   isActive: true,
@@ -164,6 +167,8 @@ function isSubscriptionPlan(value: unknown): value is SubscriptionPlan {
     (plan.billingInterval === 'monthly' || plan.billingInterval === 'yearly') &&
     typeof plan.trialDays === 'number' &&
     Array.isArray(plan.features) &&
+    Array.isArray(plan.modules) &&
+    plan.modules.every((module) => typeof module === 'string') &&
     (plan.employeeLimit === null || typeof plan.employeeLimit === 'number') &&
     typeof plan.usageLimits === 'object' &&
     plan.usageLimits !== null &&
@@ -399,6 +404,7 @@ export default function ControlPanelPage() {
           typeof request === 'object' && request !== null &&
           typeof (request as SubscriptionActivationRequest).id === 'string' &&
           typeof (request as SubscriptionActivationRequest).planCode === 'string' &&
+          ((request as SubscriptionActivationRequest).requestType === 'trial' || (request as SubscriptionActivationRequest).requestType === 'activation') &&
           typeof (request as SubscriptionActivationRequest).requestedAt === 'string' &&
           typeof (request as SubscriptionActivationRequest).organization?.id === 'string' &&
           typeof (request as SubscriptionActivationRequest).organization?.name === 'string' &&
@@ -532,6 +538,36 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function reviewSubscriptionRequest(subscriptionRequest: SubscriptionActivationRequest, decision: 'approve' | 'decline') {
+    setBusyOrganizationId(subscriptionRequest.organization.id);
+    setError('');
+    setAccessMessage('');
+    try {
+      const response = await crmApiFetch(`/control-panel/subscription-activation-requests/${subscriptionRequest.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const apiError = typeof payload === 'object' && payload !== null && 'error' in payload
+          ? (payload as { error?: { message?: string } }).error
+          : undefined;
+        throw new Error(apiError?.message ?? 'Could not review this subscription request.');
+      }
+      setAccessMessage(
+        subscriptionRequest.requestType === 'trial'
+          ? `Trial request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'approved; the two-day trial has started' : 'declined'}.`
+          : `Plan request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'manually activated' : 'declined'}. No payment was collected or verified.`,
+      );
+      await Promise.all([loadActivationRequests(), loadOrganizations(), loadAuditLogs()]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not review this subscription request.');
+    } finally {
+      setBusyOrganizationId('');
+    }
+  }
+
   async function createWorkspace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setOnboardingBusy(true);
@@ -592,6 +628,7 @@ export default function ControlPanelPage() {
         billingInterval: planDraft.billingInterval,
         trialDays: Number(planDraft.trialDays),
         features: planDraft.features.split('\n').map((feature) => feature.trim()).filter(Boolean),
+        modules: planDraft.modules,
         employeeLimit: planDraft.employeeLimit === '' ? null : Number(planDraft.employeeLimit),
         usageLimits,
         isActive: planDraft.isActive,
@@ -630,6 +667,7 @@ export default function ControlPanelPage() {
       billingInterval: plan.billingInterval,
       trialDays: String(plan.trialDays),
       features: plan.features.join('\n'),
+      modules: plan.modules,
       employeeLimit: plan.employeeLimit === null ? '' : String(plan.employeeLimit),
       usageLimits: JSON.stringify(plan.usageLimits, null, 2),
       isActive: plan.isActive,
@@ -1017,30 +1055,42 @@ export default function ControlPanelPage() {
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Activation requests</h2>
-              <p>{activationRequests.length} awaiting manual review</p>
+              <p>{activationRequests.length} trial and plan requests awaiting review</p>
             </div>
           </div>
           {activationRequests.length ? (
             <div className="table-scroll">
               <table>
-                <thead><tr><th>WORKSPACE</th><th>REQUESTED BY</th><th>PLAN</th><th>REQUESTED</th><th>ACTION</th></tr></thead>
+                <thead><tr><th>WORKSPACE</th><th>REQUESTED BY</th><th>REQUEST</th><th>PLAN</th><th>REQUESTED</th><th>ACTION</th></tr></thead>
                 <tbody>{activationRequests.map((activationRequest) => (
                   <tr key={activationRequest.id}>
                     <td><strong>{activationRequest.organization.name}</strong></td>
                     <td>{activationRequest.requestedBy.name}<small>{activationRequest.requestedBy.email}</small></td>
+                    <td>{activationRequest.requestType === 'trial' ? '2-day trial' : 'Plan activation'}</td>
                     <td>{subscriptionPlans.find((plan) => plan.code === activationRequest.planCode)?.name ?? activationRequest.planCode}</td>
                     <td>{new Date(activationRequest.requestedAt).toLocaleDateString()}</td>
-                    <td><button className="control-panel-action" type="button" onClick={() => {
-                      setSearch(activationRequest.organization.name);
-                      setFilter('all');
-                      setSubscriptionStatusFilter('all');
-                      document.getElementById('workspaces')?.scrollIntoView({ behavior: 'smooth' });
-                    }}>Review workspace</button></td>
+                    <td>
+                      <button
+                        className="control-panel-action primary"
+                        type="button"
+                        disabled={Boolean(busyOrganizationId)}
+                        onClick={() => void reviewSubscriptionRequest(activationRequest, 'approve')}
+                      >
+                        {activationRequest.requestType === 'trial' ? 'Approve trial' : 'Activate manually'}
+                      </button>
+                      {' '}
+                      <button
+                        className="control-panel-action"
+                        type="button"
+                        disabled={Boolean(busyOrganizationId)}
+                        onClick={() => void reviewSubscriptionRequest(activationRequest, 'decline')}
+                      >Decline</button>
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
-          ) : <p className="control-panel-empty">No subscription activation requests are waiting.</p>}
+          ) : <p className="control-panel-empty">No trial or plan requests are waiting.</p>}
         </section>
 
         <section id="onboarding" className="panel control-panel-onboarding" aria-label="Onboard customer workspace">
@@ -1074,7 +1124,7 @@ export default function ControlPanelPage() {
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Subscription plans</h2>
-              <p>Persisted plans used when onboarding tenants and setting access. Employee caps are enforced; other JSON limits are stored as metadata. Plan changes do not process payments.</p>
+                <p>Persisted plans used when onboarding tenants and setting access. Employee caps and selected modules are enforced. Plan changes do not process payments.</p>
             </div>
           </div>
           {planMessage && <p className="control-panel-success" role="status">{planMessage}</p>}
@@ -1112,6 +1162,24 @@ export default function ControlPanelPage() {
             <label>Trial days<input type="number" min="0" max="365" step="1" value={planDraft.trialDays} onChange={(event) => setPlanDraft((current) => ({ ...current, trialDays: event.target.value }))} /></label>
             <label>Employee limit<input type="number" min="1" step="1" value={planDraft.employeeLimit} onChange={(event) => setPlanDraft((current) => ({ ...current, employeeLimit: event.target.value }))} placeholder="Blank means unlimited" /></label>
             <label>Features (one per line)<textarea rows={4} value={planDraft.features} onChange={(event) => setPlanDraft((current) => ({ ...current, features: event.target.value }))} /></label>
+            <fieldset className="control-panel-module-options">
+              <legend>Modules included in this plan</legend>
+              {crmModules.map(([module, label]) => (
+                <label className="control-panel-checkbox" key={module}>
+                  <input
+                    type="checkbox"
+                    checked={planDraft.modules.includes(module)}
+                    onChange={(event) => setPlanDraft((current) => ({
+                      ...current,
+                      modules: event.target.checked
+                        ? [...current.modules, module]
+                        : current.modules.filter((item) => item !== module),
+                    }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
             <label>Additional usage limits (JSON; metadata only)<textarea rows={4} value={planDraft.usageLimits} onChange={(event) => setPlanDraft((current) => ({ ...current, usageLimits: event.target.value }))} /></label>
             <label className="control-panel-checkbox"><input type="checkbox" checked={planDraft.isActive} onChange={(event) => setPlanDraft((current) => ({ ...current, isActive: event.target.checked }))} /> Active and available for assignment</label>
             <div className="control-panel-plan-form-actions">

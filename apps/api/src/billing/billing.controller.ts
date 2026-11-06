@@ -5,6 +5,7 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { effectiveSubscriptionStatus } from "./subscription-status.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
 
 @SkipOrganizationContext()
 @Controller("billing")
@@ -28,11 +29,12 @@ export class BillingController {
           trialDays: true,
           employeeLimit: true,
           features: true,
+          modules: true,
         },
       }),
       this.prisma.subscriptionActivationRequest.findFirst({
         where: { organizationId: organization.id, status: "PENDING" },
-        select: { id: true, planCode: true, createdAt: true },
+        select: { id: true, planCode: true, requestType: true, createdAt: true },
       }),
     ]);
     return {
@@ -54,10 +56,12 @@ export class BillingController {
           trialDays: plan.trialDays,
           seats: plan.employeeLimit ?? 0,
           features: plan.features,
+          modules: plan.modules,
         })),
         activationRequest: activationRequest ? {
           id: activationRequest.id,
           planCode: activationRequest.planCode,
+          requestType: activationRequest.requestType.toLowerCase(),
           requestedAt: activationRequest.createdAt.toISOString(),
         } : null,
         canManageBilling: membership.role === "OWNER" || membership.role === "ADMIN",
@@ -67,7 +71,7 @@ export class BillingController {
   }
 
   @Post("subscribe")
-  async startFreeTrial(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
+  async requestTrial(@Req() request: HttpRequest, @Body() body: { planCode?: unknown }) {
     if (typeof body?.planCode !== "string") {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid subscription plan" });
     }
@@ -85,34 +89,38 @@ export class BillingController {
       throw new ForbiddenException({ code: "organization_suspended", message: "This workspace has been suspended. Contact your account administrator." });
     }
 
-    const startsAt = new Date();
-    const endsAt = new Date(startsAt.getTime() + 2 * DAY_MS);
-    const result = await this.prisma.organization.updateMany({
-      where: { id: membership.organization.id, subscriptionStatus: "PENDING" },
-      data: {
-        subscriptionPlan: plan.code,
-        subscriptionStatus: "TRIAL",
-        subscriptionStartedAt: startsAt,
-        subscriptionEndsAt: endsAt,
-        billingProvider: "trial",
-      },
-    });
-    if (result.count !== 1) {
+    if (membership.organization.subscriptionStatus !== "PENDING") {
       throw new ConflictException({
         code: "subscription_exists",
-        message: "This workspace already has a subscription or has used its test trial. Contact the platform team for help.",
+        message: "This workspace already has a subscription or has requested its trial.",
       });
     }
-
-    return {
-      data: {
-        planCode: plan.code,
-        status: "trial",
-        startsAt: startsAt.toISOString(),
-        endsAt: endsAt.toISOString(),
-        provider: "trial",
-      },
-    };
+    if (!request.userId) throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated user required" });
+    const existing = await this.prisma.subscriptionActivationRequest.findFirst({
+      where: { organizationId: membership.organization.id, status: "PENDING" },
+      select: { id: true, planCode: true, requestType: true, createdAt: true },
+    });
+    if (existing) return { data: this.activationRequestData(existing) };
+    try {
+      const created = await this.prisma.subscriptionActivationRequest.create({
+        data: {
+          organizationId: membership.organization.id,
+          requestedById: request.userId,
+          planCode: plan.code,
+          requestType: "TRIAL",
+        },
+        select: { id: true, planCode: true, requestType: true, createdAt: true },
+      });
+      return { data: this.activationRequestData(created) };
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") throw error;
+      const concurrent = await this.prisma.subscriptionActivationRequest.findFirst({
+        where: { organizationId: membership.organization.id, status: "PENDING" },
+        select: { id: true, planCode: true, requestType: true, createdAt: true },
+      });
+      if (!concurrent) throw error;
+      return { data: this.activationRequestData(concurrent) };
+    }
   }
 
   @Post("request-activation")
@@ -139,7 +147,7 @@ export class BillingController {
 
     const existing = await this.prisma.subscriptionActivationRequest.findFirst({
       where: { organizationId: membership.organization.id, status: "PENDING" },
-      select: { id: true, planCode: true, createdAt: true },
+      select: { id: true, planCode: true, requestType: true, createdAt: true },
     });
     if (existing) return { data: this.activationRequestData(existing) };
 
@@ -150,23 +158,29 @@ export class BillingController {
           organizationId: membership.organization.id,
           requestedById: request.userId,
           planCode: plan.code,
+          requestType: "ACTIVATION",
         },
-        select: { id: true, planCode: true, createdAt: true },
+        select: { id: true, planCode: true, requestType: true, createdAt: true },
       });
       return { data: this.activationRequestData(created) };
     } catch (error) {
       if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") throw error;
       const concurrent = await this.prisma.subscriptionActivationRequest.findFirst({
         where: { organizationId: membership.organization.id, status: "PENDING" },
-        select: { id: true, planCode: true, createdAt: true },
+        select: { id: true, planCode: true, requestType: true, createdAt: true },
       });
       if (!concurrent) throw error;
       return { data: this.activationRequestData(concurrent) };
     }
   }
 
-  private activationRequestData(request: { id: string; planCode: string; createdAt: Date }) {
-    return { id: request.id, planCode: request.planCode, requestedAt: request.createdAt.toISOString() };
+  private activationRequestData(request: { id: string; planCode: string; requestType: string; createdAt: Date }) {
+    return {
+      id: request.id,
+      planCode: request.planCode,
+      requestType: request.requestType.toLowerCase(),
+      requestedAt: request.createdAt.toISOString(),
+    };
   }
 
   private async findMembership(request: HttpRequest) {

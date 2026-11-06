@@ -52,26 +52,6 @@ describe("ControlPanelController", () => {
       },
     });
 
-    it("lists pending subscription activation requests for platform review", async () => {
-      const controller = createController({
-        subscriptionActivationRequest: {
-          findMany: async () => [{
-            id: "request-a",
-            planCode: "growth",
-            createdAt: new Date("2026-11-05T12:00:00.000Z"),
-            organization: { id: organizationId, name: "Acme" },
-            requestedBy: { name: "Maya Chen", email: "maya@example.com" },
-          }],
-        },
-      });
-
-      const result = await controller.listSubscriptionActivationRequests();
-
-      assert.equal(result.data[0]?.organization.name, "Acme");
-      assert.equal(result.data[0]?.requestedBy.email, "maya@example.com");
-      assert.equal(result.data[0]?.requestedAt, "2026-11-05T12:00:00.000Z");
-    });
-
     const result = await controller.listOrganizations();
     assert.equal(result.data[0]?.memberCount, 2);
     assert.equal(result.data[0]?.pendingMemberRequestCount, 1);
@@ -83,6 +63,72 @@ describe("ControlPanelController", () => {
     assert.deepEqual(result.data[0]?.enabledModules, ["leads", "team"]);
     assert.deepEqual(result.data[0]?.owner, { name: "Maya Chen", email: "maya@example.com" });
     assert.equal(result.data[0]?.subscription.status, "trial");
+  });
+
+  it("lists pending trial and activation requests for platform review", async () => {
+    const controller = createController({
+      subscriptionActivationRequest: {
+        findMany: async () => [{
+          id: "request-a",
+          planCode: "growth",
+          requestType: "TRIAL",
+          createdAt: new Date("2026-11-05T12:00:00.000Z"),
+          organization: { id: organizationId, name: "Acme" },
+          requestedBy: { name: "Maya Chen", email: "maya@example.com" },
+        }],
+      },
+    });
+
+    const result = await controller.listSubscriptionActivationRequests();
+
+    assert.equal(result.data[0]?.organization.name, "Acme");
+    assert.equal(result.data[0]?.requestedBy.email, "maya@example.com");
+    assert.equal(result.data[0]?.requestType, "trial");
+    assert.equal(result.data[0]?.requestedAt, "2026-11-05T12:00:00.000Z");
+  });
+
+  it("starts a two-day limited trial only after platform approval", async () => {
+    let organizationUpdate: Record<string, unknown> | undefined;
+    let requestUpdate: Record<string, unknown> | undefined;
+    const transaction = {
+      organization: {
+        findUnique: async () => ({ subscriptionStatus: "PENDING", subscriptionEndsAt: null }),
+        update: async (args: Record<string, unknown>) => { organizationUpdate = args; },
+      },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads", "email"] }) },
+      subscriptionActivationRequest: {
+        updateMany: async (args: Record<string, unknown>) => { requestUpdate = args; return { count: 1 }; },
+      },
+    };
+    const controller = createController({
+      subscriptionActivationRequest: {
+        findFirst: async () => ({
+          id: "request-a",
+          organizationId,
+          planCode: "growth",
+          requestType: "TRIAL",
+        }),
+      },
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    });
+
+    const result = await controller.reviewSubscriptionRequest(
+      "22222222-2222-4222-8222-222222222222",
+      { decision: "approve" },
+      actorRequest,
+    );
+    const updatedOrganization = organizationUpdate?.data as Record<string, unknown>;
+    assert.equal(updatedOrganization.subscriptionStatus, "TRIAL");
+    assert.equal(updatedOrganization.billingProvider, "trial");
+    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "team", "settings"]);
+    assert.equal(
+      new Date(updatedOrganization.subscriptionEndsAt as Date).getTime() -
+        new Date(updatedOrganization.subscriptionStartedAt as Date).getTime(),
+      2 * 24 * 60 * 60 * 1000,
+    );
+    assert.deepEqual(requestUpdate?.where, { id: "22222222-2222-4222-8222-222222222222", status: "PENDING" });
+    assert.deepEqual(requestUpdate?.data, { status: "ACTIVATED" });
+    assert.equal(result.data.requestType, "trial");
   });
 
   it("lists tenant deals with owner and pipeline details using the requested workspace scope", async () => {
@@ -310,7 +356,7 @@ describe("ControlPanelController", () => {
     const currentEnd = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
     const controller = createController({
       subscriptionPlan: {
-        findFirst: async () => ({ code: "growth", billingInterval: "monthly" }),
+        findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads", "deals"] }),
       },
       organization: {
         findUnique: async () => ({ subscriptionPlan: "growth", subscriptionStartedAt: now, subscriptionEndsAt: currentEnd }),
@@ -348,6 +394,7 @@ describe("ControlPanelController", () => {
     expectedEnd.setUTCMonth(expectedEnd.getUTCMonth() + 1);
     assert.equal(result.data.status, "active");
     assert.equal(result.data.provider, "manual");
+    assert.deepEqual(data.enabledModules, ["leads", "deals"]);
     assert.deepEqual(activationRequestUpdate?.where, { organizationId, status: "PENDING" });
     assert.deepEqual(activationRequestUpdate?.data, { status: "ACTIVATED" });
     assert.equal(auditReason, "Approved renewal");
@@ -389,7 +436,7 @@ describe("ControlPanelController", () => {
     let auditReason = "";
     const controller = createController({
       organization: {
-        findUnique: async () => ({ enabledModules: ["leads", "team"] }),
+        findUnique: async () => ({ enabledModules: ["leads", "team"], subscriptionStatus: "ACTIVE", subscriptionEndsAt: null }),
         update: async ({ data }: { data: { enabledModules: string[] } }) => {
           updatedModules = data.enabledModules;
           return { id: organizationId, enabledModules: data.enabledModules };
