@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, InternalServerErrorException, ServiceUnavailableException } from "@nestjs/common";
 import { HttpExceptionFilter } from "../src/common/http-exception.filter.js";
 
 function captureResponse() {
@@ -47,6 +47,30 @@ describe("HttpExceptionFilter", () => {
     assert.deepEqual(result.getResult(), {
       statusCode: 500,
       body: { error: { code: "internal_error", message: "Unexpected error", details: null } },
+    });
+  });
+
+  it("preserves safe structured service-unavailable messages", () => {
+    const result = captureResponse();
+    const filter = new HttpExceptionFilter();
+
+    filter.catch(
+      new ServiceUnavailableException({
+        code: "smtp_not_configured",
+        message: "Signup verification email is unavailable until SMTP is configured.",
+      }),
+      makeHost(result.response) as never,
+    );
+
+    assert.deepEqual(result.getResult(), {
+      statusCode: 503,
+      body: {
+        error: {
+          code: "smtp_not_configured",
+          message: "Signup verification email is unavailable until SMTP is configured.",
+          details: null,
+        },
+      },
     });
   });
 });

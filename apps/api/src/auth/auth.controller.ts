@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -16,8 +16,11 @@ import {
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { Public } from "./public.decorator.js";
+import { AuthEmailService } from "./email.service.js";
+import { hashPassword } from "./password.js";
 
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+const SIGNUP_OTP_LIFETIME_MS = 10 * 60 * 1000;
 const SESSION_COOKIE = "myr_session";
 type CookieResponse = {
   cookie(name: string, value: string, options: { httpOnly: boolean; secure: boolean; sameSite: "lax"; path: string; expires: Date }): void;
@@ -26,7 +29,10 @@ type CookieResponse = {
 
 @Controller("auth")
 export class AuthController {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuthEmailService) private readonly email: AuthEmailService,
+  ) {}
 
   @Public()
   @Post("signup")
@@ -47,19 +53,25 @@ export class AuthController {
     try {
       if (accountType === "join") {
         await this.prisma.user.create({
-          data: { email, name, passwordHash: this.hashPassword(password), emailVerifiedAt: new Date() },
+          data: { email, name, passwordHash: hashPassword(password), emailVerifiedAt: new Date() },
         });
         return {
           message: "Account created. Sign in to request access to your workspace using its join code.",
         };
       }
 
+      if (!this.email.isConfigured()) {
+        throw new ServiceUnavailableException({
+          code: "smtp_not_configured",
+          message: "Signup verification email is unavailable until SMTP is configured.",
+        });
+      }
+
       const user = await this.prisma.user.create({
         data: {
           email,
           name,
-          passwordHash: this.hashPassword(password),
-          emailVerifiedAt: new Date(),
+          passwordHash: hashPassword(password),
           status: "PENDING",
           memberships: {
             create: {
@@ -81,20 +93,124 @@ export class AuthController {
             },
           },
         },
-        include: { memberships: { include: { organization: true } } },
       });
-      const organization = user.memberships[0]?.organization;
-      if (!organization) throw new Error("Signup did not create an owner organization membership");
+      await this.issueSignupOtp(user.id, email);
       return {
-        message: "Your workspace request was sent to the platform admin. You can sign in after it is approved.",
-        approvalRequired: true,
-        verificationRequired: false,
-        organization: { id: organization.id, name: organization.name },
+        message: `A one-time verification code was sent to ${email}. Enter it to activate your workspace owner account.`,
+        approvalRequired: false,
+        verificationRequired: true,
       };
     } catch (error) {
-      if (this.prismaCode(error) === "P2002") throw new ConflictException({ code: "conflict", message: "Email already registered" });
+      if (this.prismaCode(error) === "P2002") {
+        if (accountType === "workspace") {
+          const pendingOwner = await this.prisma.user.findFirst({
+            where: {
+              email,
+              status: "PENDING",
+              memberships: { some: { role: "OWNER", status: "PENDING" } },
+            },
+            select: { id: true, email: true },
+          });
+          if (pendingOwner) {
+            if (!this.email.isConfigured()) {
+              throw new ServiceUnavailableException({
+                code: "smtp_not_configured",
+                message: "Signup verification email is unavailable until SMTP is configured.",
+              });
+            }
+            await this.issueSignupOtp(pendingOwner.id, pendingOwner.email);
+            return {
+              message: `A one-time verification code was sent to ${pendingOwner.email}. Enter it to activate your workspace owner account.`,
+              approvalRequired: false,
+              verificationRequired: true,
+            };
+          }
+        }
+        throw new ConflictException({ code: "conflict", message: "Email already registered" });
+      }
       throw error;
     }
+  }
+
+  @Public()
+  @Post("signup/resend-otp")
+  async resendSignupOtp(@Body() body: { email?: unknown }) {
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email)) {
+      throw new BadRequestException({ code: "validation_error", message: "Enter a valid email address" });
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email, status: "PENDING", memberships: { some: { role: "OWNER", status: "PENDING" } } },
+      select: { id: true, email: true },
+    });
+    if (!user) return { message: "If a workspace signup is awaiting verification, a new code will be sent." };
+    if (!this.email.isConfigured()) {
+      throw new ServiceUnavailableException({
+        code: "smtp_not_configured",
+        message: "Signup verification email is unavailable until SMTP is configured.",
+      });
+    }
+
+    await this.issueSignupOtp(user.id, user.email);
+    return { message: `A new verification code was sent to ${user.email}. It expires in 10 minutes.` };
+  }
+
+  @Public()
+  @Post("signup/verify")
+  async verifySignupOtp(@Body() body: { email?: unknown; otp?: unknown }) {
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const otp = typeof body?.otp === "string" ? body.otp.trim() : "";
+    if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !/^\d{6}$/.test(otp)) {
+      throw new BadRequestException({ code: "validation_error", message: "Enter the signup email and its six-digit verification code" });
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email, status: "PENDING", memberships: { some: { role: "OWNER", status: "PENDING" } } },
+      select: { id: true },
+    });
+    if (!user) throw new BadRequestException({ code: "invalid_otp", message: "This verification code is invalid or expired" });
+
+    const now = new Date();
+    const emailToken = await this.prisma.emailToken.findFirst({
+      where: {
+        userId: user.id,
+        tokenHash: this.hashToken(otp),
+        purpose: "EMAIL_VERIFICATION",
+        consumedAt: null,
+        expiresAt: { gt: now },
+      },
+      select: { id: true },
+    });
+    if (!emailToken) throw new BadRequestException({ code: "invalid_otp", message: "This verification code is invalid or expired" });
+
+    await this.prisma.$transaction(async (transaction) => {
+      const consumed = await transaction.emailToken.updateMany({
+        where: { id: emailToken.id, consumedAt: null, expiresAt: { gt: now } },
+        data: { consumedAt: now },
+      });
+      if (consumed.count !== 1) {
+        throw new BadRequestException({ code: "invalid_otp", message: "This verification code is invalid or expired" });
+      }
+
+      const activatedUser = await transaction.user.updateMany({
+        where: { id: user.id, status: "PENDING" },
+        data: { status: "ACTIVE" },
+      });
+      const activatedMembership = await transaction.membership.updateMany({
+        where: { userId: user.id, role: "OWNER", status: "PENDING" },
+        data: { status: "ACTIVE" },
+      });
+      if (activatedUser.count !== 1 || activatedMembership.count !== 1) {
+        throw new BadRequestException({ code: "invalid_otp", message: "This verification code is invalid or expired" });
+      }
+      await transaction.emailToken.updateMany({
+        where: { userId: user.id, purpose: "EMAIL_VERIFICATION", consumedAt: null },
+        data: { consumedAt: now },
+      });
+    });
+
+    return { message: "Your workspace owner account is verified and active. You can now sign in." };
   }
 
   @Public()
@@ -119,7 +235,7 @@ export class AuthController {
       throw new UnauthorizedException({ code: "unauthorized", message: "Invalid credentials" });
     }
     if (user.status === "PENDING") {
-      throw new ForbiddenException({ code: "workspace_pending", message: "Your workspace signup is awaiting platform-admin approval." });
+      throw new ForbiddenException({ code: "workspace_pending", message: "Your account signup is awaiting verification. Enter the signup verification code to activate it." });
     }
     if (user.status !== "ACTIVE") throw new UnauthorizedException({ code: "unauthorized", message: "Invalid credentials" });
     const activeMembership = user.memberships.find((membership) => membership.status === "ACTIVE");
@@ -174,7 +290,7 @@ export class AuthController {
         data: { consumedAt: now },
       });
       if (consumed.count !== 1) throw new BadRequestException({ code: "invalid_token", message: "This password-reset link is invalid or expired" });
-      await transaction.user.update({ where: { id: emailToken.userId }, data: { passwordHash: this.hashPassword(password) } });
+      await transaction.user.update({ where: { id: emailToken.userId }, data: { passwordHash: hashPassword(password) } });
       await transaction.session.updateMany({ where: { userId: emailToken.userId, revokedAt: null }, data: { revokedAt: now } });
       await transaction.emailToken.updateMany({
         where: { userId: emailToken.userId, purpose: "PASSWORD_RESET", consumedAt: null },
@@ -262,10 +378,24 @@ export class AuthController {
     return createHash("sha256").update(token).digest("hex");
   }
 
-  private hashPassword(password: string) {
-    const salt = randomBytes(16);
-    const derived = scryptSync(password, salt, 64);
-    return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
+  private async issueSignupOtp(userId: string, recipientEmail: string) {
+    const otp = randomInt(100000, 1000000).toString();
+    const now = new Date();
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.emailToken.updateMany({
+        where: { userId, purpose: "EMAIL_VERIFICATION", consumedAt: null },
+        data: { consumedAt: now },
+      });
+      await transaction.emailToken.create({
+        data: {
+          userId,
+          tokenHash: this.hashToken(otp),
+          purpose: "EMAIL_VERIFICATION",
+          expiresAt: new Date(now.getTime() + SIGNUP_OTP_LIFETIME_MS),
+        },
+      });
+    });
+    await this.email.sendSignupOtp(otp, recipientEmail);
   }
 
   private verifyPassword(password: string, stored: string) {

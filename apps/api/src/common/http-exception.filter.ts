@@ -17,9 +17,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const r = exception.getResponse();
       if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
         this.logger.error("Unhandled HTTP exception", exception.stack);
-      } else if (typeof r === "string") {
+      }
+      if (typeof r === "string" && status < HttpStatus.INTERNAL_SERVER_ERROR) {
         message = r;
-      } else if (r && typeof r === "object") {
+      } else if (r && typeof r === "object" && (status < HttpStatus.INTERNAL_SERVER_ERROR || "code" in r)) {
         const o = r as Record<string, unknown>;
         if (typeof o.message === "string") message = o.message;
         else if (Array.isArray(o.message)) message = o.message.filter((item): item is string => typeof item === "string").join(", ") || message;

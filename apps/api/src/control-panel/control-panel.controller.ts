@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
   Query,
   Req,
@@ -43,6 +44,23 @@ const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "
 const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeAuditDetails(value: unknown, depth = 0): unknown {
+  if (depth > 6) return "[truncated]";
+  if (typeof value === "string") return value.slice(0, 2_000);
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => safeAuditDetails(item, depth + 1));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/(password|secret|token|credential|authorization|cookie|session|otp|hash)/i.test(key))
+      .slice(0, 100)
+      .map(([key, item]) => [key, safeAuditDetails(item, depth + 1)]),
+  );
+}
+
+function safeAuditReason(value: string | null) {
+  return value?.replace(/\b(password|secret|token|credential|authorization|cookie|session|otp|hash)\b\s*[:=]\s*\S+/gi, "$1=[redacted]").slice(0, 500) ?? null;
 }
 
 function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
@@ -263,7 +281,14 @@ export class ControlPanelController {
   @Get("workspace-signups")
   async listWorkspaceSignupRequests() {
     const requests = await this.prisma.membership.findMany({
-      where: { role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      where: {
+        role: "OWNER",
+        status: "PENDING",
+        user: {
+          status: "PENDING",
+          emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+        },
+      },
       select: {
         userId: true,
         createdAt: true,
@@ -294,7 +319,15 @@ export class ControlPanelController {
     }
 
     const signup = await this.prisma.membership.findFirst({
-      where: { userId, role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      where: {
+        userId,
+        role: "OWNER",
+        status: "PENDING",
+        user: {
+          status: "PENDING",
+          emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+        },
+      },
       select: { organizationId: true, userId: true },
     });
     if (!signup) throw new NotFoundException({ code: "not_found", message: "Pending workspace signup not found" });
@@ -743,6 +776,45 @@ export class ControlPanelController {
         ...log,
         actorName: log.actorUserId ? actors.get(log.actorUserId)?.name ?? null : null,
         actorEmail: log.actorEmail ?? (log.actorUserId ? actors.get(log.actorUserId)?.email ?? null : null),
+      })),
+    };
+  }
+
+  @Get("audit-logs/export")
+  async exportAuditLogs(@Req() request: HttpRequest, @Query("action") action?: string) {
+    const filter = action?.trim();
+    if (filter && filter.length > 120) {
+      throw new BadRequestException({ code: "validation_error", message: "action must be at most 120 characters" });
+    }
+    const where = filter ? { action: filter } : {};
+    const total = await this.prisma.platformAuditLog.count({ where });
+    if (total > 10_000) {
+      throw new PayloadTooLargeException({ code: "export_too_large", message: "Filter the audit history to export no more than 10,000 entries at a time" });
+    }
+    const logs = await this.prisma.platformAuditLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 10_000,
+    });
+    const actorIds = [...new Set(logs.flatMap((log) => log.actorUserId ? [log.actorUserId] : []))];
+    const users = actorIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const actors = new Map(users.map((user) => [user.id, user]));
+    await this.recordAudit(request, "audit_log.export", "platform_audit_log", "", {
+      action: filter ?? "all",
+      exportedCount: logs.length,
+    });
+    return {
+      data: logs.map((log) => ({
+        createdAt: log.createdAt.toISOString(),
+        actorName: log.actorUserId ? actors.get(log.actorUserId)?.name ?? null : null,
+        actorEmail: log.actorEmail ?? (log.actorUserId ? actors.get(log.actorUserId)?.email ?? null : null),
+        action: log.action,
+        targetType: log.targetType,
+        targetId: log.targetId,
+        reason: safeAuditReason(log.reason),
+        details: safeAuditDetails(log.metadata),
       })),
     };
   }

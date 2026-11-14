@@ -276,6 +276,7 @@ model Membership {
   organizationId         String                   @map("organization_id") @db.Uuid
   role                   MembershipRole           @default(SALES_REP)
   status                 MembershipStatus         @default(ACTIVE)
+  enabledModules         String[]                 @default(["leads", "contacts", "companies", "deals", "activities"]) @map("enabled_modules")
   createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -559,13 +560,16 @@ model AuditLog {
 }
 
 model OrganizationSettings {
-  organizationId String       @id @map("organization_id") @db.Uuid
-  currency       String       @default("USD") @db.Char(3)
-  timezone       String       @default("UTC") @db.VarChar(64)
-  weekStartsOn   Int          @default(1) @map("week_starts_on")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId          String       @id @map("organization_id") @db.Uuid
+  currency                String       @default("USD") @db.Char(3)
+  timezone                String       @default("UTC") @db.VarChar(64)
+  weekStartsOn            Int          @default(1) @map("week_starts_on")
+  leadAutoAssignEnabled   Boolean      @default(false) @map("lead_auto_assign_enabled")
+  leadAutoAssignUserIds   String[]     @default([]) @map("lead_auto_assign_user_ids") @db.Uuid
+  leadAutoAssignCursor    Int          @default(0) @map("lead_auto_assign_cursor")
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("organization_settings")
 }

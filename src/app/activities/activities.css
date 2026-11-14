@@ -1326,3 +1326,49 @@
   outline: 2px solid #c9c0ff;
   outline-offset: 2px;
 }
+
+html[data-crm-theme] .activities-screen {
+  --ink: var(--crm-ink);
+  --muted: var(--crm-muted);
+  --line: var(--green-pale);
+  --purple: var(--green);
+  --purple-dark: var(--green-dark);
+  --canvas: var(--paper);
+  background: transparent;
+  color: var(--crm-ink);
+}
+
+html[data-crm-theme] .activities-screen :is(.sidebar, .topbar, .stat-card, .work-panel, .create-modal) {
+  border-color: var(--line);
+  background-color: var(--surface);
+}
+
+html[data-crm-theme] .activities-screen :is(.page-heading h1, .panel-heading h2, .stat-copy strong, .item-title-row h3, .breadcrumbs strong) {
+  color: var(--crm-ink);
+}
+
+html[data-crm-theme] .activities-screen :is(.page-heading p, .panel-heading p, .breadcrumbs, .eyebrow, .stat-note, .item-meta) {
+  color: var(--crm-muted);
+}
+
+html[data-crm-theme] .activities-screen :is(.primary-button, .empty-state button) {
+  border-color: var(--green);
+  background-color: var(--green);
+  color: #fff;
+}
+
+html[data-crm-theme] .activities-screen :is(.primary-button:hover, .empty-state button:hover) {
+  border-color: var(--green-dark);
+  background-color: var(--green-dark);
+}
+
+html[data-crm-theme] .activities-screen :is(.nav-item.active, .stat-icon.violet, .empty-icon) {
+  background-color: var(--green-pale);
+  color: var(--green-dark);
+}
+
+html[data-crm-theme] .activities-screen :is(.search-field input, .filter-select select, .page-size select, .form-field input, .form-field select, .form-field textarea) {
+  border-color: var(--green-pale);
+  background-color: var(--surface);
+  color: var(--crm-ink);
+}

@@ -6,7 +6,11 @@ import SettingsManager from './SettingsManager';
 
 vi.mock('../../../lib/api-client', () => ({ crmApiFetch: vi.fn() }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.removeItem('myr.crm.theme');
+  delete document.documentElement.dataset.crmTheme;
+});
 
 const apiFetchMock = vi.mocked(crmApiFetch);
 const initialSettings = {
@@ -53,5 +57,18 @@ describe('SettingsManager', () => {
 
     expect(await screen.findByLabelText('Workspace name')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  });
+
+  it('applies a selected CRM theme and can restore the default colors', async () => {
+    const user = userEvent.setup();
+    render(<SettingsManager />);
+
+    await user.click(screen.getByRole('button', { name: 'Teal' }));
+    expect(document.documentElement).toHaveAttribute('data-crm-theme', 'teal');
+    expect(window.localStorage.getItem('myr.crm.theme')).toBe('teal');
+
+    await user.click(screen.getByRole('button', { name: 'Use default color' }));
+    expect(document.documentElement).toHaveAttribute('data-crm-theme', 'default');
+    expect(window.localStorage.getItem('myr.crm.theme')).toBe('default');
   });
 });

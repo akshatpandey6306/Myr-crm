@@ -7,6 +7,14 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 export class OrganizationsController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
+  @Get("modules")
+  async listEnabledModules(@Req() request: HttpRequest) {
+    if (!request.userId || !request.orgId) {
+      throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated organization context required" });
+    }
+    return { data: { enabledModules: request.enabledModules ?? [] } };
+  }
+
   @SkipOrganizationContext()
   @Get()
   async list(@Req() request: HttpRequest) {

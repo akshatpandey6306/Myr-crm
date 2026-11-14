@@ -28,6 +28,7 @@ import { ControlPanelController } from "./control-panel/control-panel.controller
 import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
+import { AuthEmailService } from "./auth/email.service.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
@@ -41,6 +42,7 @@ import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
     AuditLogsService,
     AuditService,
     PlatformAdminGuard,
+    AuthEmailService,
   ],
 })
 export class AppModule {}

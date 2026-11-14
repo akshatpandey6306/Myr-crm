@@ -32,28 +32,36 @@ require a persisted session and an active organization membership.
 ## Authentication and account recovery
 
 The web app provides `/sign-in`, `/sign-up`, `/forgot-password`,
-`/reset-password`, and `/verify-email` for old verification links. Signup
-creates either a pending workspace Owner and workspace or an account-only
-teammate signup, without requiring email verification. The platform admin must
-approve a new workspace Owner before they can sign in. Teammates can sign in
-and request access with a workspace join code. The API
+`/reset-password`, and `/verify-email` for old verification links. A new
+workspace Owner enters a one-time code before their account and Owner membership
+become active; platform-admin signup approval is not required. The code is
+SHA-256 hashed in the existing email-token table and expires after 10 minutes.
+SMTP is required for workspace-owner signup and uses `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`. Signup codes are sent to the
+address supplied during signup. Password reset and CRM contact email delivery
+remain disabled. Teammates can still create an account, sign in, and request
+access with their workspace's unique join code; an Owner/Admin reviews those
+requests in Team & access. The API
 exposes `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
+`POST /api/v1/auth/signup/verify`, `POST /api/v1/auth/signup/resend-otp`,
 `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`,
 `POST /api/v1/auth/password-reset/request`,
 `POST /api/v1/auth/password-reset/confirm`,
 `POST /api/v1/auth/email-verification/resend`, and
 `POST /api/v1/auth/email-verification/confirm`. The verification endpoints
-remain for compatibility with links already sent, but verification is not
-required for signup, login, or protected API requests. The old
-`REQUIRE_EMAIL_VERIFICATION` setting is ignored.
+remain for compatibility with links already sent; signup-owner OTP verification
+is a separate account-activation step. The old `REQUIRE_EMAIL_VERIFICATION`
+setting is ignored. The platform control panel's remaining workspace-approval
+actions apply only to legacy signup records that have no outstanding OTP token;
+they cannot approve a new signup before code verification.
 
 Login sets a seven-day `myr_session` HttpOnly, SameSite=Lax cookie, with Secure
 enabled in production. The API stores only the SHA-256 session digest and accepts
 that cookie for protected requests; the raw session token is never returned in
 JSON or stored in browser storage. Unsafe requests with an Origin header must
 match `WEB_ORIGIN`, and production cookie-authenticated mutations require the
-expected Origin. Password reset by email is disabled because email delivery is
-off; the request endpoint returns an unavailable response. Existing reset
+expected Origin. Password reset by email remains disabled and the request
+endpoint returns an unavailable response. Existing reset
 tokens, if any, remain one-use values stored only as SHA-256 digests; successful
 resets revoke every existing session for that user.
 
@@ -101,14 +109,14 @@ workspace admins remain limited to their own organization.
 
 Authentication and join-request endpoints use PostgreSQL-backed rate-limit
 windows keyed by hashed IP and, where applicable, normalized email or user ID.
-Limits are 10 login attempts per 15 minutes; 5 signup attempts per hour per IP
-and email; and 5 workspace join requests per hour per user.
+Limits include 5 login and signup attempts per minute, 3 signup-code resends per
+hour, 10 signup-code verifications per hour, and 5 workspace join requests per
+hour per user.
 Expired buckets are periodically removed by the API.
 
-Email delivery is disabled. Signup does not require email verification. New
-workspace signups are held until a platform admin approves them; password reset
-by email is unavailable. CRM contact messages can be saved to the outbox but
-are not sent.
+SMTP is used only for workspace-owner signup verification codes. Password reset
+by email remains unavailable, and CRM contact messages can still be saved to
+the outbox but are not sent.
 
 `GET /api/v1/organizations` lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as
@@ -268,9 +276,10 @@ Organization Owners, Admins, and Sales Managers can view the organization's
 outbox. Sales Representatives can view and compose messages only for their own
 contacts; Read-only Users can view but cannot compose.
 
-Email delivery is disabled. CRM contact messages are saved with status
-`not_configured`; no mail service or SMTP configuration is required. Signup,
-workspace approval, and team access use in-app workflows.
+CRM contact messages are saved with status `not_configured` and are not sent;
+SMTP configuration is used only for workspace-owner signup codes. Signup uses
+OTP verification without platform-admin approval, while teammates use their
+workspace join code and Owner/Admin membership review.
 Message bodies are plain text and the recipient address always comes from the
 selected active contact. The UI shows each message's delivery state.
 
@@ -330,5 +339,52 @@ organization only when the user is a member of it. The list endpoint accepts
 update, and archive use
 `POST /api/v1/leads`, `PATCH /api/v1/leads/:id`, and
 `DELETE /api/v1/leads/:id`. Deletion archives a lead, and archived leads are
-excluded from the active list. Contacts use matching CRUD routes under
+excluded from the active list. Organization owners and admins can preview even distribution with
+`POST /api/v1/leads/distribute/preview`, then apply the reviewed assignments
+with `PATCH /api/v1/leads/distribute`. Preview accepts `scope` (`selected` or
+`all`), `assigneeUserIds`, and (for selected leads) `leadIds`; assignment
+targets must be active members of the selected organization. The legacy
+`POST /api/v1/leads/distribute` endpoint remains available for compatibility.
+`GET /api/v1/leads/assignment-settings` returns the assignment controls and
+eligible team members. Owners and admins can use `PATCH` on that route to turn
+on round-robin assignment for new leads and choose the eligible team members.
+`POST /api/v1/leads/import/validate` checks CSV rows and likely duplicates;
+`POST /api/v1/leads/import` creates reviewed rows without overwriting existing
+leads. CSV fields are `name`, `company`, `source`, and `status`; supported
+sources and statuses match the existing lead form. Missing source/status values
+default to `website`/`new`. `GET /api/v1/leads/export` accepts the supported
+list filters and exports only leads the caller may access in the active
+organization. CSV upload is limited to 5 MB in the web app, and imports should
+be split into batches small enough for the API request limit.
+Contacts use matching CRUD routes under
 `/api/v1/contacts`, with `q`, pagination, and sorting on the list route.
+
+## Team onboarding CSV
+
+Only active workspace Owners and Admins can use the team CSV endpoints:
+`POST /api/v1/organizations/members/import/validate`,
+`POST /api/v1/organizations/members/import`, and
+`GET /api/v1/organizations/members/export`. Employee CSV columns are `email`,
+`name`, and `password`; imports create active Sales Representative memberships
+only in the selected workspace. The API validates email/name/password,
+duplicate accounts, duplicate rows, and current plan/trial seat limits before
+creating the batch transactionally. Passwords are hashed using the existing
+scrypt format and are not returned in preview, result, or audit data. The
+current sign-in flow does not support a forced password reset, so admins should
+provide temporary passwords to employees through a secure channel and ask them
+to change them after sign-in. The web app limits CSV files to 5 MB and batches
+the JSON request payload to 80 KB to fit the API's existing body-size limit;
+large imports must be split into smaller files. Employee CSV exports contain
+work email, name, role, and join date, and are recorded in the workspace audit
+log. The existing individual onboarding and join-request approval flows remain
+available.
+
+## Platform audit export
+
+The Platform Admin control panel provides a CSV export of audit events using
+`GET /api/v1/control-panel/audit-logs/export`. Access is restricted by the
+existing Platform Admin guard; workspace Owners/Admins cannot read platform-
+wide audit data. The action filter is applied by the API, and the control panel
+also applies its current search filter to the downloaded rows. Exported fields
+include timestamp, actor, action, workspace/record, and redacted details;
+authentication secrets and password-like metadata are omitted.

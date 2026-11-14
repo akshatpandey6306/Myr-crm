@@ -1,3 +1,7 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import NotificationPopover from './components/NotificationPopover';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import ProfileMenu from './components/ProfileMenu';
@@ -5,6 +9,7 @@ import GlobalSearch from './components/GlobalSearch';
 import HelpPopover from './components/HelpPopover';
 import DashboardLivePanels from './components/DashboardLivePanels';
 import MobileNavigation from './components/MobileNavigation';
+import { crmApiFetch } from '../lib/api-client';
 
 const navigation = [
   { label: "Overview", icon: "grid", active: true },
@@ -58,13 +63,52 @@ function Icon({ name }: { name: string }) {
 }
 
 export default function Home() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+
+  useEffect(() => {
+    const savedPreference = window.localStorage.getItem('myr.sidebar.collapsed');
+    const collapsed = savedPreference === null
+      ? window.matchMedia('(min-width: 601px) and (max-width: 850px)').matches
+      : savedPreference === 'true';
+    setSidebarCollapsed(collapsed);
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      window.localStorage.setItem('myr.sidebar.collapsed', String(next));
+      return next;
+    });
+  }
+
+  async function signOut() {
+    setSigningOut(true);
+    setSignOutError('');
+    try {
+      const response = await crmApiFetch('/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error(`Sign out failed (HTTP ${response.status}). Please try again.`);
+      sessionStorage.removeItem('myr.session');
+      sessionStorage.removeItem('myr.user');
+      sessionStorage.removeItem('myr.organization');
+      window.location.assign('/sign-in');
+    } catch (caught) {
+      setSignOutError(caught instanceof Error ? caught.message : 'Could not sign out. Please try again.');
+      setSigningOut(false);
+    }
+  }
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
-        <a className="brand" href="#overview" aria-label="Myr CRM home">
-          <span className="brand-mark">m</span>
-          <span>myr<span className="brand-light">crm</span></span>
-        </a>
+        <div className="sidebar-brand-row">
+          <Link className="brand" href="/" aria-label="Myr CRM home">
+            <span className="brand-mark">m</span>
+            <span>myr<span className="brand-light">crm</span></span>
+          </Link>
+          <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span></button>
+        </div>
 
         <WorkspaceSwitcher />
 
@@ -106,8 +150,10 @@ export default function Home() {
             <GlobalSearch />
             <NotificationPopover />
             <div className="preview-chip"><span /> Live workspace data</div>
+            <button className="header-signout" type="button" onClick={() => void signOut()} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
           </div>
         </header>
+        {signOutError && <p className="module-permissions-error" role="alert">{signOutError}</p>}
 
         <div className="content">
           <section className="welcome-row">

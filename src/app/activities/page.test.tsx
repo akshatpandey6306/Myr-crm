@@ -224,10 +224,10 @@ describe("Activities & Tasks", () => {
     makeApi();
   });
 
-  it("provides a direct route back to the CRM overview", () => {
+  it("shows the activities and tasks heading", () => {
     render(<Home />);
 
-    expect(screen.getByRole("link", { name: "Back to CRM" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("heading", { name: "Activities & Tasks" })).toBeInTheDocument();
   });
 
   it("uses the CRM API for status filtering and search", async () => {

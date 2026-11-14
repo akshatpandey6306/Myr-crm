@@ -3,6 +3,7 @@
 .heading h1 { margin: 4px 0 5px; color: #293730; font-size: 24px; letter-spacing: -.7px; }
 .panel { overflow: hidden; border: 1px solid #e8ede8; border-radius: 12px; background: #fff; box-shadow: 0 4px 18px rgb(34 54 41 / 3%); }
 .panelHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #eff2ef; padding: 17px 19px; }
+.panelHeading > a, .panelHeading > button { flex: 0 0 auto; }
 .panelHeading h2 { margin: 0 0 4px; color: #35423b; font-size: 13px; }
 .panelHeading p { margin: 0; color: #8a968e; font-size: 10px; }
 .tableWrap { overflow-x: auto; }
@@ -14,6 +15,8 @@
 .table select, .inviteForm select, .inviteForm input { min-width: 150px; height: 34px; border: 1px solid #e5ebe5; border-radius: 6px; background: #fff; padding: 0 9px; color: #526057; font: inherit; font-size: 10px; }
 .roleBadge, .verified, .pending { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 8px; font-size: 9px; font-weight: 600; }
 .roleBadge { background: #eef4f0; color: #497259; }
+.moduleAccessButton { border: 0; border-radius: 6px; background: #f3f0ff; padding: 6px 8px; color: #604bc5; font: inherit; font-size: 9px; font-weight: 650; cursor: pointer; }
+.moduleAccessButton:hover { background: #eae5ff; }
 .verified { background: #edf7f0; color: #3f8054; }
 .pending { background: #fff5e8; color: #9a6a2a; }
 .actions { display: flex; align-items: center; gap: 9px; }
@@ -33,12 +36,28 @@
 .invitationList li span { color: #8a968e; font-size: 9px; }
 .empty { margin: 0; padding: 18px 19px; color: #8a968e; font-size: 10px; }
 .joinCode { margin: 0; padding: 17px 19px; color: #35423b; font-family: monospace; font-size: 13px; font-weight: 700; letter-spacing: .04em; overflow-wrap: anywhere; }
+.csvImport { display: grid; gap: 10px; padding: 16px 19px; }
+.csvImport > p { margin: 0; color: #7e8a82; font-size: 9px; }
+.csvImport code { border-radius: 4px; background: #f1f5f2; padding: 2px 4px; color: #566a5d; }
+.csvActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.csvActions > label { cursor: pointer; }
+.csvFilename { color: #87938b; font-size: 9px; }
+.csvPreview { display: grid; gap: 8px; }
+.csvPreview > strong { color: #526057; font-size: 10px; }
+.csvPreview .tableWrap { max-height: 260px; }
 .error, .notice { border-radius: 7px; padding: 11px 13px; font-size: 10px; line-height: 1.5; }
 .error { border: 1px solid #f1d4ce; background: #fff7f5; color: #a55143; }
 .notice { border: 1px solid #cfe7d7; background: #f4fbf6; color: #386e4d; }
+.moduleAccessEditor { display: grid; gap: 12px; border-top: 1px solid #eff2ef; padding: 16px 19px; }
+.moduleAccessEditor > div:first-child strong { color: #35423b; font-size: 11px; }
+.moduleAccessEditor > div:first-child p { margin: 4px 0 0; color: #8a968e; font-size: 9px; }
+.moduleAccessChoices { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.moduleAccessChoices label { display: flex; align-items: center; gap: 7px; color: #647169; font-size: 9px; }
+.moduleAccessChoices input { accent-color: #6856cc; }
+.moduleAccessActions { display: flex; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 700px) {
-  .table { min-width: 760px; }
+  .table { min-width: 920px; }
   .heading h1 { font-size: 21px; }
   .inviteForm { align-items: stretch; }
 }
@@ -47,8 +66,14 @@
   .heading { flex-direction: column; }
   .heading > button { width: 100%; }
   .panelHeading { align-items: flex-start; padding: 14px; }
+  .panelHeading > a, .panelHeading > button { width: 100%; }
   .inviteForm { padding: 14px; }
   .inviteForm > button { width: 100%; min-height: 44px; }
   .invitationList { padding-right: 14px; padding-left: 14px; }
   .invitationList li { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .csvImport { padding: 14px; }
+  .csvActions > * { width: 100%; }
+  .moduleAccessEditor { padding: 14px; }
+  .moduleAccessActions { flex-direction: column-reverse; }
+  .moduleAccessActions > button { width: 100%; }
 }

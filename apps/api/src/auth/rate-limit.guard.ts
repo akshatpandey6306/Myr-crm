@@ -13,6 +13,8 @@ type Policy = {
 const policies = new Map<string, Policy>([
   ["POST /auth/login", { limit: 5, windowSeconds: 60, emailKey: true }],
   ["POST /auth/signup", { limit: 5, windowSeconds: 60, emailKey: true }],
+  ["POST /auth/signup/resend-otp", { limit: 3, windowSeconds: 3600, emailKey: true }],
+  ["POST /auth/signup/verify", { limit: 10, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/password-reset/request", { limit: 5, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/password-reset/confirm", { limit: 10, windowSeconds: 3600 }],
   ["POST /billing/request-activation", { limit: 3, windowSeconds: 3600, userKey: true }],

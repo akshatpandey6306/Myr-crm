@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Fragment } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
+import { downloadCsv } from '../../lib/csv';
 
 type Organization = {
   id: string;
@@ -237,6 +238,8 @@ export default function ControlPanelPage() {
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loadingAuditLogs, setLoadingAuditLogs] = useState(true);
+  const [exportingAuditLogs, setExportingAuditLogs] = useState(false);
+  const [auditExportMessage, setAuditExportMessage] = useState('');
   const [onboardingMessage, setOnboardingMessage] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [expandedMembers, setExpandedMembers] = useState<Record<string, WorkspaceMember[] | undefined>>({});
@@ -742,6 +745,59 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function exportAuditLogs() {
+    setExportingAuditLogs(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (auditActionFilter !== 'all') params.set('action', auditActionFilter);
+      const response = await crmApiFetch(`/control-panel/audit-logs/export${params.size ? `?${params}` : ''}`);
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== 'object' || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
+        const apiError = typeof payload === 'object' && payload !== null && 'error' in payload
+          ? (payload as { error?: { message?: string } }).error
+          : undefined;
+        throw new Error(apiError?.message ?? 'Could not export the platform audit log.');
+      }
+      const exportRows = (payload as { data: {
+        createdAt: string;
+        actorName: string | null;
+        actorEmail: string | null;
+        action: string;
+        targetType: string;
+        targetId: string | null;
+        reason: string | null;
+        details: unknown;
+      }[] }).data;
+      const filteredRows = exportRows.filter((log) => !normalizedAuditSearch || [
+        log.action,
+        log.targetType,
+        log.targetId,
+        log.actorName,
+        log.actorEmail,
+        log.reason,
+        JSON.stringify(log.details),
+      ].some((value) => value?.toLowerCase().includes(normalizedAuditSearch)));
+      downloadCsv('platform-audit-log.csv',
+        ['timestamp', 'actor_name', 'actor_email', 'action', 'target_type', 'target_id', 'reason', 'details'],
+        filteredRows.map((log) => [
+          log.createdAt,
+          log.actorName ?? '',
+          log.actorEmail ?? '',
+          log.action,
+          log.targetType,
+          log.targetId ?? '',
+          log.reason ?? '',
+          JSON.stringify(log.details ?? ''),
+        ]));
+      setAuditExportMessage(`Exported ${filteredRows.length} platform audit entries.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not export the platform audit log.');
+    } finally {
+      setExportingAuditLogs(false);
+    }
+  }
+
 
 
   async function toggleMembers(organization: Organization) {
@@ -1017,7 +1073,7 @@ export default function ControlPanelPage() {
           <a href="#overview">Overview</a>
           <a href="#onboarding">Onboard workspace</a>
           <a href="#plans">Subscription plans</a>
-          <a href="#workspace-signups">Workspace approvals</a>
+          <a href="#workspace-signups">Legacy signup requests</a>
           <a href="#activation-requests">Activation requests</a>
           <a href="#workspaces">Workspaces</a>
           <a href="#audit-log">Audit log</a>
@@ -1026,8 +1082,8 @@ export default function ControlPanelPage() {
         <section id="workspace-signups" className="panel control-panel-table" aria-label="Workspace signup approvals">
           <div className="panel-heading">
             <div className="control-panel-section-title">
-              <h2>Workspace signup approvals</h2>
-              <p>{workspaceSignupRequests.length} awaiting platform-admin review</p>
+              <h2>Legacy workspace signup approvals</h2>
+              <p>{workspaceSignupRequests.length} older signups awaiting platform-admin review</p>
             </div>
           </div>
           {workspaceSignupRequests.length ? (
@@ -1516,9 +1572,14 @@ export default function ControlPanelPage() {
               <h2>Audit log</h2>
               <p>Showing the latest 50 platform administrator actions. Older entries are not included here.</p>
             </div>
-            <button suppressHydrationWarning className="control-panel-action" type="button" disabled={loadingAuditLogs} onClick={() => void loadAuditLogs()}>
-              {loadingAuditLogs ? 'Loading…' : 'Load audit log'}
-            </button>
+            <div className="control-panel-audit-actions">
+              <button suppressHydrationWarning className="control-panel-action" type="button" disabled={loadingAuditLogs} onClick={() => void loadAuditLogs()}>
+                {loadingAuditLogs ? 'Loading…' : 'Load audit log'}
+              </button>
+              <button suppressHydrationWarning className="control-panel-action" type="button" disabled={exportingAuditLogs} onClick={() => void exportAuditLogs()}>
+                {exportingAuditLogs ? 'Exporting…' : 'Export filtered CSV'}
+              </button>
+            </div>
           </div>
           {auditLogs.length > 0 && (
             <div className="control-panel-audit-filters" role="group" aria-label="Filter audit entries">
@@ -1541,6 +1602,7 @@ export default function ControlPanelPage() {
               <span className="control-panel-audit-count">{visibleAuditLogs.length} of {auditLogs.length} recent entries</span>
             </div>
           )}
+          {auditExportMessage && <p className="control-panel-empty" role="status">{auditExportMessage}</p>}
           {auditLogs.length > 0 && (
             <div className="table-scroll">
               <table>

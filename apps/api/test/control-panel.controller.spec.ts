@@ -65,6 +65,51 @@ describe("ControlPanelController", () => {
     assert.equal(result.data[0]?.subscription.status, "trial");
   });
 
+  it("exports filtered platform audit entries with sensitive metadata redacted", async () => {
+    let where: Record<string, unknown> | undefined;
+    let recordedAudit: Record<string, unknown> | undefined;
+    const auditLog = {
+      id: "log-a",
+      actorUserId: "admin-a",
+      actorEmail: null,
+      action: "organization.create",
+      targetType: "organization",
+      targetId: organizationId,
+      reason: "password=do-not-export",
+      metadata: {
+        workspaceName: "Acme",
+        password: "do-not-export",
+        nested: { sessionToken: "do-not-export", modules: ["leads"] },
+      },
+      createdAt: new Date("2026-11-12T10:00:00.000Z"),
+    };
+    const controller = createController({
+      platformAuditLog: {
+        count: async (args: { where: Record<string, unknown> }) => { where = args.where; return 1; },
+        findMany: async (args: { where: Record<string, unknown> }) => { where = args.where; return [auditLog]; },
+      },
+      user: {
+        findUnique: async () => ({ email: "admin@example.com" }),
+        findMany: async () => [{ id: "admin-a", name: "Platform Admin", email: "admin@example.com" }],
+      },
+    }, {
+      record: async (value: Record<string, unknown>) => { recordedAudit = value; },
+      list: async () => [],
+    });
+
+    const result = await controller.exportAuditLogs(actorRequest, "organization.create");
+
+    assert.deepEqual(where, { action: "organization.create" });
+    assert.equal(result.data[0]?.actorName, "Platform Admin");
+    assert.deepEqual(result.data[0]?.details, {
+      workspaceName: "Acme",
+      nested: { modules: ["leads"] },
+    });
+    assert.equal(result.data[0]?.reason, "password=[redacted]");
+    assert.equal(JSON.stringify(result).includes("do-not-export"), false);
+    assert.equal(recordedAudit?.action, "audit_log.export");
+  });
+
   it("lists pending trial and activation requests for platform review", async () => {
     const controller = createController({
       subscriptionActivationRequest: {
@@ -175,7 +220,14 @@ describe("ControlPanelController", () => {
     const controller = createController({
       membership: {
         findMany: async (args: Record<string, unknown>) => {
-          assert.deepEqual(args.where, { role: "OWNER", status: "PENDING", user: { status: "PENDING" } });
+          assert.deepEqual(args.where, {
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
           return [{
             userId,
             createdAt: new Date("2026-11-06T12:00:00.000Z"),
@@ -203,7 +255,18 @@ describe("ControlPanelController", () => {
     };
     const controller = createController({
       membership: {
-        findFirst: async () => ({ organizationId, userId }),
+        findFirst: async (args: Record<string, unknown>) => {
+          assert.deepEqual(args.where, {
+            userId,
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
+          return { organizationId, userId };
+        },
       },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     });
@@ -214,6 +277,31 @@ describe("ControlPanelController", () => {
       ["membership", { where: { organizationId, userId, role: "OWNER", status: "PENDING" }, data: { status: "ACTIVE" } }],
     ]);
     assert.equal(result.data.decision, "approve");
+  });
+
+  it("does not let platform admins approve a signup that is waiting for its OTP", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const controller = createController({
+      membership: {
+        findFirst: async (args: Record<string, unknown>) => {
+          assert.deepEqual(args.where, {
+            userId,
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
+          return null;
+        },
+      },
+    });
+
+    await assert.rejects(
+      controller.reviewWorkspaceSignup(userId, { decision: "approve" }, actorRequest),
+      NotFoundException,
+    );
   });
 
   it("searches workspace administrators without returning their account details", async () => {
