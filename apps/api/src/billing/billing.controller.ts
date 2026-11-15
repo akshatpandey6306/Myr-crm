@@ -5,7 +5,7 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { effectiveSubscriptionStatus } from "./subscription-status.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
+const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"];
 
 @SkipOrganizationContext()
 @Controller("billing")

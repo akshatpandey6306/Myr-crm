@@ -97,7 +97,7 @@ describe("BillingController", () => {
     assert.equal(updateData.subscriptionPlan, "growth");
     assert.equal(updateData.subscriptionStatus, "TRIAL");
     assert.equal(updateData.billingProvider, "trial");
-    assert.deepEqual(updateData.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "team", "settings"]);
+    assert.deepEqual(updateData.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"]);
     assert.equal(
       new Date(updateData.subscriptionEndsAt as Date).getTime() -
         new Date(updateData.subscriptionStartedAt as Date).getTime(),

@@ -165,7 +165,7 @@ describe("ControlPanelController", () => {
     const updatedOrganization = organizationUpdate?.data as Record<string, unknown>;
     assert.equal(updatedOrganization.subscriptionStatus, "TRIAL");
     assert.equal(updatedOrganization.billingProvider, "trial");
-    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "team", "settings"]);
+    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"]);
     assert.equal(
       new Date(updatedOrganization.subscriptionEndsAt as Date).getTime() -
         new Date(updatedOrganization.subscriptionStartedAt as Date).getTime(),

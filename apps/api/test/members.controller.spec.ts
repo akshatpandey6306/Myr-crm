@@ -116,7 +116,7 @@ describe("MembersController", () => {
     assert.equal(createdUser?.passwordHash?.toString().includes("temporary-pass-123"), false);
     assert.deepEqual(
       ((createdUser?.memberships as { create: { enabledModules: string[] } }).create.enabledModules),
-      ["leads", "contacts", "companies", "deals", "activities"],
+      ["leads", "contacts", "companies", "deals", "activities", "vendors"],
     );
     assert.equal("password" in result.data.rows[0]!, false);
   });

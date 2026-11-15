@@ -189,6 +189,7 @@ describe("OrgGuard", () => {
 
   it("enforces email, audit-log, and settings module access on their API routes", async () => {
     for (const [path, enabledModules] of [
+      ["/api/v1/vendors", ["leads"]],
       ["/api/v1/emails", ["leads"]],
       ["/api/v1/automations", ["leads"]],
       ["/api/v1/reports/summary", ["leads"]],
@@ -219,5 +220,29 @@ describe("OrgGuard", () => {
         (error.getResponse() as { code?: string }).code === "module_disabled",
       );
     }
+  });
+
+  it("allows vendors only when enabled for the verified workspace", async () => {
+    const request = {
+      headers: { "x-organization-id": "org-a" },
+      params: {},
+      path: "/api/v1/vendors/summary",
+      userId: "user-a",
+    };
+    const guard = new OrgGuard({
+      membership: { findFirst: async () => ({
+        organizationId: "org-a",
+        role: "OWNER",
+        organization: {
+          status: "ACTIVE",
+          subscriptionStatus: "ACTIVE",
+          subscriptionEndsAt: new Date(Date.now() + 60_000),
+          enabledModules: ["vendors"],
+        },
+      }) },
+    } as never);
+
+    assert.equal(await guard.canActivate(makeContext(request) as never), true);
+    assert.deepEqual(request.enabledModules, ["vendors"]);
   });
 });

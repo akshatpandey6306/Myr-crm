@@ -17,6 +17,7 @@ import MobileNavigation from '../components/MobileNavigation';
 import LeadsManager from '../features/leads/LeadsManager';
 import ContactsManager from '../features/contacts/ContactsManager';
 import CompaniesManager from '../features/companies/CompaniesManager';
+import VendorsManager from '../features/vendors/VendorsManager';
 import DealsManager from '../features/deals/DealsManager';
 import AutomationsManager from '../features/automation/AutomationsManager';
 import EmailsManager from '../features/email/EmailsManager';
@@ -24,11 +25,12 @@ import ReportsManager from '../features/reports/ReportsManager';
 import AuditLogsManager from '../features/audit-logs/AuditLogsManager';
 import SettingsManager from '../features/settings/SettingsManager';
 import MembersManager from '../features/team/MembersManager';
+import BillingManager from '../features/billing-invoicing/BillingManager';
 import { fetchEnabledModules } from '../../lib/module-permissions';
 
 const navigation = [
   ['Overview', '/'], ['Leads', '/leads'], ['Contacts', '/contacts'],
-  ['Companies', '/companies'], ['Deals', '/deals'], ['Activities', '/activities'],
+  ['Companies', '/companies'], ['Deals', '/deals'], ['Vendors', '/vendors'], ['Billing & Invoicing', '/billing-invoicing'], ['Activities', '/activities'],
   ['Automation', '/automation'], ['Email', '/email'], ['Reports', '/reports'],
   ['Audit Logs', '/audit-logs'], ['Settings', '/settings'], ['Team', '/team'],
 ];
@@ -49,6 +51,8 @@ const records: Record<string, { title: string; label: string; columns: string[];
   leads: { title: 'Leads', label: 'Manage prospects from first touch to qualified opportunity.', columns: ['NAME', 'COMPANY', 'SOURCE', 'STATUS', 'OWNER'], metric: '24 active leads', rows: [['Olivia Rhye', 'Northstar Labs', 'Website', 'Qualified', 'Maya Chen'], ['Phoenix Baker', 'Forma Studio', 'Referral', 'Contacted', 'Jordan Lee'], ['Lana Steiner', 'Greenway Co.', 'LinkedIn', 'New', 'Alex Morgan'], ['Demi Wilkinson', 'Kinfield Group', 'Website', 'In progress', 'Maya Chen']] },
   contacts: { title: 'Contacts', label: 'Keep every customer relationship organized in one place.', columns: ['CONTACT', 'COMPANY', 'EMAIL', 'PHONE', 'LAST CONTACT'], metric: '186 contacts', rows: [['Olivia Rhye', 'Northstar Labs', 'olivia@northstar.io', '+1 415 555 0134', 'Today'], ['Phoenix Baker', 'Forma Studio', 'phoenix@forma.co', '+1 415 555 0182', 'Yesterday'], ['Lana Steiner', 'Greenway Co.', 'lana@greenway.co', '+1 415 555 0117', 'Oct 24'], ['Demi Wilkinson', 'Kinfield Group', 'demi@kinfield.com', '+1 415 555 0164', 'Oct 22']] },
   companies: { title: 'Companies', label: 'See the organizations your team is building relationships with.', columns: ['COMPANY', 'INDUSTRY', 'CONTACTS', 'OPEN DEALS', 'OWNER'], metric: '68 companies', rows: [['Northstar Labs', 'Technology', '12', '3 · $64,000', 'Maya Chen'], ['Forma Studio', 'Design', '8', '2 · $32,500', 'Jordan Lee'], ['Greenway Co.', 'Sustainability', '6', '1 · $12,800', 'Alex Morgan'], ['Kinfield Group', 'Healthcare', '9', '2 · $28,200', 'Maya Chen']] },
+  vendors: { title: 'Vendors', label: 'Manage your vendors and suppliers efficiently.', columns: ['VENDOR', 'CATEGORY', 'CONTACT PERSON', 'EMAIL', 'STATUS', 'RATING'], metric: 'Vendor directory', rows: [] },
+  'billing-invoicing': { title: 'Billing & Invoicing', label: 'Create invoices, track payments, and keep customer balances in sync.', columns: [], metric: 'Financial workspace', rows: [] },
   deals: { title: 'Deals', label: 'Track opportunities and keep your pipeline moving forward.', columns: ['DEAL', 'COMPANY', 'STAGE', 'VALUE', 'CLOSE DATE'], metric: '48 open deals', rows: [['Enterprise plan', 'Northstar Labs', 'Proposal', '$24,000', 'Nov 14'], ['Annual subscription', 'Forma Studio', 'Negotiation', '$18,500', 'Nov 08'], ['Team workspace', 'Greenway Co.', 'Qualified', '$12,800', 'Nov 21'], ['CRM migration', 'Kinfield Group', 'Discovery', '$9,200', 'Dec 02']] },
   activities: { title: 'Activities', label: 'Calls, meetings, and follow-ups to keep every deal on track.', columns: ['ACTIVITY', 'RELATED TO', 'TYPE', 'DUE', 'STATUS'], metric: '5 due today', rows: [['Follow up with Olivia', 'Northstar Labs', 'Call', 'Today · 10:30 AM', 'Open'], ['Send proposal', 'Northstar Labs', 'Email', 'Today · 1:00 PM', 'Open'], ['Review Q4 pipeline', 'Workspace', 'Task', 'Tomorrow · 9:00 AM', 'In progress'], ['Product walkthrough', 'Forma Studio', 'Meeting', 'Oct 30 · 2:00 PM', 'Scheduled']] },
   automation: { title: 'Automation', label: 'Give your team more time for the conversations that matter.', columns: ['WORKFLOW', 'TRIGGER', 'LAST RUN', 'COMPLETED', 'STATUS'], metric: '3 active workflows', rows: [['New lead follow-up', 'Lead created', '12 min ago', '128', 'Active'], ['Deal stage alert', 'Stage changed', '1 hour ago', '42', 'Active'], ['Weekly pipeline digest', 'Every Monday', 'Yesterday', '16', 'Active'], ['Inactive contact reminder', 'No activity · 30d', 'Oct 25', '9', 'Paused']] },
@@ -73,7 +77,7 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   const { module: moduleName } = use(params);
   const router = useRouter();
   const data = records[moduleName] || records.leads;
-  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
+  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Vendors: 'vendor', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
   useEffect(() => {
     const savedPreference = window.localStorage.getItem('myr.sidebar.collapsed');
     const collapsed = savedPreference === null
@@ -185,7 +189,7 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
         <WorkspaceSwitcher />
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.filter(([label, href]) => label === 'Overview' || enabledModules?.includes(href.slice(1))).map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span></Link>)}
+          {navigation.filter(([label, href]) => label === 'Overview' || enabledModules?.includes(href.slice(1))).map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`} aria-current={label === data.title ? 'page' : undefined}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Vendors' ? '♧' : label === 'Billing & Invoicing' ? '$' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span></Link>)}
         </nav>
         <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✳</div><strong>Need a hand?</strong><p>Visit our help center to get started.</p><HelpPopover /></div><ProfileMenu /></div>
       </aside>
@@ -197,14 +201,14 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
           <div className="topbar-actions">
             <GlobalSearch />
             <NotificationPopover />
-            <span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals', 'Email', 'Reports', 'Audit Logs', 'Settings', 'Team'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span>
+            <span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Vendors', 'Billing & Invoicing', 'Deals', 'Email', 'Reports', 'Audit Logs', 'Settings', 'Team'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span>
             <button className="header-signout" type="button" onClick={() => void signOut()} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
             {signOutError && <span className="header-signout-error" role="alert">{signOutError}</span>}
           </div>
         </header>
         {moduleAccessError && <p className="module-permissions-error" role="alert">{moduleAccessError}</p>}
         <div className="content module-content">
-          {data.title === 'Automation' ? <AutomationsManager /> : data.title === 'Email' ? <EmailsManager /> : data.title === 'Reports' ? <ReportsManager /> : data.title === 'Audit Logs' ? <AuditLogsManager /> : data.title === 'Settings' ? <SettingsManager /> : data.title === 'Team' ? <MembersManager /> : data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
+          {data.title === 'Billing & Invoicing' ? <BillingManager /> : data.title === 'Automation' ? <AutomationsManager /> : data.title === 'Email' ? <EmailsManager /> : data.title === 'Reports' ? <ReportsManager /> : data.title === 'Audit Logs' ? <AuditLogsManager /> : data.title === 'Settings' ? <SettingsManager /> : data.title === 'Team' ? <MembersManager /> : data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Vendors' ? <VendorsManager /> : data.title === 'Deals' ? <DealsManager /> : <>
           <section className="welcome-row module-welcome"><div><p className="date-label">{data.title === 'Activities' ? 'WORKSPACE / ACTIVITY TIMELINE' : `WORKSPACE / ${data.title.toUpperCase()}`}</p><h1>{data.title === 'Activities' ? 'Activity timeline' : data.title}</h1><p className="welcome-copy">{data.title === 'Activities' ? 'Keep calls, meetings, and follow-ups organized across your workspace.' : data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
           {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
           <div className="demo-notice"><span className="notice-dot" /> This is a UI preview with sample data. Records are not connected to a database yet.</div>

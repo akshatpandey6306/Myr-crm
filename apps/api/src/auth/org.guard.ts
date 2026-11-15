@@ -56,12 +56,12 @@ export class OrgGuard implements CanActivate {
     request.orgId = membership.organizationId;
     request.organizationRole = membership.role.toLowerCase() as HttpRequest["organizationRole"];
     const workspaceModules = membership.organization.enabledModules ?? [
-      "leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings",
+      "leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings",
     ];
     const isAdministrator = membership.role === "OWNER" || membership.role === "ADMIN";
     const enabledModules = isAdministrator
       ? workspaceModules
-      : workspaceModules.filter((module) => module !== "team" && (membership.enabledModules ?? ["leads", "contacts", "companies", "deals", "activities"]).includes(module));
+      : workspaceModules.filter((module) => module !== "team" && (membership.enabledModules ?? ["leads", "contacts", "companies", "deals", "activities", "vendors"]).includes(module));
     request.enabledModules = enabledModules;
     const module = this.moduleForPath(path);
     if (module && !enabledModules.includes(module)) {
@@ -76,6 +76,8 @@ export class OrgGuard implements CanActivate {
       ["leads", ["/leads"]],
       ["contacts", ["/contacts"]],
       ["companies", ["/companies"]],
+      ["vendors", ["/vendors"]],
+      ["billing-invoicing", ["/invoicing"]],
       ["deals", ["/deals", "/pipelines"]],
       ["activities", ["/activities"]],
       ["team", ["/organizations/members", "/organizations/membership-requests", "/organizations/join-code"]],

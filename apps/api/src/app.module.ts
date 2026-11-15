@@ -29,10 +29,12 @@ import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
 import { AuthEmailService } from "./auth/email.service.js";
+import { VendorsController } from "./vendors/vendors.controller.js";
+import { InvoicingController } from "./invoicing/invoicing.controller.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
-  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController],
+  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, VendorsController, InvoicingController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: OrgGuard },

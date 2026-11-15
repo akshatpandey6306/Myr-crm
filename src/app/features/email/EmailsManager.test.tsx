@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { crmApiFetch } from "../../../lib/api-client";
@@ -54,9 +54,9 @@ describe("EmailsManager", () => {
     await user.selectOptions(screen.getByLabelText("To"), "contact-1");
     await user.type(screen.getByLabelText("Subject"), "Follow-up");
     await user.type(screen.getByLabelText("Message"), "Thanks for your time.");
-    await user.click(screen.getByRole("button", { name: "Send email" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("No email was sent");
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved to the outbox. Email delivery is disabled.");
     expect(apiFetchMock).toHaveBeenCalledWith("/emails", expect.objectContaining({
       method: "POST",
       body: JSON.stringify({
@@ -85,9 +85,9 @@ describe("EmailsManager", () => {
     await user.selectOptions(screen.getByLabelText("To"), "contact-1");
     await user.type(screen.getByLabelText("Subject"), "Follow-up");
     await user.type(screen.getByLabelText("Message"), "Thanks for your time.");
-    await user.click(screen.getByRole("button", { name: "Send email" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Email service unavailable");
-    await waitFor(() => expect(screen.queryByText(/No email was sent/)).not.toBeInTheDocument());
+    expect(screen.queryByText("Saved to the outbox. Email delivery is disabled.")).not.toBeInTheDocument();
   });
 });

@@ -11,6 +11,8 @@ const items = [
   { label: 'Contacts', href: '/contacts', icon: '◎' },
   { label: 'Companies', href: '/companies', icon: '▦' },
   { label: 'Deals', href: '/deals', icon: '◇' },
+  { label: 'Vendors', href: '/vendors', icon: '♧' },
+  { label: 'Billing & Invoicing', href: '/billing-invoicing', icon: '$' },
   { label: 'Activities', href: '/activities', icon: '◷' },
   { label: 'Automation', href: '/automation', icon: '✳' },
   { label: 'Email', href: '/email', icon: '✉' },

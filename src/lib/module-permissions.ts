@@ -4,6 +4,8 @@ const availableModules = new Set([
   'leads',
   'contacts',
   'companies',
+  'vendors',
+  'billing-invoicing',
   'deals',
   'activities',
   'team',

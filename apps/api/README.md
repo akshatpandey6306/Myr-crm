@@ -98,7 +98,7 @@ Apply database changes with `npm run db:deploy` before starting an API version
 that includes subscription activation requests.
 
 Platform admins can control workspace access to Leads, Contacts, Companies,
-Deals, Activities, Team, Automation, Email, Reports, Audit Logs, and Settings
+Vendors, Deals, Activities, Team, Automation, Email, Reports, Audit Logs, and Settings
 from each workspace's module-access controls in `/control-panel`. Module access
 is enforced by the API as well as reflected in workspace navigation. The
 platform control panel also lists each workspace Owner and active team members,
@@ -145,6 +145,13 @@ updated with `PATCH /api/v1/companies/:id` and archived with
 `industry`, `website`, and `phone`; ownership and organization are derived from
 the authenticated request. As with leads and contacts, company records are
 restricted to the verified organization and representative-owned records.
+
+Vendors use tenant-scoped CRUD routes at `/api/v1/vendors`. The list supports
+search, status/category/date filters, pagination, and sorting; summary counts
+and categories are also scoped to the verified organization. Vendor fields
+include name, category, contact details, status, rating, and review count.
+Organization and owner IDs are always derived from the authenticated request,
+and workspace module access is enforced by the API.
 
 ## Deals and pipelines
 

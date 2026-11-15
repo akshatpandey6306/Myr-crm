@@ -32,9 +32,9 @@ type EmployeeImportDatabase = Pick<Prisma.TransactionClient, "organization" | "s
 
 const administrators = new Set(["owner", "admin"]);
 const assignmentManagers = new Set(["owner", "admin", "sales_manager"]);
-const employeeModules = ["leads", "contacts", "companies", "deals", "activities"];
+const employeeModules = ["leads", "contacts", "companies", "deals", "activities", "vendors"];
 const configurableModules = new Set([
-  "leads", "contacts", "companies", "deals", "activities", "automation", "email", "reports", "audit-logs", "settings",
+  "leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "automation", "email", "reports", "audit-logs", "settings",
 ]);
 const assignableRoles: Record<string, "ADMIN" | "SALES_MANAGER" | "SALES_REP" | "READ_ONLY"> = {
   admin: "ADMIN",

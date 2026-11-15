@@ -15,7 +15,7 @@ import { crmApiFetch } from '../../lib/api-client';
 
 const navigation = [
   ['Overview', '/', '◫'], ['Leads', '/leads', '♙'], ['Contacts', '/contacts', '◎'],
-  ['Companies', '/companies', '▦'], ['Deals', '/deals', '◇'], ['Activities', '/activities', '◷'],
+  ['Companies', '/companies', '▦'], ['Deals', '/deals', '◇'], ['Vendors', '/vendors', '♧'], ['Billing & Invoicing', '/billing-invoicing', '$'], ['Activities', '/activities', '◷'],
   ['Team', '/team', '♙'], ['Automation', '/automation', '✳'], ['Email', '/email', '✉'],
   ['Reports', '/reports', '⌁'], ['Audit Logs', '/audit-logs', '◉'], ['Settings', '/settings', '⚙'],
 ];

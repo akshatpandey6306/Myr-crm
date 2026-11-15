@@ -22,7 +22,7 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard.js";
 import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 
-const MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
+const MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -40,8 +40,8 @@ type PlanDraft = {
   isActive: boolean;
 };
 
-const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
-const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
+const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"];
+const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"];
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
