@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import WorkspaceSwitcher from '../components/WorkspaceSwitcher';
 import ProfileMenu from '../components/ProfileMenu';
@@ -16,6 +17,7 @@ import MobileNavigation from '../components/MobileNavigation';
 import LeadsManager from '../features/leads/LeadsManager';
 import ContactsManager from '../features/contacts/ContactsManager';
 import CompaniesManager from '../features/companies/CompaniesManager';
+import VendorsManager from '../features/vendors/VendorsManager';
 import DealsManager from '../features/deals/DealsManager';
 import AutomationsManager from '../features/automation/AutomationsManager';
 import EmailsManager from '../features/email/EmailsManager';
@@ -23,10 +25,12 @@ import ReportsManager from '../features/reports/ReportsManager';
 import AuditLogsManager from '../features/audit-logs/AuditLogsManager';
 import SettingsManager from '../features/settings/SettingsManager';
 import MembersManager from '../features/team/MembersManager';
+import BillingManager from '../features/billing-invoicing/BillingManager';
+import { fetchEnabledModules } from '../../lib/module-permissions';
 
 const navigation = [
   ['Overview', '/'], ['Leads', '/leads'], ['Contacts', '/contacts'],
-  ['Companies', '/companies'], ['Deals', '/deals'], ['Activities', '/activities'],
+  ['Companies', '/companies'], ['Deals', '/deals'], ['Vendors', '/vendors'], ['Billing & Invoicing', '/billing-invoicing'], ['Activities', '/activities'],
   ['Automation', '/automation'], ['Email', '/email'], ['Reports', '/reports'],
   ['Audit Logs', '/audit-logs'], ['Settings', '/settings'], ['Team', '/team'],
 ];
@@ -47,6 +51,8 @@ const records: Record<string, { title: string; label: string; columns: string[];
   leads: { title: 'Leads', label: 'Manage prospects from first touch to qualified opportunity.', columns: ['NAME', 'COMPANY', 'SOURCE', 'STATUS', 'OWNER'], metric: '24 active leads', rows: [['Olivia Rhye', 'Northstar Labs', 'Website', 'Qualified', 'Maya Chen'], ['Phoenix Baker', 'Forma Studio', 'Referral', 'Contacted', 'Jordan Lee'], ['Lana Steiner', 'Greenway Co.', 'LinkedIn', 'New', 'Alex Morgan'], ['Demi Wilkinson', 'Kinfield Group', 'Website', 'In progress', 'Maya Chen']] },
   contacts: { title: 'Contacts', label: 'Keep every customer relationship organized in one place.', columns: ['CONTACT', 'COMPANY', 'EMAIL', 'PHONE', 'LAST CONTACT'], metric: '186 contacts', rows: [['Olivia Rhye', 'Northstar Labs', 'olivia@northstar.io', '+1 415 555 0134', 'Today'], ['Phoenix Baker', 'Forma Studio', 'phoenix@forma.co', '+1 415 555 0182', 'Yesterday'], ['Lana Steiner', 'Greenway Co.', 'lana@greenway.co', '+1 415 555 0117', 'Oct 24'], ['Demi Wilkinson', 'Kinfield Group', 'demi@kinfield.com', '+1 415 555 0164', 'Oct 22']] },
   companies: { title: 'Companies', label: 'See the organizations your team is building relationships with.', columns: ['COMPANY', 'INDUSTRY', 'CONTACTS', 'OPEN DEALS', 'OWNER'], metric: '68 companies', rows: [['Northstar Labs', 'Technology', '12', '3 · $64,000', 'Maya Chen'], ['Forma Studio', 'Design', '8', '2 · $32,500', 'Jordan Lee'], ['Greenway Co.', 'Sustainability', '6', '1 · $12,800', 'Alex Morgan'], ['Kinfield Group', 'Healthcare', '9', '2 · $28,200', 'Maya Chen']] },
+  vendors: { title: 'Vendors', label: 'Manage your vendors and suppliers efficiently.', columns: ['VENDOR', 'CATEGORY', 'CONTACT PERSON', 'EMAIL', 'STATUS', 'RATING'], metric: 'Vendor directory', rows: [] },
+  'billing-invoicing': { title: 'Billing & Invoicing', label: 'Create invoices, track payments, and keep customer balances in sync.', columns: [], metric: 'Financial workspace', rows: [] },
   deals: { title: 'Deals', label: 'Track opportunities and keep your pipeline moving forward.', columns: ['DEAL', 'COMPANY', 'STAGE', 'VALUE', 'CLOSE DATE'], metric: '48 open deals', rows: [['Enterprise plan', 'Northstar Labs', 'Proposal', '$24,000', 'Nov 14'], ['Annual subscription', 'Forma Studio', 'Negotiation', '$18,500', 'Nov 08'], ['Team workspace', 'Greenway Co.', 'Qualified', '$12,800', 'Nov 21'], ['CRM migration', 'Kinfield Group', 'Discovery', '$9,200', 'Dec 02']] },
   activities: { title: 'Activities', label: 'Calls, meetings, and follow-ups to keep every deal on track.', columns: ['ACTIVITY', 'RELATED TO', 'TYPE', 'DUE', 'STATUS'], metric: '5 due today', rows: [['Follow up with Olivia', 'Northstar Labs', 'Call', 'Today · 10:30 AM', 'Open'], ['Send proposal', 'Northstar Labs', 'Email', 'Today · 1:00 PM', 'Open'], ['Review Q4 pipeline', 'Workspace', 'Task', 'Tomorrow · 9:00 AM', 'In progress'], ['Product walkthrough', 'Forma Studio', 'Meeting', 'Oct 30 · 2:00 PM', 'Scheduled']] },
   automation: { title: 'Automation', label: 'Give your team more time for the conversations that matter.', columns: ['WORKFLOW', 'TRIGGER', 'LAST RUN', 'COMPLETED', 'STATUS'], metric: '3 active workflows', rows: [['New lead follow-up', 'Lead created', '12 min ago', '128', 'Active'], ['Deal stage alert', 'Stage changed', '1 hour ago', '42', 'Active'], ['Weekly pipeline digest', 'Every Monday', 'Yesterday', '16', 'Active'], ['Inactive contact reminder', 'No activity · 30d', 'Oct 25', '9', 'Paused']] },
@@ -63,13 +69,55 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
   const [showCreate, setShowCreate] = useState(false);
   const [dealView, setDealView] = useState<'board' | 'table' | 'radar'>('board');
   const [moduleRows, setModuleRows] = useState<string[][]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const [enabledModules, setEnabledModules] = useState<string[] | null>(null);
+  const [moduleAccessError, setModuleAccessError] = useState('');
   const { module: moduleName } = use(params);
+  const router = useRouter();
   const data = records[moduleName] || records.leads;
-  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
+  const singular = { Leads: 'lead', Contacts: 'contact', Companies: 'company', Vendors: 'vendor', Deals: 'deal', Activities: 'activity', Automation: 'workflow', Email: 'email', Reports: 'report', 'Audit Logs': 'event', Settings: 'setting', Team: 'member' }[data.title] || 'record';
+  useEffect(() => {
+    const savedPreference = window.localStorage.getItem('myr.sidebar.collapsed');
+    const collapsed = savedPreference === null
+      ? window.matchMedia('(min-width: 601px) and (max-width: 850px)').matches
+      : savedPreference === 'true';
+    setSidebarCollapsed(collapsed);
+  }, []);
   useEffect(() => {
     const saved = sessionStorage.getItem(`myr.preview.${moduleName}`);
     setModuleRows(saved ? JSON.parse(saved) as string[][] : data.rows);
   }, [data, moduleName]);
+  useEffect(() => {
+    let controller = new AbortController();
+    const loadModules = () => {
+      controller.abort();
+      const requestController = new AbortController();
+      controller = requestController;
+      setEnabledModules(null);
+      setModuleAccessError('');
+      void fetchEnabledModules(requestController.signal)
+        .then(setEnabledModules)
+        .catch((error: unknown) => {
+          if (!requestController.signal.aborted) {
+            setEnabledModules([]);
+            setModuleAccessError(error instanceof Error ? error.message : 'Could not load workspace module access.');
+          }
+        });
+    };
+    loadModules();
+    window.addEventListener('myr:organization-changed', loadModules);
+    return () => {
+      controller.abort();
+      window.removeEventListener('myr:organization-changed', loadModules);
+    };
+  }, []);
+  useEffect(() => {
+    if (enabledModules === null || moduleAccessError || enabledModules.includes(moduleName)) return;
+    const firstAvailable = navigation.find(([, href]) => enabledModules.includes(href.slice(1)));
+    router.replace(firstAvailable?.[1] ?? '/');
+  }, [enabledModules, moduleAccessError, moduleName, router]);
   const rows = useMemo(() => moduleRows.filter((row) => row.join(' ').toLowerCase().includes(query.toLowerCase())), [moduleRows, query]);
   const moduleChart = useMemo(() => {
     const config = moduleCharts[data.title];
@@ -107,23 +155,61 @@ export default function ModulePage({ params }: { params: Promise<{ module: strin
     return `$${value.toLocaleString('en-US')}`;
   }
 
+  function toggleSidebar() {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      window.localStorage.setItem('myr.sidebar.collapsed', String(next));
+      return next;
+    });
+  }
+
+  async function signOut() {
+    setSigningOut(true);
+    setSignOutError('');
+    try {
+      const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`Sign out failed (HTTP ${response.status}). Please try again.`);
+      sessionStorage.removeItem('myr.session');
+      sessionStorage.removeItem('myr.user');
+      sessionStorage.removeItem('myr.organization');
+      window.location.assign('/sign-in');
+    } catch (caught) {
+      setSignOutError(caught instanceof Error ? caught.message : 'Could not sign out. Please try again.');
+      setSigningOut(false);
+    }
+  }
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Myr CRM home"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+        <div className="sidebar-brand-row">
+          <Link className="brand" href="/" aria-label="Myr CRM home"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+          <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span></button>
+        </div>
         <WorkspaceSwitcher />
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span>{label === 'Leads' && <span className="nav-count">24</span>}{label === 'Activities' && <span className="nav-count">5</span>}</Link>)}
+          {navigation.filter(([label, href]) => label === 'Overview' || enabledModules?.includes(href.slice(1))).map(([label, href]) => <Link key={label} href={href} className={`nav-item${label === data.title ? ' active' : ''}`} aria-current={label === data.title ? 'page' : undefined}><span className="module-nav-icon" aria-hidden="true">{label === 'Overview' ? '◫' : label === 'Leads' || label === 'Team' ? '♙' : label === 'Contacts' ? '◎' : label === 'Companies' ? '▦' : label === 'Deals' ? '◇' : label === 'Vendors' ? '♧' : label === 'Billing & Invoicing' ? '$' : label === 'Activities' ? '◷' : label === 'Automation' ? '✳' : label === 'Email' ? '✉' : '⌁'}</span><span>{label}</span></Link>)}
         </nav>
         <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✳</div><strong>Need a hand?</strong><p>Visit our help center to get started.</p><HelpPopover /></div><ProfileMenu /></div>
       </aside>
 
       <section className="main-panel">
-        <header className="topbar"><MobileNavigation active={data.title} /><div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div><div className="topbar-actions"><GlobalSearch /><NotificationPopover /><span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Deals', 'Email', 'Reports', 'Audit Logs', 'Settings', 'Team'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span></div></header>
+        <header className="topbar">
+          <MobileNavigation active={data.title} enabledModules={enabledModules ?? []} />
+          <div className="breadcrumbs"><span>Workspace</span><span aria-hidden="true">›</span><strong>{data.title}</strong></div>
+          <div className="topbar-actions">
+            <GlobalSearch />
+            <NotificationPopover />
+            <span className="preview-chip"><span />{['Leads', 'Contacts', 'Companies', 'Vendors', 'Billing & Invoicing', 'Deals', 'Email', 'Reports', 'Audit Logs', 'Settings', 'Team'].includes(data.title) ? 'Live workspace' : 'Preview data'}</span>
+            <button className="header-signout" type="button" onClick={() => void signOut()} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
+            {signOutError && <span className="header-signout-error" role="alert">{signOutError}</span>}
+          </div>
+        </header>
+        {moduleAccessError && <p className="module-permissions-error" role="alert">{moduleAccessError}</p>}
         <div className="content module-content">
-          {data.title === 'Automation' ? <AutomationsManager /> : data.title === 'Email' ? <EmailsManager /> : data.title === 'Reports' ? <ReportsManager /> : data.title === 'Audit Logs' ? <AuditLogsManager /> : data.title === 'Settings' ? <SettingsManager /> : data.title === 'Team' ? <MembersManager /> : data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Deals' ? <DealsManager /> : <>
-          <section className="welcome-row module-welcome"><div><p className="date-label">WORKSPACE / {data.title.toUpperCase()}</p><h1>{data.title}</h1><p className="welcome-copy">{data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
+          {data.title === 'Billing & Invoicing' ? <BillingManager /> : data.title === 'Automation' ? <AutomationsManager /> : data.title === 'Email' ? <EmailsManager /> : data.title === 'Reports' ? <ReportsManager /> : data.title === 'Audit Logs' ? <AuditLogsManager /> : data.title === 'Settings' ? <SettingsManager /> : data.title === 'Team' ? <MembersManager /> : data.title === 'Leads' ? <LeadsManager /> : data.title === 'Contacts' ? <ContactsManager /> : data.title === 'Companies' ? <CompaniesManager /> : data.title === 'Vendors' ? <VendorsManager /> : data.title === 'Deals' ? <DealsManager /> : <>
+          <section className="welcome-row module-welcome"><div><p className="date-label">{data.title === 'Activities' ? 'WORKSPACE / ACTIVITY TIMELINE' : `WORKSPACE / ${data.title.toUpperCase()}`}</p><h1>{data.title === 'Activities' ? 'Activity timeline' : data.title}</h1><p className="welcome-copy">{data.title === 'Activities' ? 'Keep calls, meetings, and follow-ups organized across your workspace.' : data.label}</p></div><button className="button button-primary" type="button" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Add {singular}</button></section>
           {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
           <div className="demo-notice"><span className="notice-dot" /> This is a UI preview with sample data. Records are not connected to a database yet.</div>
           <section className="metric-grid module-metrics" aria-label={`${data.title} summary`}><article className="metric-card"><div className="metric-top"><span>Workspace total</span><span className="metric-icon mint">↗</span></div><div className="metric-value">{data.metric.split(' ')[0]}</div><div className="metric-foot"><span>{data.metric.replace(data.metric.split(' ')[0], '').trim()}</span><span>· Sample data</span></div></article><article className="metric-card"><div className="metric-top"><span>Last updated</span><span className="metric-icon lavender">◷</span></div><div className="metric-value">Today</div><div className="metric-foot"><span>Preview workspace</span></div></article><article className="metric-card module-summary-card"><div className="metric-top"><span>Showing</span><span className="metric-icon peach">⌕</span></div><div className="metric-value">{rows.length} <small>of {data.metric.split(' ')[0]}</small></div><div className="metric-foot"><span>{query ? 'Matching your search' : 'Across this workspace'}</span></div></article></section>

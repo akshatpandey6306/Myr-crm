@@ -7,10 +7,12 @@ export type HttpRequest = {
   userId?: string;
   token?: string;
   orgId?: string;
+  enabledModules?: string[];
   organizationRole?: "owner" | "admin" | "sales_manager" | "sales_rep" | "read_only";
 };
 
 export type HttpResponse = {
   status(code: number): HttpResponse;
   json(body: unknown): void;
+  setHeader(name: string, value: string | string[]): void;
 };

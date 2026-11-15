@@ -457,68 +457,7 @@ export default function Home() {
 
   return (
     <div className="activities-screen">
-      <div className="app-shell">
-      <aside className="sidebar">
-        <a className="brand" href="#" aria-label="Myr CRM home">
-          <span className="brand-mark">m</span>
-          <span>myr<span className="brand-light">crm</span></span>
-        </a>
-
-        <div className="workspace-label">WORKSPACE</div>
-        <button className="workspace-switcher" type="button">
-          <span className="workspace-avatar">A</span>
-          <span className="workspace-name">Active organization</span>
-          <span className="switcher-chevron">⌄</span>
-        </button>
-
-        <nav className="main-nav" aria-label="Main navigation">
-          <a className="nav-item active" href="#tasks" aria-current="page">
-            <Icon name="check" />
-            <span>Activities &amp; Tasks</span>
-            <span className="nav-count">{openCount}</span>
-          </a>
-        </nav>
-
-        <div className="sidebar-bottom">
-          <div className="help-card">
-            <div className="help-icon">?</div>
-            <div>
-              <strong>Need a hand?</strong>
-              <span>Visit the help center</span>
-            </div>
-            <Icon name="chevron" size={16} />
-          </div>
-          <button className="profile" type="button">
-            <span className="profile-avatar">CRM</span>
-            <span className="profile-copy">
-              <strong>Signed-in member</strong>
-              <small>CRM workspace</small>
-            </span>
-            <span className="profile-menu">•••</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="main-content" id="tasks">
-        <header className="topbar">
-          <div className="breadcrumbs">
-            <span>Workspace</span>
-            <Icon name="chevron" size={14} />
-            <strong>Activities &amp; Tasks</strong>
-          </div>
-          <div className="topbar-actions">
-            <span className="demo-badge"><span /> CRM data</span>
-            <button
-              className="avatar-small"
-              type="button"
-              aria-label="Signed-in member profile"
-            >
-              CRM
-            </button>
-          </div>
-        </header>
-
-        <div className="page-wrap">
+      <div className="page-wrap" id="tasks">
           <section className="page-heading">
             <div>
               <div className="eyebrow">YOUR WORK, AT A GLANCE</div>
@@ -826,8 +765,7 @@ export default function Home() {
           <p className="data-notice">
             Activities are loaded from your selected organization. Access and changes are enforced by the CRM API.
           </p>
-        </div>
-      </main>
+      </div>
 
       {isCreateOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => {
@@ -954,7 +892,6 @@ export default function Home() {
           </section>
         </div>
       )}
-      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
 import { crmApiFetch } from '../../../lib/api-client';
+import { CRM_THEMES, readCrmTheme, setCrmTheme, type CrmTheme } from '../../../lib/crm-theme';
 import styles from './SettingsManager.module.css';
 
 type Settings = {
@@ -36,6 +37,8 @@ export default function SettingsManager() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [theme, setTheme] = useState<CrmTheme>('default');
+  const [themeError, setThemeError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,6 +70,20 @@ export default function SettingsManager() {
     void load();
     return () => { active = false; controller.abort(); };
   }, [refresh]);
+
+  useEffect(() => {
+    setTheme(readCrmTheme());
+  }, []);
+
+  function chooseTheme(value: CrmTheme) {
+    setThemeError('');
+    try {
+      setCrmTheme(value);
+      setTheme(value);
+    } catch {
+      setThemeError('Could not save your appearance preference. Check browser storage and try again.');
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -104,5 +121,29 @@ export default function SettingsManager() {
       <label className={styles.field}>Week starts on<select value={weekStartsOn} onChange={(event) => setWeekStartsOn(Number(event.target.value))} disabled={loading || busy || !editable}>{weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>
       <footer className={styles.formFooter}><span>{settings?.updatedAt ? `Last saved ${new Date(settings.updatedAt).toLocaleString()}` : 'Default preferences'}</span><button className="button button-primary" type="submit" disabled={loading || busy || !editable}>{busy ? 'Saving...' : 'Save settings'}</button></footer>
     </form>
+    <section className={styles.appearance} aria-labelledby="appearance-heading">
+      <div className={styles.appearanceHeading}>
+        <div><h2 id="appearance-heading">CRM colors</h2><p>Choose an appearance for this browser. It applies across CRM pages and does not change other team members’ settings.</p></div>
+        <button className="button button-secondary" type="button" onClick={() => chooseTheme('default')}>Use default color</button>
+      </div>
+      <div className={styles.themeGrid} role="group" aria-label="CRM color themes">
+        {CRM_THEMES.map((option) => (
+          <button
+            className={`${styles.themeOption}${theme === option.id ? ` ${styles.themeSelected}` : ''}`}
+            type="button"
+            key={option.id}
+            aria-pressed={theme === option.id}
+            onClick={() => chooseTheme(option.id)}
+          >
+            <span className={styles.themeSwatches} aria-hidden="true">
+              {option.colors.map((color) => <i key={color} style={{ backgroundColor: color }} />)}
+            </span>
+            <span>{option.name}</span>
+            {theme === option.id && <span className={styles.themeCheck} aria-hidden="true">✓</span>}
+          </button>
+        ))}
+      </div>
+      {themeError && <p className={styles.themeError} role="alert">{themeError}</p>}
+    </section>
   </section>;
 }

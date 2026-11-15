@@ -8,8 +8,9 @@ implementation change.
 ## Product and architecture
 
 - Build a secure, responsive CRM for multiple organizations in one application.
-- Use a modular monolith. Keep the Next.js frontend and NestJS API independently
-  runnable; add a separate worker only when queued work is introduced.
+- Use a strangler migration. The Next.js frontend and NestJS CRM API remain
+  independently runnable. Do not describe the remaining API modules as
+  independent services until their runtime and data ownership are extracted.
 - Required stack: Next.js App Router, React, strict TypeScript, NestJS REST API
   under `/api/v1`, Prisma, PostgreSQL, and npm workspaces. Add Redis/BullMQ,
   email integration, and other infrastructure when their modules require them.
@@ -74,8 +75,12 @@ npm run db:seed
 ```
 
 Start the web app with `npm run dev` and the API with `npm run api:dev` in
-separate terminals. The web app proxies same-origin `/api/v1` requests to the
-API server; set `API_PROXY_URL` when the API is not at
+separate terminals. Workspace-owner signup requires a one-time code delivered
+to the email address used at signup. Configure `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM` in `.env`.
+Teammates create accounts, request workspace access with a unique join code,
+and wait for an Owner/Admin to approve them. The web app proxies same-origin
+`/api/v1` requests to the API server; set `API_PROXY_URL` when the API is not at
 `http://localhost:4000/api/v1`. Useful checks:
 
 ```sh
@@ -95,30 +100,45 @@ in this workspace and is excluded from Git.
 
 ## Current implementation status
 
-The repository is in an early MVP foundation stage, not production-ready.
+The repository is in an incremental strangler migration and is not
+production-ready. See
+[`docs/architecture/service-decomposition.md`](docs/architecture/service-decomposition.md)
+for the current service map, ownership, local workflow, and remaining migration.
 
 - The web UI has dashboard and CRM module pages, sign-in/sign-up and account
   recovery forms, and a Team & access screen.
 - The workspace dashboard now loads tenant-scoped lead, deal, and activity
   summaries and live deal/activity records through the authenticated API. It no
   longer presents hard-coded preview metrics as real CRM data.
-- The NestJS API has health, authentication, organizations, leads, contacts,
-  companies, deals, pipelines, activities, automation, and email routes.
+- The NestJS API is the authenticated CRM gateway and still owns identity,
+  organizations, memberships, CRM records, activities, automation, reports,
+  notifications, audit logs, settings, billing, and the persisted email outbox.
+- New workspace-owner signups require an emailed one-time code before their
+  account and owner membership become active; they do not require platform-admin
+  signup approval. SMTP settings are required for delivery. Teammates continue
+  to request access using their workspace's unique join code; Owners/Admins
+  review requests in Team & access, with in-app notifications and member
+  details.
 - PostgreSQL/Prisma persistence covers users, organizations, memberships,
-  expiring sessions, one-time email tokens, invitations, and shared
-  rate-limit buckets. Signup creates the initial Owner membership atomically.
-  Organization selection is checked against active membership on protected
-  API requests.
-- Authentication includes email verification, password reset with session
-  revocation, per-route database-backed rate limits, and HttpOnly SameSite
-  session cookies (Secure in production) with same-origin checks on unsafe
-  requests. Password-reset and verification tokens are stored only as hashes.
-  Configure SMTP for production; development without SMTP logs one-time links
-  locally. The local seed account is marked verified.
-- Organization Owners and Admins can invite members, view and change member
-  roles, remove members, and transfer ownership. Owner invariants are guarded
-  transactionally and by a database partial unique index. Sales Managers get
-  a tenant-scoped names-only assignee directory for team activities.
+  expiring sessions, password-reset and signup-verification tokens, workspace join codes, notifications,
+  and shared rate-limit buckets. Workspace-owner signup creates a pending
+  Owner/workspace for platform review; teammate signup creates an account that
+  can request access with a workspace join code. Organization selection is
+  checked against active membership on protected API requests.
+- Authentication includes per-route database-backed rate limits and HttpOnly
+  SameSite session cookies (Secure in production) with same-origin checks on
+  unsafe requests. Signup does not require email verification. Email delivery
+  and password reset by email are currently disabled.
+- The non-production seed provides the platform-admin login
+  `admin@myrcrm.local` / `MyrAdmin123!` for `/control-panel`. Production does
+  not create this demo account; configure `PLATFORM_ADMIN_EMAIL` with the
+  address of one existing active account to grant platform-admin access.
+  Customer workspace Owners/Admins remain separate and cannot access other
+  workspaces' records or team details.
+- Organization Owners and Admins can review teammate join requests, view and
+  change member roles, remove members, and transfer ownership. Owner invariants
+  are guarded transactionally and by a database partial unique index. Sales
+  Managers get a tenant-scoped names-only assignee directory for team activities.
 - Leads, contacts, companies, deals, and pipelines persist in PostgreSQL.
   Their queries, updates, and archives are organization-scoped; membership and
   composite foreign keys prevent cross-organization owner/creator and related
@@ -141,10 +161,8 @@ The repository is in an early MVP foundation stage, not production-ready.
   assumptions.
 - Email is available at `/email`. Users can compose plain-text messages for
   active contacts and view the organization-scoped outbox. Recipient addresses
-  come from active contact records. Configured SMTP sends synchronously and
-  records sent/failed state; without SMTP, messages are saved as not configured
-  and are not delivered. Sales representatives are limited to their own
-  contacts.
+  come from active contact records. Messages are saved as `not_configured` and
+  are not delivered. Sales representatives are limited to their own contacts.
 - Reports are available at `/reports` and show live, tenant-scoped summaries of
   lead status, deal outcomes and value, and activity status. Sales
   representatives see only their own leads and deals and assigned activities.
@@ -160,19 +178,41 @@ The repository is in an early MVP foundation stage, not production-ready.
   not roll back the completed CRM mutation.
 - Settings are available at `/settings`. Owners and Admins can update the
   workspace name, currency display preference, time zone, and week start day;
-  currency changes do not convert existing deal values.
+  currency changes do not convert existing deal values. Settings has General,
+  Leads, Roles, and Users sections; lead choices and workspace roles are
+  documented as fixed until their customization APIs are implemented.
+- New workspaces start pending and are directed to `/subscription` after sign-in.
+  Owners/Admins can start one free two-day trial immediately, without platform
+  approval; platform admins can monitor trial status in the control panel.
+  After it expires, a plan activation request is queued for manual review.
+  Online checkout is not connected.
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks
   module uses the adopted role and soft-archive contract.
-- SMTP delivery is synchronous and has no retry queue. In production, set
-  `SMTP_HOST`, `SMTP_FROM`, and any required SMTP credentials/TLS options; set
-  `TRUST_PROXY_HOPS` only when the API is behind that exact trusted proxy chain.
+- CRM email drafts are saved to the organization outbox but are not sent.
+  Password reset by email is unavailable until delivery is restored. Set
+  `TRUST_PROXY_HOPS` only when the API is behind that exact trusted proxy
+  chain.
 
 ## Change log
 
 Update this section whenever implementation changes are made. Include what
 changed, checks actually run, and any important remaining limitation.
 
+- 2026-11-10: Added SMTP-delivered OTP verification before activating new
+  workspace-owner accounts, removed platform-admin signup approval, and kept
+  the per-workspace employee join-code and owner/admin membership review flow.
+  OTPs are delivered to the email address provided at signup.
+- 2026-11-05: Integrated the Aditya and Akshat branch work on `mergetest`.
+  Preserved the existing cookie-session, organization-membership, and
+  tenant-scoped member APIs where branch changes overlapped; retained the
+  non-overlapping settings, reporting, billing, dashboard, control-panel, and
+  subscription work, including the demo verification opt-out, later removed
+  when signup no longer required verification. Added additive subscription/platform-audit schema
+  migrations. Verification: Prisma Client generation, API typecheck/build, 124 API tests,
+  web typecheck, 16 web tests, Next production build passed. Database migrations were not
+  applied because no database URL/service is configured. Other CRM capabilities
+  remain in the NestJS modular monolith.
 - 2026-10-31: Replaced the home dashboard's sample metrics, deal rows, and
   activities with tenant-scoped API data; added loading, empty, retry, and
   authentication states. Removed fabricated trend percentages and corrected
@@ -286,6 +326,7 @@ changed, checks actually run, and any important remaining limitation.
 - The same-origin API proxy was verified for login and the Reports,
   Notifications, Audit Logs, and Settings endpoints. Sign in with the
   local-only credentials in `DEMO-CREDENTIALS.local.md`.
-- Next, visually verify the dashboard and responsive module screens, configure
-  an SMTP provider before production email delivery, and run the project checks
-  after implementation changes.
+- Before deploying this approval flow, apply the database migration and update
+  Render's API start command to `npm run start --workspace @myr-crm/api`.
+  Deploy only the API and web services; no email service or SMTP setup is
+  needed.

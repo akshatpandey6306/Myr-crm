@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
 
-type Mode = 'forgot' | 'reset' | 'verify' | 'invitation';
+type Mode = 'forgot' | 'reset' | 'verify';
 
 const headings: Record<Mode, { title: string; description: string; submit: string }> = {
   forgot: {
@@ -21,11 +21,6 @@ const headings: Record<Mode, { title: string; description: string; submit: strin
     title: 'Verify your email',
     description: 'Confirm your email address to activate sign-in, or request a new verification link.',
     submit: 'Continue',
-  },
-  invitation: {
-    title: 'Accept your invitation',
-    description: 'If you are new to Myr, add your name and choose a password. Existing members can leave these blank.',
-    submit: 'Join workspace',
   },
 };
 
@@ -44,17 +39,15 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
       ? 'password-reset/request'
       : mode === 'reset'
         ? 'password-reset/confirm'
-        : mode === 'invitation'
-          ? 'organizations/invitations/accept'
-          : token
-            ? 'email-verification/confirm'
-            : 'email-verification/resend';
-    const body = mode === 'reset' || mode === 'invitation' || (mode === 'verify' && token)
+        : token
+          ? 'email-verification/confirm'
+          : 'email-verification/resend';
+    const body = mode === 'reset' || (mode === 'verify' && token)
       ? { ...values, token }
       : values;
 
     try {
-      const path = mode === 'invitation' ? `/${action}` : `/auth/${action}`;
+      const path = `/auth/${action}`;
       const response = await crmApiFetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,12 +83,6 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
             {mode === 'reset' && <>
               <label htmlFor="security-password">New password</label>
               <input id="security-password" name="password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required />
-            </>}
-            {mode === 'invitation' && <>
-              <label htmlFor="security-name">Your name (new accounts)</label>
-              <input id="security-name" name="name" autoComplete="name" maxLength={120} />
-              <label htmlFor="security-password">Password (new accounts)</label>
-              <input id="security-password" name="password" type="password" autoComplete="new-password" minLength={8} maxLength={128} />
             </>}
             {error && <div className="auth-error" role="alert">{error}</div>}
             {success && <div className="auth-success" role="status">{success}</div>}

@@ -1,8 +1,10 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from "@nestjs/common";
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import { HttpResponse } from "./http.types.js";
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse<HttpResponse>();
@@ -13,15 +15,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const r = exception.getResponse();
-      if (typeof r === "string") message = r;
-      else if (r && typeof r === "object") {
+      if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+        this.logger.error("Unhandled HTTP exception", exception.stack);
+      }
+      if (typeof r === "string" && status < HttpStatus.INTERNAL_SERVER_ERROR) {
+        message = r;
+      } else if (r && typeof r === "object" && (status < HttpStatus.INTERNAL_SERVER_ERROR || "code" in r)) {
         const o = r as Record<string, unknown>;
-        message = (o.message as string) ?? message;
+        if (typeof o.message === "string") message = o.message;
+        else if (Array.isArray(o.message)) message = o.message.filter((item): item is string => typeof item === "string").join(", ") || message;
         code = (o.code as string) ?? code;
         details = o.details ?? null;
       }
-    } else if (exception instanceof Error) {
-      message = exception.message;
+    } else {
+      this.logger.error("Unhandled API exception", exception instanceof Error ? exception.stack : String(exception));
     }
     res.status(status).json({ error: { code, message, details } });
   }

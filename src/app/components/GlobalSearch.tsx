@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const destinations = [
   { label: 'Overview', href: '/' }, { label: 'Leads', href: '/leads' },
   { label: 'Contacts', href: '/contacts' }, { label: 'Companies', href: '/companies' },
-  { label: 'Deals', href: '/deals' }, { label: 'Activities', href: '/activities' },
+  { label: 'Deals', href: '/deals' }, { label: 'Vendors', href: '/vendors' },
+  { label: 'Billing & Invoicing', href: '/billing-invoicing' },
+  { label: 'Activities', href: '/activities' },
   { label: 'Automation', href: '/automation' }, { label: 'Reports', href: '/reports' },
   { label: 'Sign in', href: '/sign-in' }, { label: 'Create account', href: '/sign-up' },
 ];

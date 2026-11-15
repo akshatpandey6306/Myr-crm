@@ -1,0 +1,1 @@
+-- Organization status and subscription fields are created by earlier migrations.

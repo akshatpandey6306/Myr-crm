@@ -9,7 +9,8 @@ type Notification = {
   type: string;
   title: string;
   body: string;
-  activityId: string;
+  activityId: string | null;
+  resourceId: string | null;
   readAt: string | null;
   createdAt: string;
 };
@@ -127,7 +128,7 @@ export default function NotificationPopover() {
             {!item.readAt && <i aria-label="Unread" />}
           </button>)}
         </div>
-        <div className="notification-popover-foot"><Link href="/activities" onClick={() => setOpen(false)}>View activities</Link></div>
+        <div className="notification-popover-foot"><Link href={notifications.some((item) => item.type === 'member_join_request') ? '/team' : '/activities'} onClick={() => setOpen(false)}>{notifications.some((item) => item.type === 'member_join_request') ? 'Review team requests' : 'View activities'}</Link></div>
       </section>}
     </div>
   );

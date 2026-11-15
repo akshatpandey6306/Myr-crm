@@ -140,19 +140,12 @@ export default function EmailsManager() {
       });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(errorMessage(payload));
-      const deliveryStatus = payload && typeof payload === "object" && "data" in payload && payload.data && typeof payload.data === "object" && "deliveryStatus" in payload.data
-        ? payload.data.deliveryStatus
-        : "not_configured";
       form.reset();
       setSelectedContact(null);
       setContactQuery("");
       setContactPage(1);
       setHistoryPage(1);
-      setNotice(deliveryStatus === "sent"
-        ? "Email sent successfully and saved to the outbox."
-        : deliveryStatus === "failed"
-          ? "The message was saved, but delivery failed. Check the SMTP configuration before sending another message."
-          : "Saved to the outbox. No email was sent because a delivery provider is not configured.");
+      setNotice("Saved to the outbox. Email delivery is disabled.");
       setRefresh((value) => value + 1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save this email.");
@@ -171,20 +164,20 @@ export default function EmailsManager() {
         <div>
           <p className="date-label">WORKSPACE / EMAIL</p>
           <h1>Email</h1>
-          <p className="welcome-copy">Compose contact emails and keep their delivery state visible.</p>
+          <p className="welcome-copy">Save contact email drafts in the workspace outbox.</p>
         </div>
       </div>
 
       <div className="email-provider-notice" role="note">
-        <strong>SMTP delivery</strong>
-        <span>When SMTP is configured on the server, messages are sent immediately. Otherwise they are saved as not sent.</span>
+        <strong>Email delivery is disabled</strong>
+        <span>Messages are saved in the outbox only; nothing is sent to contacts.</span>
       </div>
       {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice("")}>×</button></div>}
       {error && <div className="leads-error" role="alert"><span>{error}</span>{error.toLowerCase().includes("authenticated") || error.toLowerCase().includes("token") ? <Link href="/sign-in">Sign in</Link> : <button type="button" onClick={() => setRefresh((value) => value + 1)}>Retry</button>}</div>}
 
       <form className="panel email-compose" onSubmit={(event) => void submit(event)}>
         <div className="automation-form-heading">
-          <div><h2>Compose email</h2><p>Choose an active contact and send a plain-text message.</p></div>
+          <div><h2>Save an email draft</h2><p>Choose an active contact and save a plain-text message to the outbox.</p></div>
         </div>
         <div className="email-compose-fields">
           <label htmlFor="email-contact-search">Find contact</label>
@@ -215,9 +208,9 @@ export default function EmailsManager() {
           <textarea id="email-body" name="body" required maxLength={20_000} rows={6} placeholder="Write your message…" />
         </div>
         <div className="email-compose-footer">
-          <span>With SMTP configured, submitting sends immediately. Without it, the message is saved to the outbox.</span>
+          <span>This CRM currently saves drafts and does not send email.</span>
           <button className="button button-primary" type="submit" disabled={saving || contactsLoading || !contacts.length || !selectedContact}>
-            {saving ? "Sending…" : "Send email"}
+            {saving ? "Saving…" : "Save draft"}
           </button>
         </div>
       </form>

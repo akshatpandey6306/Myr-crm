@@ -27,45 +27,96 @@ npm run api:build
 
 The API listens on port `4000` by default. Set `PORT` to use a different port.
 `GET /api/v1/health` is an unauthenticated liveness check. Protected CRM routes
-require a persisted session and a verified organization membership.
+require a persisted session and an active organization membership.
 
 ## Authentication and account recovery
 
 The web app provides `/sign-in`, `/sign-up`, `/forgot-password`,
-`/reset-password`, and `/verify-email`. Signup creates the user, workspace,
-Owner membership, and default pipeline atomically, then sends a verification
-link; login is refused until the email is verified. The API exposes
-`POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
+`/reset-password`, and `/verify-email` for old verification links. A new
+workspace Owner enters a one-time code before their account and Owner membership
+become active; platform-admin signup approval is not required. The code is
+SHA-256 hashed in the existing email-token table and expires after 10 minutes.
+SMTP is required for workspace-owner signup and uses `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`. Signup codes are sent to the
+address supplied during signup. Password reset and CRM contact email delivery
+remain disabled. Teammates can still create an account, sign in, and request
+access with their workspace's unique join code; an Owner/Admin reviews those
+requests in Team & access. The API
+exposes `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
+`POST /api/v1/auth/signup/verify`, `POST /api/v1/auth/signup/resend-otp`,
 `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`,
 `POST /api/v1/auth/password-reset/request`,
 `POST /api/v1/auth/password-reset/confirm`,
 `POST /api/v1/auth/email-verification/resend`, and
-`POST /api/v1/auth/email-verification/confirm`.
+`POST /api/v1/auth/email-verification/confirm`. The verification endpoints
+remain for compatibility with links already sent; signup-owner OTP verification
+is a separate account-activation step. The old `REQUIRE_EMAIL_VERIFICATION`
+setting is ignored. The platform control panel's remaining workspace-approval
+actions apply only to legacy signup records that have no outstanding OTP token;
+they cannot approve a new signup before code verification.
 
 Login sets a seven-day `myr_session` HttpOnly, SameSite=Lax cookie, with Secure
 enabled in production. The API stores only the SHA-256 session digest and accepts
 that cookie for protected requests; the raw session token is never returned in
 JSON or stored in browser storage. Unsafe requests with an Origin header must
 match `WEB_ORIGIN`, and production cookie-authenticated mutations require the
-expected Origin. Password-reset and verification tokens are random, one-use
-values stored only as SHA-256 digests; reset links expire after one hour and
-verification links after 24 hours. Successful password resets revoke every
-existing session for that user. Reset and resend responses are generic to avoid
-account enumeration.
+expected Origin. Password reset by email remains disabled and the request
+endpoint returns an unavailable response. Existing reset
+tokens, if any, remain one-use values stored only as SHA-256 digests; successful
+resets revoke every existing session for that user.
 
-Authentication and invitation endpoints use PostgreSQL-backed rate-limit
+The local, non-production seed creates `admin@myrcrm.local` with password
+`MyrAdmin123!`; this account can access `/control-panel` when no
+`PLATFORM_ADMIN_EMAIL` is configured. Production never creates this demo
+account. Configure `PLATFORM_ADMIN_EMAIL` with exactly one existing active
+account to grant access to the platform control panel. The legacy
+`PLATFORM_ADMIN_EMAILS` setting is accepted only when it contains one distinct
+email; multiple addresses fail closed.
+
+Platform administration is separate from customer workspace administration.
+The configured platform account can manage platform-wide plans and workspaces.
+Customer Owners and Admins are organization memberships, not platform admins:
+their API requests are scoped to a workspace where they have an active
+membership, and changing the organization ID does not grant access to another
+customer's records or team. Team roles then limit record management inside
+that workspace.
+
+## Workspace trial and activation
+
+Signup creates the Owner's organization with a pending subscription. After
+sign-in, the web app routes the Owner to `/subscription`, where they can select
+a plan and immediately start a no-charge two-day trial, with no platform-admin
+approval required. The platform control panel shows the workspace's trial
+status and expiry. The trial is available in production and can only be started
+once per workspace. When it expires, an
+Owner or Admin can submit a plan activation request; it appears under
+**Activation requests** in `/control-panel` for manual review. Platform admins
+activate the plan from the workspace row. Online checkout is not connected, so
+the request does not collect payment.
+
+Apply database changes with `npm run db:deploy` before starting an API version
+that includes subscription activation requests.
+
+Platform admins can control workspace access to Leads, Contacts, Companies,
+Vendors, Deals, Activities, Team, Automation, Email, Reports, Audit Logs, and Settings
+from each workspace's module-access controls in `/control-panel`. Module access
+is enforced by the API as well as reflected in workspace navigation. The
+platform control panel also lists each workspace Owner and active team members,
+summarizes won deal value and open pipeline value, and provides a paginated
+deal list with company, stage, owner, and value details. These cross-workspace
+read endpoints are protected by the single platform-admin identity; customer
+workspace admins remain limited to their own organization.
+
+Authentication and join-request endpoints use PostgreSQL-backed rate-limit
 windows keyed by hashed IP and, where applicable, normalized email or user ID.
-Limits are 10 login attempts per 15 minutes; 5 signup and verification-resend
-attempts per hour; 5 reset requests per hour; 10 reset/verification/invitation
-accept attempts per hour; and 20 invitations per hour per inviter/email.
+Limits include 5 login and signup attempts per minute, 3 signup-code resends per
+hour, 10 signup-code verifications per hour, and 5 workspace join requests per
+hour per user.
 Expired buckets are periodically removed by the API.
 
-Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and optional `SMTP_USER` /
-`SMTP_PASSWORD` in `.env` to deliver verification, reset, invitation, and CRM
-contact messages. TLS is required by default for STARTTLS connections; use
-`SMTP_SECURE=true` for implicit TLS. In development without SMTP, one-time
-links are logged locally; production startup fails when `SMTP_HOST` or
-`SMTP_FROM` is missing. SMTP delivery is synchronous and does not retry.
+SMTP is used only for workspace-owner signup verification codes. Password reset
+by email remains unavailable, and CRM contact messages can still be saved to
+the outbox but are not sent.
 
 `GET /api/v1/organizations` lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as
@@ -95,6 +146,13 @@ updated with `PATCH /api/v1/companies/:id` and archived with
 the authenticated request. As with leads and contacts, company records are
 restricted to the verified organization and representative-owned records.
 
+Vendors use tenant-scoped CRUD routes at `/api/v1/vendors`. The list supports
+search, status/category/date filters, pagination, and sorting; summary counts
+and categories are also scoped to the verified organization. Vendor fields
+include name, category, contact details, status, rating, and review count.
+Organization and owner IDs are always derived from the authenticated request,
+and workspace module access is enforced by the API.
+
 ## Deals and pipelines
 
 Every organization receives a default Sales pipeline with Discovery, Qualified,
@@ -110,10 +168,9 @@ sorting. Deal fields include `name`, `value`, `closeDate`, `status`,
 `companyId`, `pipelineId`, and `stageId`; the API verifies company, pipeline,
 and stage membership in the active organization. Deletion archives a deal.
 
-## Team, invitations, and roles
+## Team join requests and roles
 
-`GET /api/v1/organizations/members` lists active members (including email and
-verification status) for Owners and Admins. `PATCH
+`GET /api/v1/organizations/members` lists active members for Owners and Admins. `PATCH
 /api/v1/organizations/members/:userId` changes a member to Admin, Sales Manager,
 Sales Representative, or Read-only User; only Owners and Admins may manage
 members. Owners cannot be changed through this endpoint. Only the current Owner
@@ -123,14 +180,14 @@ becomes an Admin. Members can be removed with `DELETE
 /api/v1/organizations/members/:userId`. Owner uniqueness and transfer are
 protected by a transaction and a database partial unique index.
 
-Owners and Admins can invite with `POST /api/v1/organizations/invitations`,
-list pending invitations with `GET` on the same route, and revoke with
-`DELETE /api/v1/organizations/invitations/:id`. Invitations expire after seven
-days and store only a token hash. `POST
-/api/v1/organizations/invitations/accept` accepts a one-time email link; a new
-member sets a name and password, while an existing account is added to the
-organization. Accepting an invite verifies the invited email and creates the
-membership and audit event transactionally. A names-only active member
+Owners and Admins can get the workspace join code from
+`GET /api/v1/organizations/join-code`. A signed-in user submits that code to
+`POST /api/v1/organizations/join-requests`; requests are saved as pending
+memberships and notify workspace Owners/Admins in-app. Owners/Admins review
+requests with `GET /api/v1/organizations/membership-requests` and
+`PATCH /api/v1/organizations/membership-requests/:userId` using an `approve` or
+`decline` decision. `GET /api/v1/organizations/join-requests` lets a user check
+their pending or active workspace requests. A names-only active member
 directory at `GET /api/v1/organizations/assignees` is available to Owners,
 Admins, and Sales Managers for activity assignments.
 
@@ -210,7 +267,7 @@ creates linked tasks. Run history stores successful executions only. Delete
 uses soft archive. Scheduled, email, deal, retry, and failure-history
 workflows are outside this MVP contract.
 
-## Email outbox and SMTP delivery
+## Email outbox
 
 The Email screen at `/email` uses `GET /api/v1/emails` to list messages and
 `POST /api/v1/emails` to save a plain-text message. Requests use the shared
@@ -226,18 +283,14 @@ Organization Owners, Admins, and Sales Managers can view the organization's
 outbox. Sales Representatives can view and compose messages only for their own
 contacts; Read-only Users can view but cannot compose.
 
-When SMTP is configured with `SMTP_HOST` and `SMTP_FROM`, the API sends the
-message synchronously after storing the outbox record. Successful delivery is
-recorded as `sent` with `sentAt`; a delivery error is recorded as `failed`.
-Without SMTP, messages are saved as `not_configured` and are not delivered.
+CRM contact messages are saved with status `not_configured` and are not sent;
+SMTP configuration is used only for workspace-owner signup codes. Signup uses
+OTP verification without platform-admin approval, while teammates use their
+workspace join code and Owner/Admin membership review.
 Message bodies are plain text and the recipient address always comes from the
 selected active contact. The UI shows each message's delivery state.
 
-Delivery has no retry queue: configure SMTP as described in Authentication and
-Security. A process or database failure after SMTP accepts a message can leave
-delivery state uncertain; a future worker with idempotent delivery is needed
-before retrying automatically. Templates, attachments, and inbound mailbox
-sync are outside this MVP.
+Templates, attachments, and inbound mailbox sync are outside this MVP.
 
 ## Reports — live summary
 
@@ -293,5 +346,52 @@ organization only when the user is a member of it. The list endpoint accepts
 update, and archive use
 `POST /api/v1/leads`, `PATCH /api/v1/leads/:id`, and
 `DELETE /api/v1/leads/:id`. Deletion archives a lead, and archived leads are
-excluded from the active list. Contacts use matching CRUD routes under
+excluded from the active list. Organization owners and admins can preview even distribution with
+`POST /api/v1/leads/distribute/preview`, then apply the reviewed assignments
+with `PATCH /api/v1/leads/distribute`. Preview accepts `scope` (`selected` or
+`all`), `assigneeUserIds`, and (for selected leads) `leadIds`; assignment
+targets must be active members of the selected organization. The legacy
+`POST /api/v1/leads/distribute` endpoint remains available for compatibility.
+`GET /api/v1/leads/assignment-settings` returns the assignment controls and
+eligible team members. Owners and admins can use `PATCH` on that route to turn
+on round-robin assignment for new leads and choose the eligible team members.
+`POST /api/v1/leads/import/validate` checks CSV rows and likely duplicates;
+`POST /api/v1/leads/import` creates reviewed rows without overwriting existing
+leads. CSV fields are `name`, `company`, `source`, and `status`; supported
+sources and statuses match the existing lead form. Missing source/status values
+default to `website`/`new`. `GET /api/v1/leads/export` accepts the supported
+list filters and exports only leads the caller may access in the active
+organization. CSV upload is limited to 5 MB in the web app, and imports should
+be split into batches small enough for the API request limit.
+Contacts use matching CRUD routes under
 `/api/v1/contacts`, with `q`, pagination, and sorting on the list route.
+
+## Team onboarding CSV
+
+Only active workspace Owners and Admins can use the team CSV endpoints:
+`POST /api/v1/organizations/members/import/validate`,
+`POST /api/v1/organizations/members/import`, and
+`GET /api/v1/organizations/members/export`. Employee CSV columns are `email`,
+`name`, and `password`; imports create active Sales Representative memberships
+only in the selected workspace. The API validates email/name/password,
+duplicate accounts, duplicate rows, and current plan/trial seat limits before
+creating the batch transactionally. Passwords are hashed using the existing
+scrypt format and are not returned in preview, result, or audit data. The
+current sign-in flow does not support a forced password reset, so admins should
+provide temporary passwords to employees through a secure channel and ask them
+to change them after sign-in. The web app limits CSV files to 5 MB and batches
+the JSON request payload to 80 KB to fit the API's existing body-size limit;
+large imports must be split into smaller files. Employee CSV exports contain
+work email, name, role, and join date, and are recorded in the workspace audit
+log. The existing individual onboarding and join-request approval flows remain
+available.
+
+## Platform audit export
+
+The Platform Admin control panel provides a CSV export of audit events using
+`GET /api/v1/control-panel/audit-logs/export`. Access is restricted by the
+existing Platform Admin guard; workspace Owners/Admins cannot read platform-
+wide audit data. The action filter is applied by the API, and the control panel
+also applies its current search filter to the downloaded rows. Exported fields
+include timestamp, actor, action, workspace/record, and redacted details;
+authentication secrets and password-like metadata are omitted.

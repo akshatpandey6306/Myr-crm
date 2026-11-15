@@ -21,21 +21,30 @@ import { AuditLogsController } from "./audit-logs/audit-logs.controller.js";
 import { AuditLogInterceptor } from "./audit-logs/audit-log.interceptor.js";
 import { AuditLogsService } from "./audit-logs/audit-logs.service.js";
 import { SettingsController } from "./settings/settings.controller.js";
-import { AuthEmailService } from "./auth/email.service.js";
 import { RateLimitGuard } from "./auth/rate-limit.guard.js";
 import { MembersController } from "./organizations/members.controller.js";
+import { BillingController } from "./billing/billing.controller.js";
+import { ControlPanelController } from "./control-panel/control-panel.controller.js";
+import { DashboardController } from "./dashboard/dashboard.controller.js";
+import { AuditService } from "./audit/audit.service.js";
+import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
+import { AuthEmailService } from "./auth/email.service.js";
+import { VendorsController } from "./vendors/vendors.controller.js";
+import { InvoicingController } from "./invoicing/invoicing.controller.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
-  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController],
+  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, VendorsController, InvoicingController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: OrgGuard },
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditLogInterceptor },
-    AuthEmailService,
     AutomationsService,
     AuditLogsService,
+    AuditService,
+    PlatformAdminGuard,
+    AuthEmailService,
   ],
 })
 export class AppModule {}

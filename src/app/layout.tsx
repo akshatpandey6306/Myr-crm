@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import CrmThemeProvider from "./components/CrmThemeProvider";
+import { WorkspaceAccessGate } from "./components/WorkspaceAccessGate";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body><CrmThemeProvider><WorkspaceAccessGate>{children}</WorkspaceAccessGate></CrmThemeProvider></body>
     </html>
   );
 }

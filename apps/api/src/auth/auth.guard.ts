@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, 
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
+import { getWebOrigin } from "../common/web-origin.js";
 import { IS_PUBLIC_KEY } from "./public.decorator.js";
 
 @Injectable()
@@ -14,8 +15,16 @@ export class AuthGuard implements CanActivate {
     const cookieToken = this.cookieValue(request.headers.cookie, "myr_session");
     if (unsafeRequest) {
       const origin = request.headers.origin;
-      const expectedOrigin = (process.env.WEB_ORIGIN ?? "http://localhost:3000").replace(/\/+$/, "");
-      if (origin !== undefined && (typeof origin !== "string" || origin !== expectedOrigin)) {
+      const expectedOrigin = getWebOrigin();
+      const allowedOrigins = new Set([expectedOrigin]);
+      const localOrigin = /^http:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?$/.exec(expectedOrigin);
+      if (process.env.NODE_ENV !== "production" && localOrigin) {
+        const port = localOrigin[1] ?? "";
+        for (const hostname of ["localhost", "127.0.0.1"]) {
+          allowedOrigins.add(`http://${hostname}${port}`);
+        }
+      }
+      if (origin !== undefined && (typeof origin !== "string" || !allowedOrigins.has(origin))) {
         throw new ForbiddenException({ code: "csrf_rejected", message: "Request origin could not be verified" });
       }
       if (cookieToken && process.env.NODE_ENV === "production" && origin !== expectedOrigin) {

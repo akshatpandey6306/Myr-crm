@@ -224,6 +224,12 @@ describe("Activities & Tasks", () => {
     makeApi();
   });
 
+  it("shows the activities and tasks heading", () => {
+    render(<Home />);
+
+    expect(screen.getByRole("heading", { name: "Activities & Tasks" })).toBeInTheDocument();
+  });
+
   it("uses the CRM API for status filtering and search", async () => {
     const user = userEvent.setup();
     render(<Home />);
