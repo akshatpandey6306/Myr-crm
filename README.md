@@ -75,9 +75,11 @@ npm run db:seed
 ```
 
 Start the web app with `npm run dev` and the API with `npm run api:dev` in
-separate terminals. Email delivery is disabled. New workspace signups wait for
-platform-admin approval; teammates create accounts, request workspace access
-with a join code, and wait for an Owner/Admin to approve them. The web app proxies same-origin
+separate terminals. Workspace-owner signup requires a one-time code delivered
+to the email address used at signup. Configure `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM` in `.env`.
+Teammates create accounts, request workspace access with a unique join code,
+and wait for an Owner/Admin to approve them. The web app proxies same-origin
 `/api/v1` requests to the API server; set `API_PROXY_URL` when the API is not at
 `http://localhost:4000/api/v1`. Useful checks:
 
@@ -111,12 +113,14 @@ for the current service map, ownership, local workflow, and remaining migration.
 - The NestJS API is the authenticated CRM gateway and still owns identity,
   organizations, memberships, CRM records, activities, automation, reports,
   notifications, audit logs, settings, billing, and the persisted email outbox.
-- New public workspace signups are held for platform-admin approval. Teammates
-  request access using a workspace join code; Owners/Admins review requests in
-  Team & access, with in-app notifications and member details. No email
-  delivery service or SMTP configuration is required.
+- New workspace-owner signups require an emailed one-time code before their
+  account and owner membership become active; they do not require platform-admin
+  signup approval. SMTP settings are required for delivery. Teammates continue
+  to request access using their workspace's unique join code; Owners/Admins
+  review requests in Team & access, with in-app notifications and member
+  details.
 - PostgreSQL/Prisma persistence covers users, organizations, memberships,
-  expiring sessions, password-reset tokens, workspace join codes, notifications,
+  expiring sessions, password-reset and signup-verification tokens, workspace join codes, notifications,
   and shared rate-limit buckets. Workspace-owner signup creates a pending
   Owner/workspace for platform review; teammate signup creates an account that
   can request access with a workspace join code. Organization selection is
@@ -135,12 +139,25 @@ for the current service map, ownership, local workflow, and remaining migration.
   change member roles, remove members, and transfer ownership. Owner invariants
   are guarded transactionally and by a database partial unique index. Sales
   Managers get a tenant-scoped names-only assignee directory for team activities.
+  Owners/Admins can access every CRM module; other roles start with no module
+  grants and receive only workspace-available modules explicitly assigned by
+  an Owner/Admin.
 - Leads, contacts, companies, deals, and pipelines persist in PostgreSQL.
   Their queries, updates, and archives are organization-scoped; membership and
   composite foreign keys prevent cross-organization owner/creator and related
   record references. Company and deal CRUD is soft-archived, and pipelines
   support basic management of names and stages. The Companies and Deals
   screens use the API and are responsive.
+- Vendor management is available at `/vendors`. Vendor records are persisted
+  per organization, and list, search, update, and archive operations are
+  scoped to the verified workspace. Sales Representatives are limited to
+  records they own; other members need the Vendors module grant. Billing &
+  Invoicing is available at `/billing-invoicing` with workspace-specific
+  billing settings, products, invoices, quotations, recorded payments, and
+  receipts. Each financial query and mutation is scoped to the verified
+  organization; billing settings are editable only by Owners and Admins.
+  These records do not cross workspace boundaries. No payment gateway is
+  connected by this invoicing module; payment records are manually recorded.
 - Activities are available at `/activities` and use the authenticated CRM API
   for organization-scoped persistence, related-record links, filtering, sorting,
   and pagination. The adopted MVP contract is documented in
@@ -180,8 +197,13 @@ for the current service map, ownership, local workflow, and remaining migration.
 - New workspaces start pending and are directed to `/subscription` after sign-in.
   Owners/Admins can start one free two-day trial immediately, without platform
   approval; platform admins can monitor trial status in the control panel.
-  After it expires, a plan activation request is queued for manual review.
-  Online checkout is not connected.
+  A 10-to-1 day expiry countdown is shown. Owners/Admins can request renewal in
+  the final 10 days or after expiry. Access stays active until its expiry; after
+  that, CRM content is blurred and inert behind the renewal plan overlay, while
+  workspace data is retained. Platform admins manually verify payment and
+  approve renewal; pre-expiry approval extends from the current expiry date.
+  Online checkout is not connected, so the app does not collect or verify
+  payment.
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks
   module uses the adopted role and soft-archive contract.
@@ -195,10 +217,36 @@ for the current service map, ownership, local workflow, and remaining migration.
 Update this section whenever implementation changes are made. Include what
 changed, checks actually run, and any important remaining limitation.
 
-- 2026-11-06: Disabled outbound email delivery and removed the separate SMTP
-  runtime. New workspace signups now await platform-admin approval; teammates
-  register, request access with a workspace join code, and await workspace
-  admin approval with in-app notifications. Validation pending.
+- 2026-11-15: Integrated tenant-scoped Vendor Management and Billing &
+  Invoicing from the Akshat codespace branch into the active project. Added
+  vendor, invoice, quotation, product, payment, receipt, settings, and billing
+  audit persistence; API/UI routes; navigation; module controls; and responsive
+  styles. Preserved empty-by-default member module grants and workspace-level
+  module enforcement. Verification: Prisma Client generation, 32 web tests,
+  192 API tests, frontend/API typechecks, and frontend/API production builds
+  passed. The two additive database migrations were not applied to a database.
+
+- 2026-11-15: Added a 10-day subscription countdown, pre-expiry renewal
+  requests, expiry-anchored extensions after platform-admin approval, and a
+  glass lock overlay that leaves expired workspace data untouched. Payment
+  remains manual because no gateway is integrated. Verification: 34 web tests,
+  195 API tests, frontend/API typechecks, and frontend/API production builds
+  passed. The local API health endpoint returned `200` and the active database
+  has both additive vendor/invoicing migrations applied.
+
+- 2026-11-14: Made workspace Owners/Admins full-access across CRM modules and
+  restricted other members to explicit per-member grants, enforced in the API
+  and navigation. New and newly approved employees start with no modules; old
+  default grants are cleared while custom assignments are preserved. Applied
+  the two additive membership-module migrations. Frontend and API typechecks
+  passed; tests were not run.
+- 2026-11-14: Split platform administration into separate Overview, Workspaces,
+  Approvals, Onboard workspace, Subscription plans, and Audit log pages with
+  responsive section navigation. Frontend typecheck passed; tests were not run.
+- 2026-11-10: Added SMTP-delivered OTP verification before activating new
+  workspace-owner accounts, removed platform-admin signup approval, and kept
+  the per-workspace employee join-code and owner/admin membership review flow.
+  OTPs are delivered to the email address provided at signup.
 - 2026-11-05: Integrated the Aditya and Akshat branch work on `mergetest`.
   Preserved the existing cookie-session, organization-membership, and
   tenant-scoped member APIs where branch changes overlapped; retained the
@@ -314,6 +362,31 @@ changed, checks actually run, and any important remaining limitation.
   as the module contract; updated architecture and API documentation.
 
 
+
+## Central commerce provisioning
+
+The CRM exposes private provisioning APIs for a trusted central commerce backend:
+
+- `POST /internal/v1/tenants/provision`
+- `GET /internal/v1/provisioning/{requestId}`
+- `POST /internal/v1/provisioning/{requestId}/activation-email/retry`
+
+Both require `Authorization: Bearer <CRM_PROVISIONING_TOKEN>`. Provision requests
+also require an `Idempotency-Key`. The CRM validates the active plan and its
+server-side price, then creates the organization, pending Owner membership,
+plan entitlements, default sales pipeline, and hashed one-time activation token
+in a database transaction. The owner sets a password at `/activate-account`;
+the token expires after one hour and can be used only once. Existing self-
+service signup and platform-admin flows remain available.
+
+The central backend must call provisioning only after its payment provider has
+verified payment. The CRM endpoint does not accept browser requests as payment
+proof and does not initiate central checkout. Configure a unique random
+`CRM_PROVISIONING_TOKEN` in the API environment and the central backend's
+secret manager. This workspace does not contain the central commerce code, so
+its order/payment ledger, verified webhook worker/outbox, and central admin
+console remain an integration task. CRM activation email delivery is tracked
+in provisioning status and can be retried by the trusted central backend.
 
 ## Next session
 

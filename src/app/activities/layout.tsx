@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import CrmShell from "../components/CrmShell";
 import "./activities.css";
 
 export const metadata: Metadata = {
@@ -11,5 +12,5 @@ export default function ActivitiesLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return children;
+  return <CrmShell active="Activities">{children}</CrmShell>;
 }

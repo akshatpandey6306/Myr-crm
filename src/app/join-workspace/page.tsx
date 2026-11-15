@@ -33,7 +33,8 @@ export default function JoinWorkspacePage() {
       const data = Array.isArray(payload.data) ? payload.data as JoinRequest[] : [];
       setRequests(data);
       const approved = data.find((request) => request.status === 'active');
-      if (approved) {
+      const pending = data.some((request) => request.status === 'pending');
+      if (approved && !pending) {
         sessionStorage.setItem('myr.organization', JSON.stringify(approved.organization));
         window.location.assign('/');
       }

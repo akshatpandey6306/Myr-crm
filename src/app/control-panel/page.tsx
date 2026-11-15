@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { Fragment } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
+import { downloadCsv } from '../../lib/csv';
+import PartnerManagementPanel from './PartnerManagementPanel';
 
 type Organization = {
   id: string;
@@ -18,6 +20,16 @@ type Organization = {
   createdAt: string;
   enabledModules: string[];
   owner: { name: string; email: string } | null;
+  lastPayment?: {
+    transactionId: string;
+    paymentType: string;
+    amount: string;
+    currency: string;
+    status: string;
+    payuId: string | null;
+    paidAt: string | null;
+    createdAt: string;
+  } | null;
   subscription: {
     planCode: string | null;
     status: 'pending' | 'trial' | 'active' | 'expired' | 'cancelled';
@@ -36,6 +48,8 @@ type SubscriptionPlan = {
   features: string[];
   modules: string[];
   employeeLimit: number | null;
+  maxDevicesPerUser: number;
+  deviceRestrictionEnabled: boolean;
   usageLimits: Record<string, number>;
   isActive: boolean;
 };
@@ -80,9 +94,10 @@ type WorkspaceDealPage = {
 
 type WorkspaceFilter = 'all' | 'needs-attention' | 'active';
 type SubscriptionStatusFilter = 'all' | Organization['subscription']['status'];
+export type ControlPanelSection = 'overview' | 'onboarding' | 'plans' | 'approvals' | 'provisioning' | 'workspaces' | 'partners' | 'security' | 'audit-log';
 type PendingSensitiveAction =
   | { kind: 'access'; organization: Organization; status: 'active' | 'suspended' }
-  | { kind: 'subscription'; organization: Organization; status: 'active' | 'expired' | 'cancelled' }
+  | { kind: 'subscription'; organization: Organization; status: 'active' | 'trial' | 'expired' | 'cancelled' }
   | { kind: 'modules'; organization: Organization; modules: string[] };
 
 const crmModules = [
@@ -90,6 +105,8 @@ const crmModules = [
   ['contacts', 'Contacts'],
   ['companies', 'Companies'],
   ['deals', 'Deals'],
+  ['vendors', 'Vendors'],
+  ['billing-invoicing', 'Billing & Invoicing'],
   ['activities', 'Activities'],
   ['team', 'Team'],
   ['automation', 'Automation'],
@@ -99,6 +116,18 @@ const crmModules = [
   ['settings', 'Settings'],
 ] as const;
 
+const controlPanelSections: Array<{ id: ControlPanelSection; label: string; href: string; description: string }> = [
+  { id: 'overview', label: 'Overview', href: '/control-panel', description: 'Platform activity and administration shortcuts.' },
+  { id: 'workspaces', label: 'Workspaces', href: '/control-panel/workspaces', description: 'Search tenants, review account status, and manage workspace access.' },
+  { id: 'approvals', label: 'Approvals', href: '/control-panel/approvals', description: 'Review pending signup and subscription requests.' },
+  { id: 'provisioning', label: 'Provisioning', href: '/control-panel/provisioning', description: 'Monitor purchased CRM workspaces and retry activation email delivery.' },
+  { id: 'partners', label: 'Partners', href: '/control-panel/partners', description: 'Manage server integrations, keys, provisioned customers, and webhook events.' },
+  { id: 'onboarding', label: 'Onboard workspace', href: '/control-panel/onboarding', description: 'Create a workspace and its first Owner account.' },
+  { id: 'plans', label: 'Subscription plans', href: '/control-panel/plans', description: 'Configure available plans, limits, and included modules.' },
+  { id: 'security', label: 'Security & devices', href: '/control-panel/security', description: 'Configure login lockouts, sessions, device limits, and revoke active sessions.' },
+  { id: 'audit-log', label: 'Audit log', href: '/control-panel/audit-log', description: 'Review and export recent platform administration actions.' },
+];
+
 const emptyPlan = {
   code: '',
   name: '',
@@ -107,8 +136,10 @@ const emptyPlan = {
   billingInterval: 'monthly' as const,
   trialDays: '0',
   features: '',
-  modules: ['leads', 'contacts', 'companies', 'deals', 'activities', 'team', 'settings'],
+  modules: ['leads', 'contacts', 'companies', 'deals', 'vendors', 'billing-invoicing', 'activities', 'team', 'settings'],
   employeeLimit: '',
+  maxDevicesPerUser: '1',
+  deviceRestrictionEnabled: true,
   usageLimits: '{}',
   isActive: true,
 };
@@ -126,6 +157,36 @@ type AuditLog = {
   reason?: string | null;
   metadata?: unknown;
   createdAt: string;
+};
+type SecurityConfiguration = {
+  failedLoginLockoutEnabled: boolean;
+  maxFailedLoginAttempts: number;
+  lockoutDurationMinutes: number;
+  sessionLifetimeMinutes: number;
+  deviceRestrictionsEnabled: boolean;
+};
+type SecuritySession = {
+  id: string;
+  userId: string;
+  user: { name: string; email: string };
+  organization: { id: string; name: string; subscriptionPlan: string | null } | null;
+  deviceLabel: string;
+  userAgent: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+};
+const defaultSecurityConfiguration: SecurityConfiguration = {
+  failedLoginLockoutEnabled: true,
+  maxFailedLoginAttempts: 3,
+  lockoutDurationMinutes: 10,
+  sessionLifetimeMinutes: 10080,
+  deviceRestrictionsEnabled: true,
+};
+type ProvisioningRequest = {
+  id: string; requestId: string; orderId: string; product: string; status: string;
+  organizationId: string | null; ownerUserId: string | null; planCode: string;
+  failureCode: string | null; activationEmailSent: boolean; createdAt: string; updatedAt: string;
 };
 
 function isOrganization(value: unknown): value is Organization {
@@ -170,6 +231,8 @@ function isSubscriptionPlan(value: unknown): value is SubscriptionPlan {
     Array.isArray(plan.modules) &&
     plan.modules.every((module) => typeof module === 'string') &&
     (plan.employeeLimit === null || typeof plan.employeeLimit === 'number') &&
+    typeof plan.maxDevicesPerUser === 'number' &&
+    typeof plan.deviceRestrictionEnabled === 'boolean' &&
     typeof plan.usageLimits === 'object' &&
     plan.usageLimits !== null &&
     typeof plan.isActive === 'boolean';
@@ -214,10 +277,12 @@ function localDateValue(value: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-export default function ControlPanelPage() {
+export default function ControlPanelPage({ section = 'overview' }: { section?: ControlPanelSection }) {
+  const currentSection = controlPanelSections.find((item) => item.id === section) ?? controlPanelSections[0];
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
   const [activationRequests, setActivationRequests] = useState<SubscriptionActivationRequest[]>([]);
+  const [provisioningRequests, setProvisioningRequests] = useState<ProvisioningRequest[]>([]);
   const [workspaceSignupRequests, setWorkspaceSignupRequests] = useState<WorkspaceSignupRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyOrganizationId, setBusyOrganizationId] = useState('');
@@ -237,6 +302,8 @@ export default function ControlPanelPage() {
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loadingAuditLogs, setLoadingAuditLogs] = useState(true);
+  const [exportingAuditLogs, setExportingAuditLogs] = useState(false);
+  const [auditExportMessage, setAuditExportMessage] = useState('');
   const [onboardingMessage, setOnboardingMessage] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [expandedMembers, setExpandedMembers] = useState<Record<string, WorkspaceMember[] | undefined>>({});
@@ -250,8 +317,14 @@ export default function ControlPanelPage() {
   const [accessEndDates, setAccessEndDates] = useState<Record<string, string>>({});
   const [planDraft, setPlanDraft] = useState<PlanFormState>(emptyPlan);
   const [editingPlanCode, setEditingPlanCode] = useState('');
+  const [planApplyScope, setPlanApplyScope] = useState<'all' | 'organization'>('all');
+  const [planTargetOrganizationId, setPlanTargetOrganizationId] = useState('');
   const [savingPlan, setSavingPlan] = useState(false);
   const [planMessage, setPlanMessage] = useState('');
+  const [securityConfiguration, setSecurityConfiguration] = useState<SecurityConfiguration>(defaultSecurityConfiguration);
+  const [securitySessions, setSecuritySessions] = useState<SecuritySession[]>([]);
+  const [securityUsage, setSecurityUsage] = useState<Array<{ userId: string; user: { name: string; email: string }; organization: { id: string; name: string } | null; activeDevices: number; activeSessions: number; deviceLimit: number | null; overLimit: boolean }>>([]);
+  const [savingSecurity, setSavingSecurity] = useState(false);
   const [accessMessage, setAccessMessage] = useState('');
   const [auditSearch, setAuditSearch] = useState('');
   const [auditActionFilter, setAuditActionFilter] = useState('all');
@@ -388,6 +461,54 @@ export default function ControlPanelPage() {
     }
   }
 
+  async function loadSecuritySettings(signal?: AbortSignal) {
+    try {
+      const response = await crmApiFetch('/control-panel/security-settings', signal ? { signal } : {});
+      const payload = await response.json();
+      if (!response.ok || !payload?.data?.settings || !Array.isArray(payload.data.sessions) || !Array.isArray(payload.data.usage)) {
+        throw new Error(payload?.error?.message ?? 'Could not load security settings.');
+      }
+      setSecurityConfiguration(payload.data.settings as SecurityConfiguration);
+      setSecuritySessions(payload.data.sessions as SecuritySession[]);
+      setSecurityUsage(payload.data.usage);
+    } catch (caught) {
+      if (!(caught instanceof Error) || caught.name !== 'AbortError') setError(caught instanceof Error ? caught.message : 'Could not load security settings.');
+    }
+  }
+
+  async function saveSecuritySettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingSecurity(true);
+    setError('');
+    setAccessMessage('');
+    try {
+      const response = await crmApiFetch('/control-panel/security-settings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(securityConfiguration),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not save security settings.');
+      setSecurityConfiguration(payload.data as SecurityConfiguration);
+      setAccessMessage('Security configuration saved and audited.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save security settings.');
+    } finally {
+      setSavingSecurity(false);
+    }
+  }
+
+  async function revokeAdminSession(session: SecuritySession) {
+    setError('');
+    try {
+      const response = await crmApiFetch(`/control-panel/sessions/${encodeURIComponent(session.id)}/revoke`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not revoke this session.');
+      await loadSecuritySettings();
+      setAccessMessage(`Revoked ${session.deviceLabel} for ${session.user.email}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not revoke this session.');
+    }
+  }
+
   async function loadActivationRequests(signal?: AbortSignal) {
     try {
       const response = await crmApiFetch('/control-panel/subscription-activation-requests', signal ? { signal } : {});
@@ -417,6 +538,36 @@ export default function ControlPanelPage() {
       if (!(caught instanceof Error) || caught.name !== 'AbortError') {
         setError(caught instanceof Error ? caught.message : 'Could not load subscription activation requests.');
       }
+    }
+  }
+
+  async function loadProvisioningRequests(signal?: AbortSignal) {
+    try {
+      const response = await crmApiFetch('/control-panel/provisioning-requests', signal ? { signal } : {});
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== 'object' || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
+        throw new Error('Could not load provisioning requests.');
+      }
+      setProvisioningRequests((payload as { data: ProvisioningRequest[] }).data);
+    } catch (caught) {
+      if (!(caught instanceof Error) || caught.name !== 'AbortError') setError(caught instanceof Error ? caught.message : 'Could not load provisioning requests.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function retryActivationEmail(item: ProvisioningRequest) {
+    setBusyOrganizationId(item.id);
+    setError('');
+    try {
+      const response = await crmApiFetch(`/control-panel/provisioning-requests/${encodeURIComponent(item.requestId)}/retry-activation-email`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not retry activation email.');
+      await loadProvisioningRequests();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not retry activation email.');
+    } finally {
+      setBusyOrganizationId('');
     }
   }
 
@@ -452,16 +603,36 @@ export default function ControlPanelPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadOrganizations(controller.signal);
-    void loadPlans(controller.signal);
-    void loadActivationRequests(controller.signal);
-    void loadWorkspaceSignupRequests(controller.signal);
-    void loadAuditLogs();
+    setError('');
+    if (section === 'overview') {
+      setLoading(true);
+      void loadOrganizations(controller.signal);
+      void loadActivationRequests(controller.signal);
+      void loadWorkspaceSignupRequests(controller.signal);
+    } else if (section === 'onboarding' || section === 'plans') {
+      void loadPlans(controller.signal);
+    } else if (section === 'approvals') {
+      void loadPlans(controller.signal);
+      void loadActivationRequests(controller.signal);
+      void loadWorkspaceSignupRequests(controller.signal);
+    } else if (section === 'provisioning') {
+      setLoading(true);
+      void loadProvisioningRequests(controller.signal);
+    } else if (section === 'workspaces') {
+      setLoading(true);
+      void loadOrganizations(controller.signal);
+      void loadPlans(controller.signal);
+    } else if (section === 'audit-log') {
+      void loadAuditLogs();
+    } else if (section === 'security') {
+      setLoading(true);
+      void loadSecuritySettings(controller.signal).finally(() => setLoading(false));
+    }
     return () => controller.abort();
-  }, []);
+  }, [section]);
   useEffect(() => {
     const query = search.trim();
-    if (!query) {
+    if (section !== 'workspaces' || !query) {
       setAdminMatchIds([]);
       setSearchingAdmins(false);
       return;
@@ -503,7 +674,7 @@ export default function ControlPanelPage() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [search]);
+  }, [search, section]);
   useEffect(() => {
     const dialog = actionDialogRef.current;
     if (pendingSensitiveAction && dialog && !dialog.open) dialog.showModal();
@@ -630,9 +801,16 @@ export default function ControlPanelPage() {
         features: planDraft.features.split('\n').map((feature) => feature.trim()).filter(Boolean),
         modules: planDraft.modules,
         employeeLimit: planDraft.employeeLimit === '' ? null : Number(planDraft.employeeLimit),
+        maxDevicesPerUser: Number(planDraft.maxDevicesPerUser),
+        deviceRestrictionEnabled: planDraft.deviceRestrictionEnabled,
         usageLimits,
         isActive: planDraft.isActive,
+        applyTo: planApplyScope,
+        ...(planApplyScope === 'organization' ? { organizationId: planTargetOrganizationId } : {}),
       };
+      if (editingPlanCode && planApplyScope === 'organization' && !planTargetOrganizationId) {
+        throw new Error('Choose the workspace that should receive this plan change.');
+      }
       const response = await crmApiFetch(
         editingPlanCode ? `/control-panel/plans/${encodeURIComponent(editingPlanCode)}` : '/control-panel/plans',
         {
@@ -647,9 +825,13 @@ export default function ControlPanelPage() {
         throw new Error(apiError?.message ?? 'Could not save subscription plan.');
       }
       await loadPlans();
-      setPlanMessage(`${planDraft.name} ${editingPlanCode ? 'updated' : 'created'}.`);
+      const targetName = organizations.find(({ id }) => id === planTargetOrganizationId)?.name;
+      setPlanMessage(editingPlanCode
+        ? planApplyScope === 'organization' ? `${planDraft.name} updated for ${targetName ?? 'the selected workspace'} only.` : `${planDraft.name} updated for all workspaces using this plan.`
+        : `${planDraft.name} created and available to all workspaces.`);
       setPlanDraft(emptyPlan);
       setEditingPlanCode('');
+      setPlanApplyScope('all');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not save subscription plan.');
     } finally {
@@ -657,33 +839,77 @@ export default function ControlPanelPage() {
     }
   }
 
-  function editPlan(plan: SubscriptionPlan) {
+  async function editPlan(plan: SubscriptionPlan) {
+    let effectivePlan = plan;
+    if (planApplyScope === 'organization' && !planTargetOrganizationId) {
+      setError('Choose a workspace before editing a workspace-specific plan.');
+      return;
+    }
+    if (planApplyScope === 'organization') {
+      try {
+        const response = await crmApiFetch(`/control-panel/plans/${encodeURIComponent(plan.code)}?organizationId=${encodeURIComponent(planTargetOrganizationId)}`);
+        const payload: unknown = await response.json();
+        const value = typeof payload === 'object' && payload !== null && 'data' in payload ? (payload as { data?: unknown }).data : null;
+        if (!response.ok || typeof value !== 'object' || value === null) throw new Error('Could not load this workspace’s plan settings.');
+        const record = value as Record<string, unknown>;
+        effectivePlan = {
+          ...plan,
+          name: typeof record.name === 'string' ? record.name : plan.name,
+          price: typeof record.price === 'number' ? record.price : plan.price,
+          currency: typeof record.currency === 'string' ? record.currency.trim() : plan.currency,
+          billingInterval: record.billingInterval === 'yearly' ? 'yearly' : 'monthly',
+          trialDays: typeof record.trialDays === 'number' ? record.trialDays : plan.trialDays,
+          features: Array.isArray(record.features) ? record.features as string[] : plan.features,
+          modules: Array.isArray(record.modules) ? record.modules as string[] : plan.modules,
+          employeeLimit: typeof record.employeeLimit === 'number' ? record.employeeLimit : null,
+          maxDevicesPerUser: typeof record.maxDevicesPerUser === 'number' ? record.maxDevicesPerUser : plan.maxDevicesPerUser,
+          deviceRestrictionEnabled: typeof record.deviceRestrictionEnabled === 'boolean' ? record.deviceRestrictionEnabled : plan.deviceRestrictionEnabled,
+          usageLimits: typeof record.usageLimits === 'object' && record.usageLimits !== null ? record.usageLimits as Record<string, number> : plan.usageLimits,
+          isActive: typeof record.isActive === 'boolean' ? record.isActive : plan.isActive,
+        };
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : 'Could not load this workspace’s plan settings.');
+        return;
+      }
+    }
     setEditingPlanCode(plan.code);
     setPlanDraft({
-      code: plan.code,
-      name: plan.name,
-      price: String(plan.price),
-      currency: plan.currency,
-      billingInterval: plan.billingInterval,
-      trialDays: String(plan.trialDays),
-      features: plan.features.join('\n'),
-      modules: plan.modules,
-      employeeLimit: plan.employeeLimit === null ? '' : String(plan.employeeLimit),
-      usageLimits: JSON.stringify(plan.usageLimits, null, 2),
-      isActive: plan.isActive,
+      code: effectivePlan.code,
+      name: effectivePlan.name,
+      price: String(effectivePlan.price),
+      currency: effectivePlan.currency,
+      billingInterval: effectivePlan.billingInterval,
+      trialDays: String(effectivePlan.trialDays),
+      features: effectivePlan.features.join('\n'),
+      modules: effectivePlan.modules,
+      employeeLimit: effectivePlan.employeeLimit === null ? '' : String(effectivePlan.employeeLimit),
+      maxDevicesPerUser: String(effectivePlan.maxDevicesPerUser),
+      deviceRestrictionEnabled: effectivePlan.deviceRestrictionEnabled,
+      usageLimits: JSON.stringify(effectivePlan.usageLimits, null, 2),
+      isActive: effectivePlan.isActive,
     });
     setPlanMessage('');
   }
 
   async function togglePlanActive(plan: SubscriptionPlan) {
     const action = plan.isActive ? 'deactivate' : 'activate';
-    if (!window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Activate'} the ${plan.name} plan?`)) return;
+    if (planApplyScope === 'organization' && !planTargetOrganizationId) {
+      setError('Choose a workspace before changing this plan for one workspace.');
+      return;
+    }
+    const targetName = organizations.find(({ id }) => id === planTargetOrganizationId)?.name;
+    const scopeText = planApplyScope === 'organization' ? ` for ${targetName ?? 'the selected workspace'} only` : ' for all workspaces';
+    if (!window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Activate'} the ${plan.name} plan${scopeText}?`)) return;
     setError('');
     try {
       const response = await crmApiFetch(`/control-panel/plans/${encodeURIComponent(plan.code)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: !plan.isActive }),
+        body: JSON.stringify({
+          isActive: !plan.isActive,
+          applyTo: planApplyScope,
+          ...(planApplyScope === 'organization' ? { organizationId: planTargetOrganizationId } : {}),
+        }),
       });
       const payload: unknown = await response.json();
       if (!response.ok) {
@@ -691,7 +917,7 @@ export default function ControlPanelPage() {
         throw new Error(apiError?.message ?? `Could not ${action} plan.`);
       }
       await loadPlans();
-      setPlanMessage(`${plan.name} ${action}d.`);
+      setPlanMessage(`${plan.name} ${action}d${scopeText}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : `Could not ${action} plan.`);
     }
@@ -739,6 +965,59 @@ export default function ControlPanelPage() {
       setError(caught instanceof Error ? caught.message : 'Could not load the audit log.');
     } finally {
       setLoadingAuditLogs(false);
+    }
+  }
+
+  async function exportAuditLogs() {
+    setExportingAuditLogs(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (auditActionFilter !== 'all') params.set('action', auditActionFilter);
+      const response = await crmApiFetch(`/control-panel/audit-logs/export${params.size ? `?${params}` : ''}`);
+      const payload: unknown = await response.json();
+      if (!response.ok || typeof payload !== 'object' || payload === null || !Array.isArray((payload as { data?: unknown }).data)) {
+        const apiError = typeof payload === 'object' && payload !== null && 'error' in payload
+          ? (payload as { error?: { message?: string } }).error
+          : undefined;
+        throw new Error(apiError?.message ?? 'Could not export the platform audit log.');
+      }
+      const exportRows = (payload as { data: {
+        createdAt: string;
+        actorName: string | null;
+        actorEmail: string | null;
+        action: string;
+        targetType: string;
+        targetId: string | null;
+        reason: string | null;
+        details: unknown;
+      }[] }).data;
+      const filteredRows = exportRows.filter((log) => !normalizedAuditSearch || [
+        log.action,
+        log.targetType,
+        log.targetId,
+        log.actorName,
+        log.actorEmail,
+        log.reason,
+        JSON.stringify(log.details),
+      ].some((value) => value?.toLowerCase().includes(normalizedAuditSearch)));
+      downloadCsv('platform-audit-log.csv',
+        ['timestamp', 'actor_name', 'actor_email', 'action', 'target_type', 'target_id', 'reason', 'details'],
+        filteredRows.map((log) => [
+          log.createdAt,
+          log.actorName ?? '',
+          log.actorEmail ?? '',
+          log.action,
+          log.targetType,
+          log.targetId ?? '',
+          log.reason ?? '',
+          JSON.stringify(log.details ?? ''),
+        ]));
+      setAuditExportMessage(`Exported ${filteredRows.length} platform audit entries.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not export the platform audit log.');
+    } finally {
+      setExportingAuditLogs(false);
     }
   }
 
@@ -845,7 +1124,7 @@ export default function ControlPanelPage() {
     });
   }
 
-  function requestSubscriptionStatus(organization: Organization, status: 'active' | 'expired' | 'cancelled') {
+  function requestSubscriptionStatus(organization: Organization, status: 'active' | 'trial' | 'expired' | 'cancelled') {
     setActionReason('');
     setPendingSensitiveAction({ kind: 'subscription', organization, status });
   }
@@ -914,7 +1193,7 @@ export default function ControlPanelPage() {
 
   async function setSubscriptionStatus(
     organization: Organization,
-    status: 'active' | 'expired' | 'cancelled',
+    status: 'active' | 'trial' | 'expired' | 'cancelled',
     reason: string,
   ): Promise<boolean> {
     const activeDefault = subscriptionPlans.find((plan) => plan.isActive)?.code ?? '';
@@ -936,6 +1215,7 @@ export default function ControlPanelPage() {
               ? { endsAt: new Date(`${accessEndDates[organization.id]}T23:59:59`).toISOString() }
               : {}),
           } : {}),
+          ...(status === 'trial' ? { planCode, trialDays: 2 } : {}),
         }),
       });
       let payload: unknown;
@@ -979,11 +1259,11 @@ export default function ControlPanelPage() {
         <div className="control-panel-title-row">
           <div>
             <p className="date-label">INTERNAL ADMINISTRATION</p>
-            <h1>Workspace overview</h1>
-            <p className="control-panel-intro">Manage plans and access for customer workspaces. Your platform-admin account does not need a customer plan.</p>
+            <h1>{currentSection.label}</h1>
+            <p className="control-panel-intro">{currentSection.description}</p>
           </div>
           <div className="control-panel-title-actions">
-            <button suppressHydrationWarning className="control-panel-action" type="button" disabled={refreshing || loading} onClick={() => void refreshOrganizations()}>
+            <button suppressHydrationWarning className="control-panel-action" type="button" disabled={refreshing || loading} onClick={() => section === 'provisioning' ? void loadProvisioningRequests() : void refreshOrganizations()}>
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </button>
             <span className="control-panel-live"><i /> Admin console</span>
@@ -998,7 +1278,18 @@ export default function ControlPanelPage() {
         )}
         {accessMessage && <p className="control-panel-success control-panel-access-message" role="status">{accessMessage}</p>}
 
-        <section id="overview" className="control-panel-metrics" aria-label="Workspace summary">
+        <div className="control-panel-layout">
+        <nav className="control-panel-nav" aria-label="Control panel pages">
+          {controlPanelSections.map((item) => (
+            <Link key={item.id} href={item.href} aria-current={section === item.id ? 'page' : undefined}>
+              <span>{item.label}</span>
+              {item.id === 'approvals' && (activationRequests.length + workspaceSignupRequests.length > 0) && <span className="control-panel-nav-count">{activationRequests.length + workspaceSignupRequests.length}</span>}
+            </Link>
+          ))}
+        </nav>
+        <div className="control-panel-main">
+        {section === 'overview' && <>
+        <section className="control-panel-metrics" aria-label="Platform summary">
           <article className="control-panel-metric">
             <span className="control-panel-metric-icon violet">▦</span>
             <div><p>Total tenants</p><strong>{loading ? '—' : organizations.length}</strong></div>
@@ -1013,21 +1304,21 @@ export default function ControlPanelPage() {
           </article>
         </section>
         <p className="control-panel-billing-note">Workspace revenue shows won CRM deal value; open deal value is shown separately as pipeline. Payment revenue is unavailable because no payment ledger is connected.</p>
-        <nav className="control-panel-nav" aria-label="Control panel sections">
-          <a href="#overview">Overview</a>
-          <a href="#onboarding">Onboard workspace</a>
-          <a href="#plans">Subscription plans</a>
-          <a href="#workspace-signups">Workspace approvals</a>
-          <a href="#activation-requests">Activation requests</a>
-          <a href="#workspaces">Workspaces</a>
-          <a href="#audit-log">Audit log</a>
-        </nav>
+        <div className="control-panel-overview-links" aria-label="Administration shortcuts">
+          {controlPanelSections.filter((item) => item.id !== 'overview').map((item) => (
+            <Link key={item.id} href={item.href}>
+              <strong>{item.label}</strong><span>{item.description}</span><b aria-hidden="true">&rarr;</b>
+            </Link>
+          ))}
+        </div>
+        </>}
 
+        {section === 'approvals' && <div className="control-panel-section-stack">
         <section id="workspace-signups" className="panel control-panel-table" aria-label="Workspace signup approvals">
           <div className="panel-heading">
             <div className="control-panel-section-title">
-              <h2>Workspace signup approvals</h2>
-              <p>{workspaceSignupRequests.length} awaiting platform-admin review</p>
+              <h2>Legacy workspace signup approvals</h2>
+              <p>{workspaceSignupRequests.length} older signups awaiting platform-admin review</p>
             </div>
           </div>
           {workspaceSignupRequests.length ? (
@@ -1092,7 +1383,26 @@ export default function ControlPanelPage() {
             </div>
           ) : <p className="control-panel-empty">No trial or plan requests are waiting.</p>}
         </section>
+        </div>}
 
+        {section === 'provisioning' && <section className="panel control-panel-table" aria-label="CRM provisioning requests">
+          <div className="panel-heading"><div className="control-panel-section-title"><h2>Provisioning requests</h2><p>{provisioningRequests.length} recent central-commerce CRM requests</p></div></div>
+          {provisioningRequests.length ? <div className="table-scroll"><table>
+            <thead><tr><th>REQUEST / ORDER</th><th>WORKSPACE</th><th>PLAN</th><th>STATUS</th><th>ACTIVATION EMAIL</th><th>CREATED</th><th>ACTION</th></tr></thead>
+            <tbody>{provisioningRequests.map((item) => <tr key={item.id}>
+              <td><strong>{item.requestId}</strong><small>{item.orderId}</small></td>
+              <td>{item.organizationId ?? '—'}<small>{item.product.toUpperCase()}</small></td>
+              <td>{item.planCode}</td>
+              <td><span className={`control-panel-status ${item.status === 'SUCCEEDED' ? 'active' : item.status === 'FAILED' ? 'cancelled' : 'pending'}`}>{item.status}</span>{item.failureCode && <small>{item.failureCode}</small>}</td>
+              <td>{item.activationEmailSent ? 'Sent' : 'Needs retry'}</td>
+              <td>{new Date(item.createdAt).toLocaleString()}</td>
+              <td>{!item.activationEmailSent && item.status === 'SUCCEEDED' ? <button className="control-panel-action" type="button" disabled={Boolean(busyOrganizationId)} onClick={() => void retryActivationEmail(item)}>{busyOrganizationId === item.id ? 'Sending…' : 'Retry email'}</button> : '—'}</td>
+            </tr>)}</tbody>
+          </table></div> : <p className="control-panel-empty">No provisioning requests yet.</p>}
+        </section>}
+        {section === 'partners' && <PartnerManagementPanel />}
+
+        {section === 'onboarding' && <>
         <section id="onboarding" className="panel control-panel-onboarding" aria-label="Onboard customer workspace">
           <div className="panel-heading">
             <div className="control-panel-section-title">
@@ -1119,18 +1429,24 @@ export default function ControlPanelPage() {
             <button suppressHydrationWarning className="control-panel-action primary" type="submit" disabled={onboardingBusy}>{onboardingBusy ? 'Creating…' : 'Create workspace'}</button>
           </form>
         </section>
+        </>}
 
+        {section === 'plans' && <>
         <section id="plans" className="panel control-panel-plan-management" aria-label="Subscription plans">
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Subscription plans</h2>
                 <p>Persisted plans used when onboarding tenants and setting access. Employee caps and selected modules are enforced. Plan changes do not process payments.</p>
             </div>
+            <div className="control-panel-plan-scope">
+              <label>Plan edit scope<select disabled={Boolean(editingPlanCode)} value={planApplyScope} onChange={(event) => setPlanApplyScope(event.target.value as 'all' | 'organization')}><option value="all">All workspaces</option><option value="organization">One workspace</option></select></label>
+              {planApplyScope === 'organization' && <label>Workspace<select disabled={Boolean(editingPlanCode)} value={planTargetOrganizationId} onChange={(event) => setPlanTargetOrganizationId(event.target.value)}><option value="">Choose a workspace</option>{organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}</select></label>}
+            </div>
           </div>
           {planMessage && <p className="control-panel-success" role="status">{planMessage}</p>}
           <div className="table-scroll control-panel-plan-table">
             <table>
-              <thead><tr><th>PLAN</th><th>PRICE</th><th>INTERVAL</th><th>TRIAL</th><th>EMPLOYEES</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
+              <thead><tr><th>PLAN</th><th>PRICE</th><th>INTERVAL</th><th>TRIAL</th><th>EMPLOYEES</th><th>DEVICES / USER</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
               <tbody>
                 {subscriptionPlans.map((plan) => (
                   <tr key={plan.code}>
@@ -1139,21 +1455,23 @@ export default function ControlPanelPage() {
                     <td>{plan.billingInterval}</td>
                     <td>{plan.trialDays} days</td>
                     <td>{plan.employeeLimit ?? 'Unlimited'}</td>
+                    <td>{plan.deviceRestrictionEnabled ? plan.maxDevicesPerUser : 'Unlimited'}</td>
                     <td><span className={`control-panel-status ${plan.isActive ? 'active' : 'cancelled'}`}>{plan.isActive ? 'Active' : 'Inactive'}</span></td>
                     <td>
                       <div className="control-panel-plan-actions">
-                        <button className="control-panel-action" type="button" onClick={() => editPlan(plan)}>Edit</button>
-                        <button className="control-panel-action" type="button" onClick={() => void togglePlanActive(plan)}>{plan.isActive ? 'Deactivate' : 'Activate'}</button>
+                        <button className="control-panel-action" type="button" onClick={() => void editPlan(plan)}>Edit</button>
+                        {planApplyScope === 'all' && <button className="control-panel-action" type="button" onClick={() => void togglePlanActive(plan)}>{plan.isActive ? 'Deactivate' : 'Activate'}</button>}
                       </div>
                     </td>
                   </tr>
                 ))}
-                {subscriptionPlans.length === 0 && <tr><td colSpan={7} className="control-panel-empty">No plans found. Create your first plan below.</td></tr>}
+                {subscriptionPlans.length === 0 && <tr><td colSpan={8} className="control-panel-empty">No plans found. Create your first plan below.</td></tr>}
               </tbody>
             </table>
           </div>
           <form className="control-panel-plan-form control-panel-onboarding-form" onSubmit={(event) => void savePlan(event)}>
             <h3>{editingPlanCode ? `Edit ${editingPlanCode}` : 'Create a plan'}</h3>
+            {!editingPlanCode && <p>New plans are shared with all workspaces. Choose an edit scope above to customize an existing plan.</p>}
             <label>Plan code<input value={planDraft.code} disabled={Boolean(editingPlanCode)} required pattern="[a-z0-9][a-z0-9-]{1,31}" onChange={(event) => setPlanDraft((current) => ({ ...current, code: event.target.value.toLowerCase() }))} placeholder="team-monthly" /></label>
             <label>Plan name<input value={planDraft.name} required maxLength={80} onChange={(event) => setPlanDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Team Monthly" /></label>
             <label>Price (whole units)<input type="number" min="0" step="1" value={planDraft.price} required onChange={(event) => setPlanDraft((current) => ({ ...current, price: event.target.value }))} /></label>
@@ -1161,6 +1479,8 @@ export default function ControlPanelPage() {
             <label>Billing interval<select value={planDraft.billingInterval} onChange={(event) => setPlanDraft((current) => ({ ...current, billingInterval: event.target.value as SubscriptionPlan['billingInterval'] }))}><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
             <label>Trial days<input type="number" min="0" max="365" step="1" value={planDraft.trialDays} onChange={(event) => setPlanDraft((current) => ({ ...current, trialDays: event.target.value }))} /></label>
             <label>Employee limit<input type="number" min="1" step="1" value={planDraft.employeeLimit} onChange={(event) => setPlanDraft((current) => ({ ...current, employeeLimit: event.target.value }))} placeholder="Blank means unlimited" /></label>
+            <label>Maximum simultaneous devices per user<input type="number" min="1" max="100" step="1" value={planDraft.maxDevicesPerUser} onChange={(event) => setPlanDraft((current) => ({ ...current, maxDevicesPerUser: event.target.value }))} /></label>
+            <label className="control-panel-checkbox"><input type="checkbox" checked={planDraft.deviceRestrictionEnabled} onChange={(event) => setPlanDraft((current) => ({ ...current, deviceRestrictionEnabled: event.target.checked }))} /> Enforce this device limit for the plan</label>
             <label>Features (one per line)<textarea rows={4} value={planDraft.features} onChange={(event) => setPlanDraft((current) => ({ ...current, features: event.target.value }))} /></label>
             <fieldset className="control-panel-module-options">
               <legend>Modules included in this plan</legend>
@@ -1184,11 +1504,13 @@ export default function ControlPanelPage() {
             <label className="control-panel-checkbox"><input type="checkbox" checked={planDraft.isActive} onChange={(event) => setPlanDraft((current) => ({ ...current, isActive: event.target.checked }))} /> Active and available for assignment</label>
             <div className="control-panel-plan-form-actions">
               <button className="control-panel-action primary" type="submit" disabled={savingPlan}>{savingPlan ? 'Saving…' : editingPlanCode ? 'Save plan' : 'Create plan'}</button>
-              {editingPlanCode && <button className="control-panel-action" type="button" onClick={() => { setEditingPlanCode(''); setPlanDraft(emptyPlan); }}>Cancel edit</button>}
+              {editingPlanCode && <button className="control-panel-action" type="button" onClick={() => { setEditingPlanCode(''); setPlanDraft(emptyPlan); setPlanApplyScope('all'); }}>Cancel edit</button>}
             </div>
           </form>
         </section>
+        </>}
 
+        {section === 'workspaces' && <>
         <section id="workspaces" className="panel control-panel-table" aria-label="Customer workspaces">
           <div className="panel-heading">
             <div className="control-panel-section-title">
@@ -1276,7 +1598,7 @@ export default function ControlPanelPage() {
             <p className="control-panel-empty">No customer workspaces yet.</p>
           ) : (
             <div className="table-scroll">
-              <table>
+              <table className="control-panel-workspace-list">
                 <thead>
                   <tr>
                     <th>WORKSPACE</th>
@@ -1359,6 +1681,9 @@ export default function ControlPanelPage() {
                         <div className="control-panel-plan">
                           <strong>{organization.subscription.planCode ?? 'No plan'}</strong>
                           <span className={`control-panel-status ${organization.subscription.status}`}>{organization.subscription.status}</span>
+                          {organization.lastPayment && <small className={`control-panel-payment-status ${organization.lastPayment.status}`} title={organization.lastPayment.payuId ? `PayU payment ${organization.lastPayment.payuId}` : `Transaction ${organization.lastPayment.transactionId}`}>
+                            {organization.lastPayment.status === 'succeeded' ? 'Payment verified' : organization.lastPayment.status === 'failed' ? 'Payment failed' : 'Payment pending'} · {organization.lastPayment.currency} {Number(organization.lastPayment.amount).toLocaleString('en-IN')} · {new Date(organization.lastPayment.paidAt ?? organization.lastPayment.createdAt).toLocaleDateString()}
+                          </small>}
                         </div>
                       </td>
                       <td>{organization.subscription.endsAt ? new Date(organization.subscription.endsAt).toLocaleDateString() : '—'}</td>
@@ -1381,6 +1706,7 @@ export default function ControlPanelPage() {
                                   ? `Reactivate ${currentPlanName}`
                                   : `Activate ${currentPlanName}`}
                           </button>
+                          {(organization.subscription.status === 'trial' || (organization.subscription.status === 'expired' && organization.subscription.provider === 'partner')) && <button suppressHydrationWarning className="control-panel-action" type="button" disabled={busyOrganizationId === organization.id || !subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode && plan.isActive)} onClick={() => requestSubscriptionStatus(organization, 'trial')}>Extend 48 hours</button>}
                           <button className="control-panel-action" type="button" aria-expanded={Boolean(expandedModules[organization.id])} disabled={busyOrganizationId === organization.id} onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: !current[organization.id] }))}>
                             Modules
                           </button>
@@ -1510,15 +1836,52 @@ export default function ControlPanelPage() {
             </div>
           )}
         </section>
+        </>}
+        {section === 'security' && <>
+        <section className="panel control-panel-plan-management" aria-label="Global security settings">
+          <div className="panel-heading"><div className="control-panel-section-title"><h2>Authentication and session policy</h2><p>Changes are enforced by the API immediately and recorded in the platform audit log.</p></div></div>
+          <form className="control-panel-plan-form control-panel-onboarding-form" onSubmit={(event) => void saveSecuritySettings(event)}>
+            <label className="control-panel-checkbox"><input type="checkbox" checked={securityConfiguration.failedLoginLockoutEnabled} onChange={(event) => setSecurityConfiguration((current) => ({ ...current, failedLoginLockoutEnabled: event.target.checked }))} /> Enable temporary login lockout</label>
+            <label>Failed attempts before lockout<input type="number" min="1" max="10" value={securityConfiguration.maxFailedLoginAttempts} onChange={(event) => setSecurityConfiguration((current) => ({ ...current, maxFailedLoginAttempts: Number(event.target.value) }))} /></label>
+            <label>Lockout duration in minutes<input type="number" min="1" max="1440" value={securityConfiguration.lockoutDurationMinutes} onChange={(event) => setSecurityConfiguration((current) => ({ ...current, lockoutDurationMinutes: Number(event.target.value) }))} /></label>
+            <label>Session lifetime in minutes<input type="number" min="5" max="43200" value={securityConfiguration.sessionLifetimeMinutes} onChange={(event) => setSecurityConfiguration((current) => ({ ...current, sessionLifetimeMinutes: Number(event.target.value) }))} /></label>
+            <label className="control-panel-checkbox"><input type="checkbox" checked={securityConfiguration.deviceRestrictionsEnabled} onChange={(event) => setSecurityConfiguration((current) => ({ ...current, deviceRestrictionsEnabled: event.target.checked }))} /> Enable plan device restrictions globally</label>
+            <button className="control-panel-action primary" type="submit" disabled={savingSecurity}>{savingSecurity ? 'Saving…' : 'Save security settings'}</button>
+          </form>
+        </section>
+
+        <section className="panel control-panel-table" aria-label="Device usage by user">
+          <div className="panel-heading"><div className="control-panel-section-title"><h2>Active device usage</h2><p>Limits apply per user. Existing sessions are retained after a limit is reduced; new devices are blocked until usage is within policy.</p></div></div>
+          <div className="table-scroll"><table><thead><tr><th>USER</th><th>WORKSPACE</th><th>ACTIVE DEVICES</th><th>ACTIVE SESSIONS</th><th>PLAN LIMIT</th><th>STATUS</th></tr></thead><tbody>
+            {securityUsage.map((usage) => <tr key={usage.userId}><td>{usage.user.name}<small>{usage.user.email}</small></td><td>{usage.organization?.name ?? 'Platform account'}</td><td>{usage.activeDevices}</td><td>{usage.activeSessions}</td><td>{usage.deviceLimit ?? 'Not configured'}</td><td>{usage.overLimit ? <span className="control-panel-status cancelled">Over limit</span> : <span className="control-panel-status active">Within limit</span>}</td></tr>)}
+            {securityUsage.length === 0 && <tr><td colSpan={6} className="control-panel-empty">No active sessions found.</td></tr>}
+          </tbody></table></div>
+        </section>
+
+        <section className="panel control-panel-table" aria-label="Active sessions">
+          <div className="panel-heading"><div className="control-panel-section-title"><h2>Active sessions</h2><p>Up to 500 non-expired sessions. Revocation is immediate and audited.</p></div><button className="control-panel-action" type="button" onClick={() => void loadSecuritySettings()}>Refresh sessions</button></div>
+          <div className="table-scroll"><table><thead><tr><th>USER</th><th>DEVICE</th><th>WORKSPACE</th><th>LAST ACTIVE</th><th>EXPIRES</th><th>ACTION</th></tr></thead><tbody>
+            {securitySessions.map((session) => <tr key={session.id}><td>{session.user.name}<small>{session.user.email}</small></td><td>{session.deviceLabel}<small>{session.userAgent ?? 'User agent unavailable'}</small></td><td>{session.organization?.name ?? 'Platform account'}</td><td>{new Date(session.lastSeenAt).toLocaleString()}</td><td>{new Date(session.expiresAt).toLocaleString()}</td><td><button className="control-panel-action" type="button" onClick={() => void revokeAdminSession(session)}>Revoke</button></td></tr>)}
+            {securitySessions.length === 0 && <tr><td colSpan={6} className="control-panel-empty">No active sessions found.</td></tr>}
+          </tbody></table></div>
+        </section>
+        </>}
+
+        {section === 'audit-log' && <>
         <section id="audit-log" className="panel control-panel-audit" aria-label="Audit log">
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Audit log</h2>
               <p>Showing the latest 50 platform administrator actions. Older entries are not included here.</p>
             </div>
-            <button suppressHydrationWarning className="control-panel-action" type="button" disabled={loadingAuditLogs} onClick={() => void loadAuditLogs()}>
-              {loadingAuditLogs ? 'Loading…' : 'Load audit log'}
-            </button>
+            <div className="control-panel-audit-actions">
+              <button suppressHydrationWarning className="control-panel-action" type="button" disabled={loadingAuditLogs} onClick={() => void loadAuditLogs()}>
+                {loadingAuditLogs ? 'Loading…' : 'Load audit log'}
+              </button>
+              <button suppressHydrationWarning className="control-panel-action" type="button" disabled={exportingAuditLogs} onClick={() => void exportAuditLogs()}>
+                {exportingAuditLogs ? 'Exporting…' : 'Export filtered CSV'}
+              </button>
+            </div>
           </div>
           {auditLogs.length > 0 && (
             <div className="control-panel-audit-filters" role="group" aria-label="Filter audit entries">
@@ -1541,6 +1904,7 @@ export default function ControlPanelPage() {
               <span className="control-panel-audit-count">{visibleAuditLogs.length} of {auditLogs.length} recent entries</span>
             </div>
           )}
+          {auditExportMessage && <p className="control-panel-empty" role="status">{auditExportMessage}</p>}
           {auditLogs.length > 0 && (
             <div className="table-scroll">
               <table>
@@ -1564,8 +1928,11 @@ export default function ControlPanelPage() {
           {!loadingAuditLogs && auditLogs.length === 0 && <p className="control-panel-empty">No administrative activity recorded yet.</p>}
           {!loadingAuditLogs && auditLogs.length > 0 && visibleAuditLogs.length === 0 && <p className="control-panel-empty">No recent audit entries match these filters.</p>}
         </section>
+        </>}
 
         <p className="control-panel-note">Plan and access changes are manual unless an existing billing provider records a payment. Suspended workspaces remain blocked until restored. Tenant member details are limited to account and role information.</p>
+        </div>
+        </div>
       </div>
       {pendingSensitiveAction && (
         <dialog
@@ -1583,7 +1950,7 @@ export default function ControlPanelPage() {
               {pendingSensitiveAction.kind === 'access'
                 ? pendingSensitiveAction.status === 'suspended' ? 'Suspend workspace access?' : 'Restore workspace access?'
                 : pendingSensitiveAction.kind === 'subscription'
-                  ? pendingSensitiveAction.status === 'active' ? 'Manually activate subscription?' : pendingSensitiveAction.status === 'expired' ? 'Expire subscription?' : 'Cancel subscription?'
+                  ? pendingSensitiveAction.status === 'active' ? 'Manually activate subscription?' : pendingSensitiveAction.status === 'trial' ? 'Extend two-day trial?' : pendingSensitiveAction.status === 'expired' ? 'Expire subscription?' : 'Cancel subscription?'
                   : 'Update CRM module access?'}
             </h2>
             <p className="control-panel-confirmation-copy">
@@ -1594,6 +1961,8 @@ export default function ControlPanelPage() {
                 : pendingSensitiveAction.kind === 'subscription'
                   ? pendingSensitiveAction.status === 'active'
                     ? `Manually assign ${pendingActionPlan?.name ?? pendingActionPlanCode ?? 'the selected plan'} to ${pendingSensitiveAction.organization.name}. No payment will be collected.`
+                    : pendingSensitiveAction.status === 'trial'
+                      ? `Extend the ${pendingSensitiveAction.organization.name} trial by 48 hours. This action is recorded in the platform audit log.`
                     : `This changes the subscription status for ${pendingSensitiveAction.organization.name}.`
                   : `Changes take effect immediately for ${pendingSensitiveAction.organization.name}.`}
             </p>

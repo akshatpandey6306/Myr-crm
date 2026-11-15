@@ -15,6 +15,8 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
   const [showPassword, setShowPassword] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [signupType, setSignupType] = useState<SignupType>('workspace');
+  const [pendingOtpEmail, setPendingOtpEmail] = useState('');
+  const [signupComplete, setSignupComplete] = useState(false);
 
   useEffect(() => {
     setHydrated(true);
@@ -24,20 +26,56 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
     event.preventDefault();
     setBusy(true);
     setError('');
+    setSuccess('');
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const verifyingSignup = isSignup && Boolean(pendingOtpEmail);
     try {
-      const response = await crmApiFetch(`/auth/${isSignup ? 'signup' : 'login'}`, {
+      const response = await crmApiFetch(`/auth/${isSignup ? (verifyingSignup ? 'signup/verify' : 'signup') : 'login'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+        body: JSON.stringify(verifyingSignup ? { email: pendingOtpEmail, otp: values.otp } : isSignup ? values : { email: values.email, password: values.password }),
       });
       const payload = await response.json();
       if (!response.ok) {
+        const code = payload?.code ?? payload?.error?.code;
+        if (isSignup && signupType === 'workspace' && !verifyingSignup && code === 'signup_otp_delivery_failed') {
+          setPendingOtpEmail(String(values.email ?? '').trim().toLowerCase());
+        }
         const message = payload?.error?.message ?? payload?.message ?? 'We could not sign you in. Check your details and try again.';
         throw new Error(Array.isArray(message) ? message.join(', ') : message);
       }
+      if (!isSignup && typeof values.joinCode === 'string' && values.joinCode.trim()) {
+        sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
+        if (payload.organization) sessionStorage.setItem('myr.organization', JSON.stringify(payload.organization));
+        const joinResponse = await crmApiFetch('/organizations/join-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ joinCode: values.joinCode.trim() }),
+        });
+        const joinPayload = await joinResponse.json();
+        if (!joinResponse.ok) {
+          const message = joinPayload?.error?.message ?? 'Could not request access to that workspace.';
+          throw new Error(Array.isArray(message) ? message.join(', ') : message);
+        }
+        if (joinPayload?.data?.status === 'active' && joinPayload?.data?.organization) {
+          sessionStorage.setItem('myr.organization', JSON.stringify(joinPayload.data.organization));
+          window.location.assign('/');
+          return;
+        }
+        window.location.assign('/join-workspace');
+        return;
+      }
       if (isSignup) {
-        setSuccess(payload.message ?? 'Your request was submitted for approval.');
+        if (verifyingSignup) {
+          setSignupComplete(true);
+          setPendingOtpEmail('');
+          setSuccess(payload.message ?? 'Your account is verified. You can now sign in.');
+        } else if (signupType === 'workspace') {
+          setPendingOtpEmail(String(values.email ?? '').trim().toLowerCase());
+          setSuccess(payload.message ?? 'Enter the verification code sent to the signup verification email.');
+        } else {
+          setSuccess(payload.message ?? 'Account created. Sign in to request access to your workspace.');
+        }
         return;
       }
       sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
@@ -47,6 +85,29 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
       setError(caught instanceof Error && caught.message.includes('fetch')
         ? 'Could not reach the CRM API. Start the API server and try again.'
         : caught instanceof Error ? caught.message : 'Something went wrong. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendSignupOtp() {
+    setBusy(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await crmApiFetch('/auth/signup/resend-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pendingOtpEmail }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        const message = payload?.error?.message ?? payload?.message ?? 'We could not send a new verification code.';
+        throw new Error(Array.isArray(message) ? message.join(', ') : message);
+      }
+      setSuccess(payload.message ?? 'A new verification code was sent.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Something went wrong. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -62,23 +123,41 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
       <section className="auth-main"><div className="auth-card"><div className="auth-mobile-brand"><Link className="brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link></div><span className="auth-step">{isSignup ? 'GET STARTED' : 'WELCOME BACK'}</span><h2>{isSignup ? 'Create an account' : 'Sign in to Myr'}</h2><p className="auth-subtitle">{isSignup ? 'Create a workspace or request access to your team.' : 'Pick up where you left off with your team.'}</p>
         <form className="auth-form" method="post" onSubmit={submit}>
           {hydrated ? <>
-          {isSignup && <>
+          {isSignup && !pendingOtpEmail && !signupComplete && <>
             <label htmlFor="auth-account-type">Account type</label><select id="auth-account-type" name="accountType" value={signupType} onChange={(event) => setSignupType(event.target.value as SignupType)}><option value="workspace">Create a new workspace</option><option value="join">Join an existing workspace</option></select>
             <label htmlFor="auth-name">Your name</label><input id="auth-name" name="name" type="text" autoComplete="name" placeholder="Maya Chen" required minLength={2} />
             {signupType === 'workspace'
               ? <><label htmlFor="auth-org">Workspace name</label><input id="auth-org" name="organizationName" type="text" placeholder="Studio North" required minLength={2} /></>
               : <p className="auth-subtitle">After creating your account, sign in and enter the join code from your workspace admin.</p>}
           </>}
-          <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
-          <div className="auth-password-label"><label htmlFor="auth-password">Password</label>{!isSignup && <Link href="/sign-up">Need an account?</Link>}</div>
-          <div className="auth-password-wrap"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isSignup ? 'new-password' : 'current-password'} placeholder={isSignup ? 'At least 8 characters' : 'Enter your password'} minLength={8} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? 'Hide' : 'Show'}</button></div>
+          {isSignup
+            ? pendingOtpEmail
+              ? <>
+                <p className="auth-subtitle">Enter the six-digit code sent to the workspace signup verification email. The code expires in 10 minutes.</p>
+                <label htmlFor="auth-signup-otp">Verification code</label>
+                <input id="auth-signup-otp" name="otp" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required />
+              </>
+              : signupComplete ? null : <>
+                <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
+              </>
+            : <>
+              <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
+              <label htmlFor="auth-join-code">Workspace code <span>(optional)</span></label><input id="auth-join-code" name="joinCode" type="text" autoComplete="off" placeholder="Enter the code from your workspace admin" />
+            </>}
+          {(!isSignup || (!pendingOtpEmail && !signupComplete)) && <>
+            <div className="auth-password-label"><label htmlFor="auth-password">Password</label></div>
+            <div className="auth-password-wrap"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isSignup ? 'new-password' : 'current-password'} placeholder={isSignup ? 'At least 8 characters' : 'Enter your password'} minLength={8} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? 'Hide' : 'Show'}</button></div>
+          </>}
           {error && <div className="auth-error" role="alert">{error}</div>}
-          {success && <div className="auth-success" role="status">{success} <Link href="/sign-in">Go to sign in</Link></div>}
-          <button className="auth-submit" type="submit" disabled={busy || Boolean(success)}>{busy ? <><span className="auth-spinner" /> {isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>
+          {success && <div className="auth-success" role="status">{success} {(!isSignup || signupType === 'join' || signupComplete) && <Link href="/sign-in">Go to sign in</Link>}</div>}
+          {pendingOtpEmail && <button className="auth-switch" type="button" onClick={resendSignupOtp} disabled={busy}>Resend verification code</button>}
+          {!signupComplete && <button className="auth-submit" type="submit" disabled={busy || (Boolean(success) && !pendingOtpEmail)}>{busy ? <><span className="auth-spinner" /> {pendingOtpEmail ? 'Verifying…' : isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{pendingOtpEmail ? 'Verify account' : isSignup ? 'Create account' : 'Sign in'} <span aria-hidden="true">→</span></>}</button>}
           </> : <p className="auth-form-loading" role="status">Preparing secure sign-in…</p>}
         </form>
-        {!isSignup && <p className="auth-switch">Password reset is temporarily unavailable; contact your platform administrator.</p>}
-        <p className="auth-switch">{isSignup ? 'Already have an account?' : 'New to Myr?'} <Link href={isSignup ? '/sign-in' : '/sign-up'}>{isSignup ? 'Sign in' : 'Create an account'}</Link></p>
+        {!isSignup && <p className="auth-switch"><Link href="/forgot-password">Forgot password?</Link></p>}
+        {isSignup
+          ? <p className="auth-switch">Already have an account? <Link href="/sign-in">Sign in</Link></p>
+          : <p className="auth-switch">Need to join a workspace? Ask its admin to create your CRM account and share the workspace code. Enter that code above when you sign in.</p>}
         <p className="auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
       </div><span className="auth-copyright">© 2026 Myr CRM · Secure workspace access</span></section>
     </main>

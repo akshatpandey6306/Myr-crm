@@ -15,6 +15,7 @@ export class DashboardController {
     const ownerUserId = assignedOwnerFilter(request);
     const leadsEnabled = request.enabledModules?.includes("leads") ?? true;
     const dealsEnabled = request.enabledModules?.includes("deals") ?? true;
+    const activitiesEnabled = request.enabledModules?.includes("activities") ?? true;
     const leadWhere = {
       organizationId,
       archivedAt: null,
@@ -26,12 +27,18 @@ export class DashboardController {
       ...(ownerUserId ? { ownerUserId } : {}),
     };
     const openDealsWhere = { ...dealWhere, status: "OPEN" as const };
+    const activityWhere = {
+      organizationId,
+      archivedAt: null,
+      ...(activitiesEnabled && request.organizationRole === "sales_rep" ? { assignedToUserId: request.userId } : {}),
+    };
 
-    const [totalLeads, openDeals, pipelineTotals, wonDeals, pipelines, recentDeals] = await Promise.all([
+    const [totalLeads, openDeals, pipelineTotals, wonDeals, wonTotals, pipelines, recentDeals, leadsByStatus, dealsByStatus, activitiesByStatus] = await Promise.all([
       leadsEnabled ? this.prisma.lead.count({ where: leadWhere }) : Promise.resolve(0),
       dealsEnabled ? this.prisma.deal.count({ where: openDealsWhere }) : Promise.resolve(0),
       dealsEnabled ? this.prisma.deal.aggregate({ where: openDealsWhere, _sum: { value: true } }) : Promise.resolve({ _sum: { value: 0 } }),
       dealsEnabled ? this.prisma.deal.count({ where: { ...dealWhere, status: "WON" } }) : Promise.resolve(0),
+      dealsEnabled ? this.prisma.deal.aggregate({ where: { ...dealWhere, status: "WON" }, _sum: { value: true } }) : Promise.resolve({ _sum: { value: 0 } }),
       dealsEnabled ? this.prisma.pipeline.findMany({
         where: { organizationId },
         include: { stages: { orderBy: { position: "asc" } } },
@@ -48,6 +55,9 @@ export class DashboardController {
           owner: { include: { user: { select: { name: true } } } },
         },
       }) : Promise.resolve([]),
+      leadsEnabled ? this.prisma.lead.groupBy({ by: ["status"], where: leadWhere, _count: { _all: true } }) : Promise.resolve([]),
+      dealsEnabled ? this.prisma.deal.groupBy({ by: ["status"], where: dealWhere, _count: { _all: true }, _sum: { value: true } }) : Promise.resolve([]),
+      activitiesEnabled ? this.prisma.activity.groupBy({ by: ["status"], where: activityWhere, _count: { _all: true } }) : Promise.resolve([]),
     ]);
 
     const stageTotals = dealsEnabled ? await this.prisma.deal.groupBy({
@@ -75,7 +85,14 @@ export class DashboardController {
           openDeals,
           pipelineValue: Number(pipelineTotals._sum.value ?? 0),
           wonDeals,
+          openPipelineValue: Number(dealsByStatus.find(({ status }) => status === "OPEN")?._sum.value ?? 0).toFixed(2),
+          wonRevenue: Number(wonTotals._sum.value ?? 0).toFixed(2),
+          openActivities: activitiesByStatus.filter(({ status }) => status === "OPEN" || status === "IN_PROGRESS").reduce((sum, item) => sum + item._count._all, 0),
+          completedActivities: activitiesByStatus.find(({ status }) => status === "COMPLETED")?._count._all ?? 0,
         },
+        leadsByStatus: leadsByStatus.map(({ status, _count }) => ({ status: status.toLowerCase(), count: _count._all })),
+        dealsByStatus: dealsByStatus.map(({ status, _count, _sum }) => ({ status: status.toLowerCase(), count: _count._all, value: _sum.value?.toString() ?? "0" })),
+        activitiesByStatus: activitiesByStatus.map(({ status, _count }) => ({ status: status.toLowerCase(), count: _count._all })),
         pipeline,
         recentDeals: recentDeals.map((deal) => ({
           id: deal.id,

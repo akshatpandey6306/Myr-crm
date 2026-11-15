@@ -40,6 +40,18 @@ enum ActivationRequestStatus {
   @@map("activation_request_status")
 }
 
+enum SubscriptionPaymentType {
+  TRIAL
+  PLAN
+  RENEWAL
+}
+
+enum SubscriptionPaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
 enum SubscriptionRequestType {
   TRIAL      @map("trial")
   ACTIVATION @map("activation")
@@ -119,6 +131,61 @@ enum ActivityPriority {
   @@map("activity_priority")
 }
 
+enum VendorStatus {
+  ACTIVE  @map("active")
+  PENDING @map("pending")
+  ON_HOLD @map("on_hold")
+
+  @@map("vendor_status")
+}
+
+enum BillingInvoiceStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+}
+
+enum BillingInvoicePaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+enum BillingQuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+enum BillingCustomerType {
+  CONTACT
+  COMPANY
+  CUSTOM
+}
+
+enum BillingPaymentMethod {
+  CASH
+  UPI
+  BANK_TRANSFER
+  CARD
+  CHEQUE
+  PAYMENT_GATEWAY
+  OTHER
+}
+
+enum BillingDiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum BillingTaxSystem {
+  GENERIC
+  INDIA_GST
+}
+
 enum RelatedRecordType {
   LEAD    @map("lead")
   CONTACT @map("contact")
@@ -163,6 +230,7 @@ enum AuditAction {
 enum EmailTokenPurpose {
   PASSWORD_RESET     @map("password_reset")
   EMAIL_VERIFICATION @map("email_verification")
+  ACCOUNT_ACTIVATION @map("account_activation")
 
   @@map("email_token_purpose")
 }
@@ -174,6 +242,8 @@ model User {
   passwordHash    String       @map("password_hash") @db.VarChar(255)
   status          UserStatus   @default(ACTIVE)
   emailVerifiedAt DateTime?    @map("email_verified_at") @db.Timestamptz(3)
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil        DateTime?  @map("locked_until") @db.Timestamptz(3)
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships     Membership[]
@@ -188,6 +258,8 @@ model Organization {
   id                     String             @id @default(uuid()) @db.Uuid
   joinCode               String             @unique @default(uuid()) @map("join_code") @db.Uuid
   name                   String             @db.VarChar(160)
+  slug                   String?            @unique @db.VarChar(63)
+  timezone               String             @default("UTC") @db.VarChar(64)
   status                 OrganizationStatus @default(ACTIVE)
   subscriptionPlan       String?            @map("subscription_plan") @db.VarChar(32)
   subscriptionStatus     SubscriptionStatus @default(ACTIVE) @map("subscription_status")
@@ -195,13 +267,15 @@ model Organization {
   subscriptionEndsAt     DateTime?          @map("subscription_ends_at") @db.Timestamptz(3)
   billingProvider        String?            @map("billing_provider") @db.VarChar(32)
   razorpaySubscriptionId String?            @map("razorpay_subscription_id") @db.VarChar(128)
-  enabledModules         String[]            @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"]) @map("enabled_modules")
+  enabledModules         String[]            @default(["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"]) @map("enabled_modules")
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships            Membership[]
   leads                  Lead[]
+  leadCalls              LeadCall[]
   contacts               Contact[]
   companies              Company[]
+  vendors                Vendor[]
   pipelines              Pipeline[]
   deals                  Deal[]
   activities             Activity[]
@@ -211,10 +285,33 @@ model Organization {
   notifications          Notification[]
   auditLogs              AuditLog[]
   settings               OrganizationSettings?
+  billingSettings        BillingSettings?
+  billingProducts        BillingProduct[]
+  billingInvoices        BillingInvoice[]
+  billingInvoiceItems    BillingInvoiceItem[]
+  billingQuotations      BillingQuotation[]
+  billingQuotationItems  BillingQuotationItem[]
+  billingPayments        BillingPayment[]
+  billingReceipts        BillingReceipt[]
+  billingAuditEvents     BillingAuditEvent[]
+  subscriptionPayments   SubscriptionPayment[]
+  subscriptionPlanOverrides OrganizationSubscriptionPlanOverride[]
   invitations            OrganizationInvitation[]
   activationRequests     SubscriptionActivationRequest[]
+  partnerMappings        PartnerCustomerMapping[]
+  partnerWebhookEvents   PartnerWebhookEvent[]
+  demoData               OrganizationDemoData?
 
   @@map("organizations")
+}
+
+model OrganizationDemoData {
+  organizationId String       @id @map("organization_id") @db.Uuid
+  loadedAt       DateTime?    @map("loaded_at") @db.Timestamptz(3)
+  clearedAt      DateTime?    @map("cleared_at") @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_demo_data")
 }
 
 model SubscriptionPlan {
@@ -226,14 +323,43 @@ model SubscriptionPlan {
   billingInterval String   @default("monthly") @map("billing_interval") @db.VarChar(16)
   trialDays       Int      @default(0) @map("trial_days")
   features        String[] @default([])
-  modules         String[] @default(["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"])
+  modules         String[] @default(["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"])
   employeeLimit   Int?     @map("employee_limit")
+  maxDevicesPerUser Int    @default(1) @map("max_devices_per_user")
+  deviceRestrictionEnabled Boolean @default(true) @map("device_restriction_enabled")
   usageLimits     Json     @default("{}") @map("usage_limits")
   isActive        Boolean  @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organizationOverrides OrganizationSubscriptionPlanOverride[]
 
   @@map("subscription_plans")
+}
+
+model OrganizationSubscriptionPlanOverride {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  planCode        String       @map("plan_code") @db.VarChar(32)
+  name            String       @db.VarChar(80)
+  price           Int
+  currency        String       @db.Char(3)
+  billingInterval String       @map("billing_interval") @db.VarChar(16)
+  trialDays       Int          @map("trial_days")
+  features        String[]     @default([])
+  modules         String[]     @default([])
+  employeeLimit   Int?         @map("employee_limit")
+  maxDevicesPerUser Int?       @map("max_devices_per_user")
+  deviceRestrictionEnabled Boolean? @map("device_restriction_enabled")
+  usageLimits     Json         @default("{}") @map("usage_limits")
+  isActive        Boolean      @default(true) @map("is_active")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan            SubscriptionPlan @relation(fields: [planCode], references: [code], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([organizationId, planCode])
+  @@index([planCode])
+  @@map("organization_subscription_plan_overrides")
 }
 
 model SubscriptionActivationRequest {
@@ -276,15 +402,19 @@ model Membership {
   organizationId         String                   @map("organization_id") @db.Uuid
   role                   MembershipRole           @default(SALES_REP)
   status                 MembershipStatus         @default(ACTIVE)
+  enabledModules         String[]                 @default([]) @map("enabled_modules")
   createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   leadsOwned             Lead[]                   @relation("LeadOwner")
   leadsCreated           Lead[]                   @relation("LeadCreator")
+  leadCallsLogged        LeadCall[]                @relation("LeadCallLogger")
   contactsOwned          Contact[]                @relation("ContactOwner")
   contactsCreated        Contact[]                @relation("ContactCreator")
   companiesOwned         Company[]                @relation("CompanyOwner")
   companiesCreated       Company[]                @relation("CompanyCreator")
+  vendorsOwned           Vendor[]                 @relation("VendorOwner")
+  vendorsCreated         Vendor[]                 @relation("VendorCreator")
   dealsOwned             Deal[]                   @relation("DealOwner")
   dealsCreated           Deal[]                   @relation("DealCreator")
   activitiesAssigned     Activity[]               @relation("ActivityAssignee")
@@ -293,6 +423,13 @@ model Membership {
   automationRulesCreated AutomationRule[]         @relation("AutomationRuleCreator")
   notificationsReceived  Notification[]           @relation("NotificationRecipient")
   auditLogsAuthored      AuditLog[]               @relation("AuditLogActor")
+  billingProductsCreated     BillingProduct[]     @relation("BillingProductCreator")
+  billingInvoicesCreated     BillingInvoice[]     @relation("BillingInvoiceCreator")
+  billingInvoicesOwned       BillingInvoice[]     @relation("BillingInvoiceOwner")
+  billingQuotationsCreated   BillingQuotation[]   @relation("BillingQuotationCreator")
+  billingPaymentsCreated     BillingPayment[]     @relation("BillingPaymentCreator")
+  billingAuditEventsAuthored BillingAuditEvent[]  @relation("BillingAuditActor")
+  subscriptionPayments      SubscriptionPayment[] @relation("SubscriptionPaymentRequester")
   invitationsSent        OrganizationInvitation[] @relation("InvitationSender")
 
   @@unique([organizationId, userId])
@@ -307,12 +444,31 @@ model Session {
   tokenHash String    @unique @map("token_hash") @db.Char(64)
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
   revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  deviceHash String?  @map("device_hash") @db.Char(64)
+  deviceLabel String? @map("device_label") @db.VarChar(160)
+  userAgent String?   @map("user_agent") @db.VarChar(500)
+  ipHash String?      @map("ip_hash") @db.Char(64)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
   @@index([expiresAt])
+  @@index([userId, deviceHash, expiresAt])
   @@map("sessions")
+}
+
+model GlobalSecuritySettings {
+  id Int @id @default(1)
+  failedLoginLockoutEnabled Boolean @default(true) @map("failed_login_lockout_enabled")
+  maxFailedLoginAttempts Int @default(3) @map("max_failed_login_attempts")
+  lockoutDurationMinutes Int @default(10) @map("lockout_duration_minutes")
+  sessionLifetimeMinutes Int @default(10080) @map("session_lifetime_minutes")
+  deviceRestrictionsEnabled Boolean @default(true) @map("device_restrictions_enabled")
+  updatedByUserId String? @map("updated_by_user_id") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("global_security_settings")
 }
 
 model EmailToken {
@@ -327,6 +483,134 @@ model EmailToken {
 
   @@index([userId, purpose, expiresAt])
   @@map("email_tokens")
+}
+
+enum ProvisioningStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model ProvisioningRequest {
+  id                String             @id @default(uuid()) @db.Uuid
+  requestId         String             @unique @map("request_id") @db.VarChar(128)
+  idempotencyKey    String             @unique @map("idempotency_key") @db.VarChar(200)
+  orderId           String             @unique @map("order_id") @db.VarChar(128)
+  product           String             @db.VarChar(32)
+  status            ProvisioningStatus @default(RUNNING)
+  activationEmailSent Boolean           @default(false) @map("activation_email_sent")
+  organizationId    String?            @map("organization_id") @db.Uuid
+  tenantSlug        String?            @map("tenant_slug") @db.VarChar(63)
+  ownerUserId       String?            @map("owner_user_id") @db.Uuid
+  planCode          String             @map("plan_code") @db.VarChar(32)
+  partnerId         String?            @map("partner_id") @db.Uuid
+  externalCustomerRef String?           @map("external_customer_ref") @db.VarChar(160)
+  purchaseType      String?             @map("purchase_type") @db.VarChar(16)
+  trialStartedAt    DateTime?           @map("trial_started_at") @db.Timestamptz(3)
+  trialEndsAt       DateTime?           @map("trial_ends_at") @db.Timestamptz(3)
+  failureCode       String?            @map("failure_code") @db.VarChar(80)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  partner           IntegrationPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@map("provisioning_requests")
+}
+
+model IntegrationPartner {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  name               String                   @db.VarChar(120)
+  enabled            Boolean                  @default(true)
+  permissions        String[]                 @default(["provision", "customers:read", "subscriptions:write"])
+  webhookUrl         String?                  @map("webhook_url") @db.VarChar(2048)
+  plansUrl           String?                  @map("plans_url") @db.VarChar(2048)
+  webhookSecretEnc   String?                  @map("webhook_secret_enc") @db.Text
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  apiKeys            PartnerApiKey[]
+  mappings           PartnerCustomerMapping[]
+  provisioningRequests ProvisioningRequest[]
+  webhookEvents      PartnerWebhookEvent[]
+  trialEligibilities PartnerTrialEligibility[]
+  usageLogs          PartnerApiUsageLog[]
+
+  @@map("integration_partners")
+}
+
+model PartnerApiKey {
+  id           String             @id @default(uuid()) @db.Uuid
+  partnerId    String             @map("partner_id") @db.Uuid
+  keyPrefix    String             @map("key_prefix") @db.VarChar(24)
+  keyHash      String             @unique @map("key_hash") @db.Char(64)
+  permissions  String[]           @default([])
+  active       Boolean            @default(true)
+  lastUsedAt   DateTime?          @map("last_used_at") @db.Timestamptz(3)
+  revokedAt    DateTime?          @map("revoked_at") @db.Timestamptz(3)
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  partner      IntegrationPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  usageLogs    PartnerApiUsageLog[]
+
+  @@index([partnerId, active])
+  @@map("partner_api_keys")
+}
+
+model PartnerCustomerMapping {
+  id                    String             @id @default(uuid()) @db.Uuid
+  partnerId             String             @map("partner_id") @db.Uuid
+  organizationId        String             @map("organization_id") @db.Uuid
+  externalCustomerRef   String             @map("external_customer_ref") @db.VarChar(160)
+  externalSubscriptionRef String?           @map("external_subscription_ref") @db.VarChar(160)
+  email                 String             @db.VarChar(254)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  partner               IntegrationPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, externalCustomerRef])
+  @@unique([partnerId, externalSubscriptionRef])
+  @@index([email])
+  @@map("partner_customer_mappings")
+}
+
+model PartnerWebhookEvent {
+  id             String             @id @default(uuid()) @db.Uuid
+  partnerId      String             @map("partner_id") @db.Uuid
+  externalEventId String            @map("external_event_id") @db.VarChar(160)
+  eventType      String             @map("event_type") @db.VarChar(48)
+  organizationId String?            @map("organization_id") @db.Uuid
+  payloadHash    String             @map("payload_hash") @db.Char(64)
+  outcome        String             @db.VarChar(24)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  partner        IntegrationPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  organization   Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@unique([partnerId, externalEventId])
+  @@index([createdAt])
+  @@map("partner_webhook_events")
+}
+
+model PartnerTrialEligibility {
+  id         String   @id @default(uuid()) @db.Uuid
+  emailHash  String   @unique @map("email_hash") @db.Char(64)
+  startedAt  DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  partnerId  String   @map("partner_id") @db.Uuid
+  partner    IntegrationPartner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("partner_trial_eligibility")
+}
+
+model PartnerApiUsageLog {
+  id         String             @id @default(uuid()) @db.Uuid
+  partnerId  String             @map("partner_id") @db.Uuid
+  apiKeyId   String             @map("api_key_id") @db.Uuid
+  operation  String             @db.VarChar(80)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  partner    IntegrationPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  apiKey     PartnerApiKey      @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId, createdAt])
+  @@index([apiKeyId, createdAt])
+  @@map("partner_api_usage_logs")
 }
 
 model OrganizationInvitation {
@@ -363,6 +647,17 @@ model Lead {
   organizationId  String          @map("organization_id") @db.Uuid
   name            String          @db.VarChar(120)
   company         String          @db.VarChar(160)
+  phone           String?         @db.VarChar(40)
+  email           String?         @db.VarChar(254)
+  state           String?         @db.VarChar(120)
+  city            String?         @db.VarChar(120)
+  address         String?         @db.Text
+  staffCount      Int?            @map("staff_count")
+  productRequirement String?      @map("product_requirement") @db.Text
+  demoType        String?         @map("demo_type") @db.VarChar(160)
+  demoAt          DateTime?       @map("demo_at") @db.Timestamptz(3)
+  remarks         String?         @db.Text
+  followUpAt      DateTime?       @map("follow_up_at") @db.Timestamptz(3)
   source          LeadSource
   status          LeadStatus      @default(NEW)
   ownerUserId     String          @map("owner_user_id") @db.Uuid
@@ -374,6 +669,7 @@ model Lead {
   owner           Membership      @relation("LeadOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership      @relation("LeadCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   automationRuns  AutomationRun[]
+  calls           LeadCall[]
 
   @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
@@ -381,6 +677,26 @@ model Lead {
   @@index([organizationId, source, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
   @@map("leads")
+}
+
+model LeadCall {
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @map("organization_id") @db.Uuid
+  leadId            String       @map("lead_id") @db.Uuid
+  loggedByUserId    String       @map("logged_by_user_id") @db.Uuid
+  callStatus        String       @map("call_status") @db.VarChar(32)
+  durationSeconds   Int?         @map("duration_seconds")
+  customerResponse  String?      @map("customer_response") @db.Text
+  nextAction        String?      @map("next_action") @db.Text
+  followUpAt        DateTime?    @map("follow_up_at") @db.Timestamptz(3)
+  calledAt          DateTime     @default(now()) @map("called_at") @db.Timestamptz(3)
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead              Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade)
+  logger            Membership  @relation("LeadCallLogger", fields: [organizationId, loggedByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, leadId, calledAt])
+  @@index([organizationId, loggedByUserId, calledAt])
+  @@map("lead_calls")
 }
 
 model Contact {
@@ -400,6 +716,8 @@ model Contact {
   owner           Membership     @relation("ContactOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership     @relation("ContactCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   emailMessages   EmailMessage[]
+  billingInvoices   BillingInvoice[]   @relation("BillingInvoiceContact")
+  billingQuotations BillingQuotation[] @relation("BillingQuotationContact")
 
   @@unique([organizationId, id])
   @@unique([organizationId, email])
@@ -424,6 +742,8 @@ model Company {
   owner           Membership   @relation("CompanyOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership   @relation("CompanyCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   deals           Deal[]
+  billingInvoices   BillingInvoice[]   @relation("BillingInvoiceCompany")
+  billingQuotations BillingQuotation[] @relation("BillingQuotationCompany")
 
   @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
@@ -559,13 +879,17 @@ model AuditLog {
 }
 
 model OrganizationSettings {
-  organizationId String       @id @map("organization_id") @db.Uuid
-  currency       String       @default("USD") @db.Char(3)
-  timezone       String       @default("UTC") @db.VarChar(64)
-  weekStartsOn   Int          @default(1) @map("week_starts_on")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId          String       @id @map("organization_id") @db.Uuid
+  currency                String       @default("USD") @db.Char(3)
+  timezone                String       @default("UTC") @db.VarChar(64)
+  weekStartsOn            Int          @default(1) @map("week_starts_on")
+  crmTheme                String       @default("default") @map("crm_theme") @db.VarChar(24)
+  leadAutoAssignEnabled   Boolean      @default(false) @map("lead_auto_assign_enabled")
+  leadAutoAssignUserIds   String[]     @default([]) @map("lead_auto_assign_user_ids") @db.Uuid
+  leadAutoAssignCursor    Int          @default(0) @map("lead_auto_assign_cursor")
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("organization_settings")
 }
@@ -629,4 +953,335 @@ model AutomationRun {
   @@unique([ruleId, leadId])
   @@index([organizationId, ranAt])
   @@map("automation_runs")
+}
+
+model Vendor {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  name            String       @db.VarChar(160)
+  category        String       @db.VarChar(120)
+  contactPerson   String?      @map("contact_person") @db.VarChar(120)
+  email           String?      @db.VarChar(254)
+  phone           String?      @db.VarChar(40)
+  status          VendorStatus @default(PENDING)
+  rating          Float        @default(0) @db.DoublePrecision
+  reviewCount     Int          @default(0) @map("review_count")
+  ownerUserId     String       @map("owner_user_id") @db.Uuid
+  createdByUserId String       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt      DateTime?    @map("archived_at") @db.Timestamptz(3)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           Membership   @relation("VendorOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
+  creator         Membership   @relation("VendorCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, archivedAt, createdAt])
+  @@index([organizationId, status, archivedAt])
+  @@index([organizationId, category, archivedAt])
+  @@index([organizationId, ownerUserId, archivedAt])
+  @@map("vendors")
+}
+
+model BillingSettings {
+  organizationId        String           @id @map("organization_id") @db.Uuid
+  currency              String           @default("USD") @db.Char(3)
+  currencyPrecision     Int              @default(2) @map("currency_precision")
+  countryCode           String           @default("US") @map("country_code") @db.Char(2)
+  taxSystem             BillingTaxSystem @default(GENERIC) @map("tax_system")
+  businessName          String?          @map("business_name") @db.VarChar(160)
+  businessEmail         String?          @map("business_email") @db.VarChar(254)
+  businessPhone         String?          @map("business_phone") @db.VarChar(40)
+  businessAddress       String?          @map("business_address") @db.Text
+  gstin                 String?          @db.VarChar(32)
+  registrationStateCode String?          @map("registration_state_code") @db.VarChar(8)
+  invoicePrefix         String           @default("INV") @map("invoice_prefix") @db.VarChar(12)
+  quotePrefix           String           @default("QTN") @map("quote_prefix") @db.VarChar(12)
+  receiptPrefix         String           @default("REC") @map("receipt_prefix") @db.VarChar(12)
+  invoiceNextNumber     Int              @default(1) @map("invoice_next_number")
+  quoteNextNumber       Int              @default(1) @map("quote_next_number")
+  receiptNextNumber     Int              @default(1) @map("receipt_next_number")
+  defaultDueDays        Int              @default(30) @map("default_due_days")
+  defaultTaxRate        Decimal          @default(0) @map("default_tax_rate") @db.Decimal(7, 4)
+  defaultTerms          String?          @map("default_terms") @db.Text
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("billing_settings")
+}
+
+model BillingProduct {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organizationId  String                 @map("organization_id") @db.Uuid
+  name            String                 @db.VarChar(160)
+  sku             String                 @db.VarChar(64)
+  description     String?                @db.Text
+  category        String?                @db.VarChar(120)
+  unit            String                 @default("unit") @db.VarChar(24)
+  sellingPrice    Decimal                @map("selling_price") @db.Decimal(18, 4)
+  purchasePrice   Decimal?               @map("purchase_price") @db.Decimal(18, 4)
+  taxRate         Decimal                @default(0) @map("tax_rate") @db.Decimal(7, 4)
+  hsnSacCode      String?                @map("hsn_sac_code") @db.VarChar(32)
+  isActive        Boolean                @default(true) @map("is_active")
+  createdByUserId String                 @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization    Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator         Membership             @relation("BillingProductCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  invoiceItems    BillingInvoiceItem[]
+  quotationItems  BillingQuotationItem[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, sku])
+  @@index([organizationId, isActive, name])
+  @@map("billing_products")
+}
+
+model BillingInvoice {
+  id                     String                      @id @default(uuid()) @db.Uuid
+  organizationId         String                      @map("organization_id") @db.Uuid
+  invoiceNumber          String?                     @map("invoice_number") @db.VarChar(40)
+  customerType           BillingCustomerType         @map("customer_type")
+  contactId              String?                     @map("contact_id") @db.Uuid
+  companyId              String?                     @map("company_id") @db.Uuid
+  customerName           String                      @map("customer_name") @db.VarChar(160)
+  customerEmail          String?                     @map("customer_email") @db.VarChar(254)
+  customerPhone          String?                     @map("customer_phone") @db.VarChar(40)
+  billingAddress         String?                     @map("billing_address") @db.Text
+  shippingAddress        String?                     @map("shipping_address") @db.Text
+  placeOfSupply          String?                     @map("place_of_supply") @db.VarChar(120)
+  purchaseOrderNumber    String?                     @map("purchase_order_number") @db.VarChar(80)
+  referenceNumber        String?                     @map("reference_number") @db.VarChar(80)
+  invoiceDate            DateTime                    @map("invoice_date") @db.Date
+  dueDate                DateTime                    @map("due_date") @db.Date
+  currency               String                      @db.Char(3)
+  status                 BillingInvoiceStatus        @default(DRAFT)
+  paymentStatus          BillingInvoicePaymentStatus @default(UNPAID) @map("payment_status")
+  subtotal               Decimal                     @default(0) @db.Decimal(18, 4)
+  discountAmount         Decimal                     @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  discountType           BillingDiscountType         @default(FIXED) @map("discount_type")
+  discountValue          Decimal                     @default(0) @map("discount_value") @db.Decimal(18, 4)
+  taxAmount              Decimal                     @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  additionalCharges      Decimal                     @default(0) @map("additional_charges") @db.Decimal(18, 4)
+  shippingAmount         Decimal                     @default(0) @map("shipping_amount") @db.Decimal(18, 4)
+  roundOff               Decimal                     @default(0) @map("round_off") @db.Decimal(18, 4)
+  grandTotal             Decimal                     @default(0) @db.Decimal(18, 4)
+  amountPaid             Decimal                     @default(0) @map("amount_paid") @db.Decimal(18, 4)
+  balanceDue             Decimal                     @default(0) @map("balance_due") @db.Decimal(18, 4)
+  notes                  String?                     @db.Text
+  internalNotes          String?                     @map("internal_notes") @db.Text
+  terms                  String?                     @db.Text
+  issuedAt               DateTime?                   @map("issued_at") @db.Timestamptz(3)
+  cancelledAt            DateTime?                   @map("cancelled_at") @db.Timestamptz(3)
+  createdByUserId        String                      @map("created_by_user_id") @db.Uuid
+  ownerUserId            String                      @map("owner_user_id") @db.Uuid
+  createdAt              DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization           Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact                Contact?                    @relation("BillingInvoiceContact", fields: [organizationId, contactId], references: [organizationId, id], onDelete: Restrict)
+  company                Company?                    @relation("BillingInvoiceCompany", fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
+  creator                Membership                  @relation("BillingInvoiceCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  owner                  Membership                  @relation("BillingInvoiceOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
+  items                  BillingInvoiceItem[]
+  payments               BillingPayment[]
+  convertedFromQuotation BillingQuotation?           @relation("QuotationConversion")
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId, status, invoiceDate])
+  @@index([organizationId, dueDate, status])
+  @@index([organizationId, customerName])
+  @@index([organizationId, ownerUserId, createdAt])
+  @@map("billing_invoices")
+}
+
+model BillingInvoiceItem {
+  id                        String              @id @default(uuid()) @db.Uuid
+  organizationId            String              @map("organization_id") @db.Uuid
+  invoiceId                 String              @map("invoice_id") @db.Uuid
+  productId                 String?             @map("product_id") @db.Uuid
+  itemName                  String              @map("item_name") @db.VarChar(160)
+  description               String?             @db.Text
+  sku                       String?             @db.VarChar(64)
+  hsnSacCode                String?             @map("hsn_sac_code") @db.VarChar(32)
+  quantity                  Decimal             @db.Decimal(18, 4)
+  unit                      String              @default("unit") @db.VarChar(24)
+  unitPrice                 Decimal             @map("unit_price") @db.Decimal(18, 4)
+  discountAmount            Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  discountType              BillingDiscountType @default(FIXED) @map("discount_type")
+  discountValue             Decimal             @default(0) @map("discount_value") @db.Decimal(18, 4)
+  invoiceDiscountAllocation Decimal             @default(0) @map("invoice_discount_allocation") @db.Decimal(18, 4)
+  taxRate                   Decimal             @default(0) @map("tax_rate") @db.Decimal(7, 4)
+  taxAmount                 Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  lineTotal                 Decimal             @map("line_total") @db.Decimal(18, 4)
+  position                  Int                 @default(0)
+  organization              Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice                   BillingInvoice      @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Cascade)
+  product                   BillingProduct?     @relation(fields: [organizationId, productId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, invoiceId, position])
+  @@map("billing_invoice_items")
+}
+
+model BillingQuotation {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  organizationId     String                 @map("organization_id") @db.Uuid
+  quotationNumber    String?                @map("quotation_number") @db.VarChar(40)
+  customerType       BillingCustomerType    @map("customer_type")
+  contactId          String?                @map("contact_id") @db.Uuid
+  companyId          String?                @map("company_id") @db.Uuid
+  customerName       String                 @map("customer_name") @db.VarChar(160)
+  customerEmail      String?                @map("customer_email") @db.VarChar(254)
+  customerPhone      String?                @map("customer_phone") @db.VarChar(40)
+  billingAddress     String?                @map("billing_address") @db.Text
+  shippingAddress    String?                @map("shipping_address") @db.Text
+  validUntil         DateTime?              @map("valid_until") @db.Date
+  currency           String                 @db.Char(3)
+  status             BillingQuotationStatus @default(DRAFT)
+  subtotal           Decimal                @default(0) @db.Decimal(18, 4)
+  discountAmount     Decimal                @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  discountType       BillingDiscountType    @default(FIXED) @map("discount_type")
+  discountValue      Decimal                @default(0) @map("discount_value") @db.Decimal(18, 4)
+  taxAmount          Decimal                @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  grandTotal         Decimal                @default(0) @db.Decimal(18, 4)
+  terms              String?                @db.Text
+  notes              String?                @db.Text
+  convertedInvoiceId String?                @map("converted_invoice_id") @db.Uuid
+  createdByUserId    String                 @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization       Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact            Contact?               @relation("BillingQuotationContact", fields: [organizationId, contactId], references: [organizationId, id], onDelete: Restrict)
+  company            Company?               @relation("BillingQuotationCompany", fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
+  creator            Membership             @relation("BillingQuotationCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  items              BillingQuotationItem[]
+  convertedInvoice   BillingInvoice?        @relation("QuotationConversion", fields: [organizationId, convertedInvoiceId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, quotationNumber])
+  @@unique([organizationId, convertedInvoiceId])
+  @@index([organizationId, status, createdAt])
+  @@map("billing_quotations")
+}
+
+model BillingQuotationItem {
+  id                        String              @id @default(uuid()) @db.Uuid
+  organizationId            String              @map("organization_id") @db.Uuid
+  quotationId               String              @map("quotation_id") @db.Uuid
+  productId                 String?             @db.Uuid @map("product_id")
+  itemName                  String              @map("item_name") @db.VarChar(160)
+  description               String?             @db.Text
+  sku                       String?             @db.VarChar(64)
+  hsnSacCode                String?             @map("hsn_sac_code") @db.VarChar(32)
+  quantity                  Decimal             @db.Decimal(18, 4)
+  unit                      String              @default("unit") @db.VarChar(24)
+  unitPrice                 Decimal             @map("unit_price") @db.Decimal(18, 4)
+  discountAmount            Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 4)
+  discountType              BillingDiscountType @default(FIXED) @map("discount_type")
+  discountValue             Decimal             @default(0) @map("discount_value") @db.Decimal(18, 4)
+  invoiceDiscountAllocation Decimal             @default(0) @map("invoice_discount_allocation") @db.Decimal(18, 4)
+  taxRate                   Decimal             @default(0) @map("tax_rate") @db.Decimal(7, 4)
+  taxAmount                 Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  lineTotal                 Decimal             @map("line_total") @db.Decimal(18, 4)
+  position                  Int                 @default(0)
+  organization              Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation                 BillingQuotation    @relation(fields: [organizationId, quotationId], references: [organizationId, id], onDelete: Cascade)
+  product                   BillingProduct?     @relation(fields: [organizationId, productId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, quotationId, position])
+  @@map("billing_quotation_items")
+}
+
+model BillingPayment {
+  id                   String               @id @default(uuid()) @db.Uuid
+  organizationId       String               @map("organization_id") @db.Uuid
+  invoiceId            String               @map("invoice_id") @db.Uuid
+  paymentNumber        String               @map("payment_number") @db.VarChar(40)
+  amount               Decimal              @db.Decimal(18, 4)
+  paymentDate          DateTime             @map("payment_date") @db.Timestamptz(3)
+  method               BillingPaymentMethod
+  transactionReference String?              @map("transaction_reference") @db.VarChar(120)
+  idempotencyKey       String?              @db.VarChar(128) @map("idempotency_key")
+  notes                String?              @db.Text
+  createdByUserId      String               @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice              BillingInvoice       @relation(fields: [organizationId, invoiceId], references: [organizationId, id], onDelete: Restrict)
+  creator              Membership           @relation("BillingPaymentCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  receipt              BillingReceipt?
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, paymentNumber])
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, invoiceId, paymentDate])
+  @@index([organizationId, paymentDate])
+  @@map("billing_payments")
+}
+
+model BillingReceipt {
+  id                   String               @id @default(uuid()) @db.Uuid
+  organizationId       String               @map("organization_id") @db.Uuid
+  paymentId            String               @map("payment_id") @db.Uuid
+  receiptNumber        String               @map("receipt_number") @db.VarChar(40)
+  customerName         String               @map("customer_name") @db.VarChar(160)
+  invoiceNumber        String               @map("invoice_number") @db.VarChar(40)
+  amount               Decimal              @db.Decimal(18, 4)
+  paymentDate          DateTime             @map("payment_date") @db.Timestamptz(3)
+  paymentMethod        BillingPaymentMethod @map("payment_method")
+  transactionReference String?              @map("transaction_reference") @db.VarChar(120)
+  previousBalance      Decimal              @map("previous_balance") @db.Decimal(18, 4)
+  remainingBalance     Decimal              @map("remaining_balance") @db.Decimal(18, 4)
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization         Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payment              BillingPayment       @relation(fields: [organizationId, paymentId], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, paymentId])
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId, createdAt])
+  @@map("billing_receipts")
+}
+
+model BillingAuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  actorUserId    String       @map("actor_user_id") @db.Uuid
+  resourceType   String       @map("resource_type") @db.VarChar(48)
+  resourceId     String       @map("resource_id") @db.Uuid
+  action         String       @db.VarChar(48)
+  details        Json?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          Membership   @relation("BillingAuditActor", fields: [organizationId, actorUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, resourceType, resourceId, createdAt])
+  @@map("billing_audit_events")
+}
+
+model SubscriptionPayment {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  organizationId        String                   @map("organization_id") @db.Uuid
+  requestedByUserId     String                   @map("requested_by_user_id") @db.Uuid
+  planCode              String                   @map("plan_code") @db.VarChar(32)
+  productInfo           String                   @map("product_info") @db.VarChar(120)
+  paymentType           SubscriptionPaymentType @map("payment_type")
+  transactionId         String                   @unique @map("transaction_id") @db.VarChar(40)
+  amount                Decimal                  @db.Decimal(12, 2)
+  currency              String                   @default("INR") @db.Char(3)
+  status                SubscriptionPaymentStatus @default(PENDING)
+  payuId                String?                  @map("payu_id") @db.VarChar(64)
+  bankReference         String?                  @map("bank_reference") @db.VarChar(120)
+  failureReason         String?                  @map("failure_reason") @db.VarChar(500)
+  renewalBaseEndsAt     DateTime?                @map("renewal_base_ends_at") @db.Timestamptz(3)
+  verifiedAt            DateTime?                @map("verified_at") @db.Timestamptz(3)
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization          Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy           Membership               @relation("SubscriptionPaymentRequester", fields: [organizationId, requestedByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("subscription_payments")
 }

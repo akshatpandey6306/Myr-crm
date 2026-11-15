@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { getWebOrigin } from "../common/web-origin.js";
-import { IS_PUBLIC_KEY } from "./public.decorator.js";
+import { EXTERNAL_CALLBACK_KEY, IS_PUBLIC_KEY } from "./public.decorator.js";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -12,8 +12,9 @@ export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<HttpRequest>();
     const unsafeRequest = !["GET", "HEAD", "OPTIONS"].includes(request.method ?? "");
+    const externalCallback = Reflect.getMetadata(EXTERNAL_CALLBACK_KEY, context.getHandler()) === true;
     const cookieToken = this.cookieValue(request.headers.cookie, "myr_session");
-    if (unsafeRequest) {
+    if (unsafeRequest && !externalCallback) {
       const origin = request.headers.origin;
       const expectedOrigin = getWebOrigin();
       const allowedOrigins = new Set([expectedOrigin]);
@@ -39,9 +40,12 @@ export class AuthGuard implements CanActivate {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const session = await this.prisma.session.findFirst({
       where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "ACTIVE" } },
-      select: { userId: true },
+      select: { id: true, userId: true, lastSeenAt: true },
     });
     if (!session) throw new UnauthorizedException({ code: "unauthorized", message: "Invalid or expired session" });
+    if (session.lastSeenAt.getTime() < Date.now() - 60_000) {
+      await this.prisma.session.updateMany({ where: { id: session.id, revokedAt: null }, data: { lastSeenAt: new Date() } });
+    }
     request.userId = session.userId;
     request.token = token;
     return true;

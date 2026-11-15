@@ -22,6 +22,7 @@ describe("OrgGuard", () => {
     const prisma = { membership: { findFirst: async () => ({
       organizationId: "org-a",
       role: "SALES_REP",
+      enabledModules: ["leads"],
       organization: { status: "ACTIVE", subscriptionStatus: "ACTIVE", subscriptionEndsAt: new Date(Date.now() + 60_000) },
     }) } };
     const guard = new OrgGuard(prisma as never);
@@ -148,6 +149,43 @@ describe("OrgGuard", () => {
       error instanceof ForbiddenException &&
       (error.getResponse() as { code?: string }).code === "module_disabled",
     );
+  });
+
+  it("restricts employee API access to their assigned workspace modules and always hides Team", async () => {
+    const makeGuard = (path: string) => {
+      const request = {
+        headers: { "x-organization-id": "org-a" },
+        params: {},
+        path,
+        userId: "user-a",
+      };
+      const guard = new OrgGuard({
+        membership: { findFirst: async () => ({
+          organizationId: "org-a",
+          role: "SALES_REP",
+          enabledModules: ["contacts"],
+          organization: {
+            status: "ACTIVE",
+            subscriptionStatus: "ACTIVE",
+            subscriptionEndsAt: new Date(Date.now() + 60_000),
+            enabledModules: ["leads", "contacts", "team", "settings"],
+          },
+        }) },
+      } as never);
+      return { guard, request };
+    };
+
+    const contacts = makeGuard("/api/v1/contacts");
+    assert.equal(await contacts.guard.canActivate(makeContext(contacts.request) as never), true);
+    assert.deepEqual(contacts.request.enabledModules, ["contacts"]);
+
+    for (const path of ["/api/v1/leads", "/api/v1/organizations/members"]) {
+      const { guard, request } = makeGuard(path);
+      await assert.rejects(guard.canActivate(makeContext(request) as never), (error: unknown) =>
+        error instanceof ForbiddenException &&
+        (error.getResponse() as { code?: string }).code === "module_disabled",
+      );
+    }
   });
 
   it("enforces email, audit-log, and settings module access on their API routes", async () => {

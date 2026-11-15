@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
 import { crmApiFetch } from '../../../lib/api-client';
+import { CRM_THEMES, setCrmTheme, type CrmTheme } from '../../../lib/crm-theme';
 import styles from './SettingsManager.module.css';
 
 type Settings = {
@@ -11,6 +12,7 @@ type Settings = {
   currency: string;
   timezone: string;
   weekStartsOn: number;
+  crmTheme: CrmTheme;
   updatedAt: string | null;
   canEdit: boolean;
 };
@@ -36,6 +38,8 @@ export default function SettingsManager() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [theme, setTheme] = useState<CrmTheme>('default');
+  const [themeError, setThemeError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -54,6 +58,8 @@ export default function SettingsManager() {
           setCurrency(value.currency);
           setTimezone(value.timezone);
           setWeekStartsOn(value.weekStartsOn);
+          setTheme(value.crmTheme ?? 'default');
+          setCrmTheme(value.crmTheme ?? 'default');
         }
       } catch (cause) {
         if (!active || (cause instanceof Error && cause.name === 'AbortError')) return;
@@ -67,6 +73,23 @@ export default function SettingsManager() {
     void load();
     return () => { active = false; controller.abort(); };
   }, [refresh]);
+
+  async function chooseTheme(value: CrmTheme) {
+    setThemeError('');
+    try {
+      const response = await crmApiFetch('/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crmTheme: value }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(errorMessage(payload));
+      setTheme(value);
+      setCrmTheme(value);
+    } catch (cause) {
+      setThemeError(cause instanceof Error ? cause.message : 'Could not save this workspace color.');
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -104,5 +127,30 @@ export default function SettingsManager() {
       <label className={styles.field}>Week starts on<select value={weekStartsOn} onChange={(event) => setWeekStartsOn(Number(event.target.value))} disabled={loading || busy || !editable}>{weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>
       <footer className={styles.formFooter}><span>{settings?.updatedAt ? `Last saved ${new Date(settings.updatedAt).toLocaleString()}` : 'Default preferences'}</span><button className="button button-primary" type="submit" disabled={loading || busy || !editable}>{busy ? 'Saving...' : 'Save settings'}</button></footer>
     </form>
+    <section className={styles.appearance} aria-labelledby="appearance-heading">
+      <div className={styles.appearanceHeading}>
+        <div><h2 id="appearance-heading">CRM colors</h2><p>{editable ? 'Choose colors for this workspace. Sign-in pages and other workspaces keep their own appearance.' : 'This workspace appearance is managed by its administrator.'}</p></div>
+        <button className="button button-secondary" type="button" onClick={() => void chooseTheme('default')} disabled={loading || busy || !editable}>Use default color</button>
+      </div>
+      <div className={styles.themeGrid} role="group" aria-label="CRM color themes">
+        {CRM_THEMES.map((option) => (
+          <button
+            className={`${styles.themeOption}${theme === option.id ? ` ${styles.themeSelected}` : ''}`}
+            type="button"
+            key={option.id}
+            aria-pressed={theme === option.id}
+            onClick={() => void chooseTheme(option.id)}
+            disabled={loading || busy || !editable}
+          >
+            <span className={styles.themeSwatches} aria-hidden="true">
+              {option.colors.map((color) => <i key={color} style={{ backgroundColor: color }} />)}
+            </span>
+            <span>{option.name}</span>
+            {theme === option.id && <span className={styles.themeCheck} aria-hidden="true">✓</span>}
+          </button>
+        ))}
+      </div>
+      {themeError && <p className={styles.themeError} role="alert">{themeError}</p>}
+    </section>
   </section>;
 }

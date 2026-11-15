@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -9,6 +8,8 @@ import {
 } from "./activity-api";
 import type { RelatedRecordOption, RelatedRecordType } from "./activity-api";
 import { crmApiFetch } from "../../lib/api-client";
+import NightingaleChart from "../components/NightingaleChart";
+import type { DistributionDatum } from "../components/chart-types";
 
 type ActivityType = "task" | "call" | "meeting" | "note" | "email";
 type ActivityStatus = "open" | "in_progress" | "completed" | "cancelled";
@@ -362,6 +363,18 @@ export default function Home() {
       item.dueAt.slice(0, 10) < today,
   ).length;
   const completedCount = items.filter((item) => item.status === "completed").length;
+  const activityTypeColors: Record<ActivityType, string> = {
+    task: "#7657D8",
+    call: "#3277D5",
+    meeting: "#24936F",
+    note: "#D19A2B",
+    email: "#D76670",
+  };
+  const activityTypeDistribution: DistributionDatum[] = activityTypes.map((type) => ({
+    label: formatLabel(type),
+    value: visibleItems.filter((item) => item.type === type).length,
+    color: activityTypeColors[type],
+  }));
 
   async function setItemStatus(target: WorkItem, status: ActivityStatus) {
     setError("");
@@ -458,69 +471,7 @@ export default function Home() {
 
   return (
     <div className="activities-screen">
-      <div className="app-shell">
-      <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Myr CRM home">
-          <span className="brand-mark">m</span>
-          <span>myr<span className="brand-light">crm</span></span>
-        </Link>
-
-        <div className="workspace-label">WORKSPACE</div>
-        <button className="workspace-switcher" type="button">
-          <span className="workspace-avatar">A</span>
-          <span className="workspace-name">Active organization</span>
-          <span className="switcher-chevron">⌄</span>
-        </button>
-
-        <nav className="main-nav" aria-label="Main navigation">
-          <a className="nav-item active" href="#tasks" aria-current="page">
-            <Icon name="check" />
-            <span>Activities &amp; Tasks</span>
-            <span className="nav-count">{openCount}</span>
-          </a>
-        </nav>
-
-        <div className="sidebar-bottom">
-          <div className="help-card">
-            <div className="help-icon">?</div>
-            <div>
-              <strong>Need a hand?</strong>
-              <span>Visit the help center</span>
-            </div>
-            <Icon name="chevron" size={16} />
-          </div>
-          <button className="profile" type="button">
-            <span className="profile-avatar">CRM</span>
-            <span className="profile-copy">
-              <strong>Signed-in member</strong>
-              <small>CRM workspace</small>
-            </span>
-            <span className="profile-menu">•••</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="main-content" id="tasks">
-        <header className="topbar">
-          <div className="breadcrumbs">
-            <span>Workspace</span>
-            <Icon name="chevron" size={14} />
-            <strong>Activities &amp; Tasks</strong>
-          </div>
-          <div className="topbar-actions">
-            <span className="demo-badge"><span /> CRM data</span>
-            <Link className="back-to-crm" href="/">Back to CRM</Link>
-            <button
-              className="avatar-small"
-              type="button"
-              aria-label="Signed-in member profile"
-            >
-              CRM
-            </button>
-          </div>
-        </header>
-
-        <div className="page-wrap">
+      <div className="page-wrap" id="tasks">
           <section className="page-heading">
             <div>
               <div className="eyebrow">YOUR WORK, AT A GLANCE</div>
@@ -569,6 +520,11 @@ export default function Home() {
               <span className="stat-note">On this page</span>
             </article>
           </section>
+
+          <div className="activities-chart-panel">
+            <NightingaleChart title="Activity type distribution" items={activityTypeDistribution} />
+            <p className="activities-chart-note">Based on the activities currently shown by your filters.</p>
+          </div>
 
           {error && <div className="activities-error" role="alert">{error}</div>}
           {notice && <div className="activities-notice" role="status">{notice}</div>}
@@ -769,21 +725,16 @@ export default function Home() {
                       </span>
                       <span>{item.assignedToName ?? "Unassigned"}</span>
                     </div>
-                    {canWrite && <button className="activity-archive" type="button" aria-label={`Edit ${item.title}`} onClick={() => {
-                      setEditingItem(item);
-                      setCreateRelatedType((item.relatedToType as RelatedRecordType | null) ?? "");
-                      setCreateRelatedId(item.relatedToId ?? "");
-                      setFormError("");
-                      setIsCreateOpen(true);
-                    }}>Edit</button>}
-                    {canArchive && <button
-                      className="activity-archive"
-                      type="button"
-                      aria-label={`Archive ${item.title}`}
-                      onClick={() => void archiveItem(item)}
-                    >
-                      Archive
-                    </button>}
+                    {(canWrite || canArchive) && <div className="activity-row-actions">
+                      {canWrite && <button className="activity-archive" type="button" aria-label={`Edit ${item.title}`} onClick={() => {
+                        setEditingItem(item);
+                        setCreateRelatedType((item.relatedToType as RelatedRecordType | null) ?? "");
+                        setCreateRelatedId(item.relatedToId ?? "");
+                        setFormError("");
+                        setIsCreateOpen(true);
+                      }}>Edit</button>}
+                      {canArchive && <button className="activity-archive" type="button" aria-label={`Archive ${item.title}`} onClick={() => void archiveItem(item)}>Archive</button>}
+                    </div>}
                   </article>
                 ))
               )}
@@ -828,8 +779,7 @@ export default function Home() {
           <p className="data-notice">
             Activities are loaded from your selected organization. Access and changes are enforced by the CRM API.
           </p>
-        </div>
-      </main>
+      </div>
 
       {isCreateOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => {
@@ -956,7 +906,6 @@ export default function Home() {
           </section>
         </div>
       )}
-      </div>
     </div>
   );
 }

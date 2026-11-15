@@ -1,4 +1,5 @@
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '/api/v1').replace(/\/+$/, '');
+const API_CREDENTIALS: RequestCredentials = /^https?:\/\//i.test(API_BASE_URL) ? 'include' : 'same-origin';
 
 /** Add the active tenant to an API request; authentication uses the HttpOnly session cookie. */
 export function crmApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
@@ -13,5 +14,5 @@ export function crmApiFetch(path: string, init: RequestInit = {}): Promise<Respo
     }
   }
   const route = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${API_BASE_URL}${route}`, { ...init, headers, credentials: 'same-origin' });
+  return fetch(`${API_BASE_URL}${route}`, { ...init, headers, credentials: API_CREDENTIALS });
 }

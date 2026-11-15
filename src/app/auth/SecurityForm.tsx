@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
 
-type Mode = 'forgot' | 'reset' | 'verify';
+type Mode = 'forgot' | 'reset' | 'verify' | 'activate';
 
 const headings: Record<Mode, { title: string; description: string; submit: string }> = {
   forgot: {
@@ -22,6 +22,11 @@ const headings: Record<Mode, { title: string; description: string; submit: strin
     description: 'Confirm your email address to activate sign-in, or request a new verification link.',
     submit: 'Continue',
   },
+  activate: {
+    title: 'Activate your workspace account',
+    description: 'Choose a password to activate your CRM workspace access.',
+    submit: 'Activate account',
+  },
 };
 
 export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?: string }) {
@@ -35,14 +40,21 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
     setError('');
     setSuccess('');
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (mode === 'reset' && values.password !== values.confirmPassword) {
+      setError('The new passwords do not match.');
+      setBusy(false);
+      return;
+    }
     const action = mode === 'forgot'
       ? 'password-reset/request'
       : mode === 'reset'
         ? 'password-reset/confirm'
+        : mode === 'activate'
+          ? 'account-activation'
         : token
           ? 'email-verification/confirm'
           : 'email-verification/resend';
-    const body = mode === 'reset' || (mode === 'verify' && token)
+    const body = mode === 'reset' || mode === 'activate' || (mode === 'verify' && token)
       ? { ...values, token }
       : values;
 
@@ -80,9 +92,10 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
               <label htmlFor="security-email">Work email</label>
               <input id="security-email" name="email" type="email" autoComplete="email" required />
             </>}
-            {mode === 'reset' && <>
+            {(mode === 'reset' || mode === 'activate') && <>
               <label htmlFor="security-password">New password</label>
               <input id="security-password" name="password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required />
+              {mode === 'reset' && <><label htmlFor="security-confirm-password">Confirm new password</label><input id="security-confirm-password" name="confirmPassword" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></>}
             </>}
             {error && <div className="auth-error" role="alert">{error}</div>}
             {success && <div className="auth-success" role="status">{success}</div>}

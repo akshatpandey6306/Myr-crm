@@ -32,28 +32,36 @@ require a persisted session and an active organization membership.
 ## Authentication and account recovery
 
 The web app provides `/sign-in`, `/sign-up`, `/forgot-password`,
-`/reset-password`, and `/verify-email` for old verification links. Signup
-creates either a pending workspace Owner and workspace or an account-only
-teammate signup, without requiring email verification. The platform admin must
-approve a new workspace Owner before they can sign in. Teammates can sign in
-and request access with a workspace join code. The API
+`/reset-password`, and `/verify-email` for old verification links. A new
+workspace Owner enters a one-time code before their account and Owner membership
+become active; platform-admin signup approval is not required. The code is
+SHA-256 hashed in the existing email-token table and expires after 10 minutes.
+SMTP is required for workspace-owner signup and uses `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`. Signup codes are sent to the
+address supplied during signup. Password reset and CRM contact email delivery
+remain disabled. Teammates can still create an account, sign in, and request
+access with their workspace's unique join code; an Owner/Admin reviews those
+requests in Team & access. The API
 exposes `POST /api/v1/auth/signup`, `POST /api/v1/auth/login`,
+`POST /api/v1/auth/signup/verify`, `POST /api/v1/auth/signup/resend-otp`,
 `POST /api/v1/auth/logout`, `GET /api/v1/auth/me`,
 `POST /api/v1/auth/password-reset/request`,
 `POST /api/v1/auth/password-reset/confirm`,
 `POST /api/v1/auth/email-verification/resend`, and
 `POST /api/v1/auth/email-verification/confirm`. The verification endpoints
-remain for compatibility with links already sent, but verification is not
-required for signup, login, or protected API requests. The old
-`REQUIRE_EMAIL_VERIFICATION` setting is ignored.
+remain for compatibility with links already sent; signup-owner OTP verification
+is a separate account-activation step. The old `REQUIRE_EMAIL_VERIFICATION`
+setting is ignored. The platform control panel's remaining workspace-approval
+actions apply only to legacy signup records that have no outstanding OTP token;
+they cannot approve a new signup before code verification.
 
 Login sets a seven-day `myr_session` HttpOnly, SameSite=Lax cookie, with Secure
 enabled in production. The API stores only the SHA-256 session digest and accepts
 that cookie for protected requests; the raw session token is never returned in
 JSON or stored in browser storage. Unsafe requests with an Origin header must
 match `WEB_ORIGIN`, and production cookie-authenticated mutations require the
-expected Origin. Password reset by email is disabled because email delivery is
-off; the request endpoint returns an unavailable response. Existing reset
+expected Origin. Password reset by email remains disabled and the request
+endpoint returns an unavailable response. Existing reset
 tokens, if any, remain one-use values stored only as SHA-256 digests; successful
 resets revoke every existing session for that user.
 
@@ -76,23 +84,31 @@ that workspace.
 ## Workspace trial and activation
 
 Signup creates the Owner's organization with a pending subscription. After
-sign-in, the web app routes the Owner to `/subscription`, where they can select
-a plan and immediately start a no-charge two-day trial, with no platform-admin
-approval required. The platform control panel shows the workspace's trial
-status and expiry. The trial is available in production and can only be started
-once per workspace. When it expires, an
-Owner or Admin can submit a plan activation request; it appears under
-**Activation requests** in `/control-panel` for manual review. Platform admins
-activate the plan from the workspace row. Online checkout is not connected, so
-the request does not collect payment.
+sign-in, the web app routes the Owner to `/subscription`, where they can pay
+INR 49 through PayU to start a two-day trial. Plan purchases and renewals use
+the configured INR plan price. The API creates the signed checkout fields and
+payment order; it validates PayU's callback hash and verifies the transaction
+with PayU before activating or extending access. No platform-admin approval is
+required for a verified payment. The platform control panel shows the latest
+payment state and PayU reference.
 
-Apply database changes with `npm run db:deploy` before starting an API version
-that includes subscription activation requests.
+Configure `PAYU_MODE=test`, `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, and
+`PAYU_CALLBACK_URL` in the API environment. For sandbox checkout, PayU must be
+able to reach the callback URL through the customer's browser. Keep the merchant
+salt server-only. The workspace shows a 10-to-1 day expiry countdown; renewals
+are available during the final 10 days and extend from the current expiry date.
+After expiry, CRM access is locked until payment, while workspace data remains
+stored.
 
-Platform admins can control workspace access to Leads, Contacts, Companies,
-Deals, Activities, Team, Automation, Email, Reports, Audit Logs, and Settings
-from each workspace's module-access controls in `/control-panel`. Module access
-is enforced by the API as well as reflected in workspace navigation. The
+Apply database changes with `npm run db:deploy` before starting the API version
+that includes PayU subscription payments.
+
+Workspace Owners and Admins have access to every CRM module. Other team members
+start with no modules and receive only modules selected for them in Team &
+access, limited to modules available to the workspace; the Team module remains
+administrator-only. The API enforces these assignments as well as reflecting
+them in workspace navigation. Platform admins can control workspace module
+availability from each workspace's module-access controls in `/control-panel`. The
 platform control panel also lists each workspace Owner and active team members,
 summarizes won deal value and open pipeline value, and provides a paginated
 deal list with company, stage, owner, and value details. These cross-workspace
@@ -101,14 +117,14 @@ workspace admins remain limited to their own organization.
 
 Authentication and join-request endpoints use PostgreSQL-backed rate-limit
 windows keyed by hashed IP and, where applicable, normalized email or user ID.
-Limits are 10 login attempts per 15 minutes; 5 signup attempts per hour per IP
-and email; and 5 workspace join requests per hour per user.
+Limits include 5 login and signup attempts per minute, 3 signup-code resends per
+hour, 10 signup-code verifications per hour, and 5 workspace join requests per
+hour per user.
 Expired buckets are periodically removed by the API.
 
-Email delivery is disabled. Signup does not require email verification. New
-workspace signups are held until a platform admin approves them; password reset
-by email is unavailable. CRM contact messages can be saved to the outbox but
-are not sent.
+SMTP is used only for workspace-owner signup verification codes. Password reset
+by email remains unavailable, and CRM contact messages can still be saved to
+the outbox but are not sent.
 
 `GET /api/v1/organizations` lists the caller's active memberships and
 `POST /api/v1/organizations` creates another workspace with the caller as
@@ -137,6 +153,33 @@ updated with `PATCH /api/v1/companies/:id` and archived with
 `industry`, `website`, and `phone`; ownership and organization are derived from
 the authenticated request. As with leads and contacts, company records are
 restricted to the verified organization and representative-owned records.
+
+## Vendors
+
+Vendor records use `/api/v1/vendors` for tenant-scoped list, create, get,
+update, and archive operations. `GET /api/v1/vendors/summary` and
+`GET /api/v1/vendors/categories` return counts and categories for the selected
+workspace. The list supports search, status/category/date filters, pagination,
+sorting, and representative ownership restrictions. Organization and creator
+are derived from verified request context; record IDs alone do not grant
+access. Owners/Admins manage workspace module availability, and other members
+need the Vendors module explicitly assigned.
+
+## Billing and invoicing
+
+The Billing & Invoicing screen is available at `/billing-invoicing`; its API is
+under `/api/v1/invoicing`. It supports workspace billing settings and summary
+data, products, invoices and invoice items, quotations, payment entries, and
+receipts. Invoice totals use decimal-safe calculations. Billing settings,
+products, invoices, quotations, payments, receipts, and billing audit events
+are stored with an organization ID. The controller derives that ID from the
+verified organization context and includes it in record lookups and writes;
+customer/contact/company/product relationships are checked within the same
+workspace. Owners/Admins alone can change billing settings; other actions use
+the existing role and record-ownership checks. Workspace module availability
+and per-member grants separately gate access to Vendors and Billing &
+Invoicing. This module records payments manually; it does not connect PayU or
+another payment gateway.
 
 ## Deals and pipelines
 
@@ -175,6 +218,10 @@ requests with `GET /api/v1/organizations/membership-requests` and
 their pending or active workspace requests. A names-only active member
 directory at `GET /api/v1/organizations/assignees` is available to Owners,
 Admins, and Sales Managers for activity assignments.
+Newly approved and CSV-imported employees start with no module grants. Owners
+and Admins assign available modules with
+`PATCH /api/v1/organizations/members/:userId/modules`; these grants are enforced
+by the API as well as the employee's navigation.
 
 The interim role matrix is approved for the MVP and documented in
 [`../../docs/architecture/role-permission-proposal.md`](../../docs/architecture/role-permission-proposal.md).
@@ -268,9 +315,10 @@ Organization Owners, Admins, and Sales Managers can view the organization's
 outbox. Sales Representatives can view and compose messages only for their own
 contacts; Read-only Users can view but cannot compose.
 
-Email delivery is disabled. CRM contact messages are saved with status
-`not_configured`; no mail service or SMTP configuration is required. Signup,
-workspace approval, and team access use in-app workflows.
+CRM contact messages are saved with status `not_configured` and are not sent;
+SMTP configuration is used only for workspace-owner signup codes. Signup uses
+OTP verification without platform-admin approval, while teammates use their
+workspace join code and Owner/Admin membership review.
 Message bodies are plain text and the recipient address always comes from the
 selected active contact. The UI shows each message's delivery state.
 
@@ -330,5 +378,52 @@ organization only when the user is a member of it. The list endpoint accepts
 update, and archive use
 `POST /api/v1/leads`, `PATCH /api/v1/leads/:id`, and
 `DELETE /api/v1/leads/:id`. Deletion archives a lead, and archived leads are
-excluded from the active list. Contacts use matching CRUD routes under
+excluded from the active list. Organization owners and admins can preview even distribution with
+`POST /api/v1/leads/distribute/preview`, then apply the reviewed assignments
+with `PATCH /api/v1/leads/distribute`. Preview accepts `scope` (`selected` or
+`all`), `assigneeUserIds`, and (for selected leads) `leadIds`; assignment
+targets must be active members of the selected organization. The legacy
+`POST /api/v1/leads/distribute` endpoint remains available for compatibility.
+`GET /api/v1/leads/assignment-settings` returns the assignment controls and
+eligible team members. Owners and admins can use `PATCH` on that route to turn
+on round-robin assignment for new leads and choose the eligible team members.
+`POST /api/v1/leads/import/validate` checks CSV rows and likely duplicates;
+`POST /api/v1/leads/import` creates reviewed rows without overwriting existing
+leads. CSV fields are `name`, `company`, `source`, and `status`; supported
+sources and statuses match the existing lead form. Missing source/status values
+default to `website`/`new`. `GET /api/v1/leads/export` accepts the supported
+list filters and exports only leads the caller may access in the active
+organization. CSV upload is limited to 5 MB in the web app, and imports should
+be split into batches small enough for the API request limit.
+Contacts use matching CRUD routes under
 `/api/v1/contacts`, with `q`, pagination, and sorting on the list route.
+
+## Team onboarding CSV
+
+Only active workspace Owners and Admins can use the team CSV endpoints:
+`POST /api/v1/organizations/members/import/validate`,
+`POST /api/v1/organizations/members/import`, and
+`GET /api/v1/organizations/members/export`. Employee CSV columns are `email`,
+`name`, and `password`; imports create active Sales Representative memberships
+only in the selected workspace. The API validates email/name/password,
+duplicate accounts, duplicate rows, and current plan/trial seat limits before
+creating the batch transactionally. Passwords are hashed using the existing
+scrypt format and are not returned in preview, result, or audit data. The
+current sign-in flow does not support a forced password reset, so admins should
+provide temporary passwords to employees through a secure channel and ask them
+to change them after sign-in. The web app limits CSV files to 5 MB and batches
+the JSON request payload to 80 KB to fit the API's existing body-size limit;
+large imports must be split into smaller files. Employee CSV exports contain
+work email, name, role, and join date, and are recorded in the workspace audit
+log. The existing individual onboarding and join-request approval flows remain
+available.
+
+## Platform audit export
+
+The Platform Admin control panel provides a CSV export of audit events using
+`GET /api/v1/control-panel/audit-logs/export`. Access is restricted by the
+existing Platform Admin guard; workspace Owners/Admins cannot read platform-
+wide audit data. The action filter is applied by the API, and the control panel
+also applies its current search filter to the downloaded rows. Exported fields
+include timestamp, actor, action, workspace/record, and redacted details;
+authentication secrets and password-like metadata are omitted.

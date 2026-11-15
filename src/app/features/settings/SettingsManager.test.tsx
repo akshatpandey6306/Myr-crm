@@ -6,7 +6,10 @@ import SettingsManager from './SettingsManager';
 
 vi.mock('../../../lib/api-client', () => ({ crmApiFetch: vi.fn() }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  document.querySelector('.app-shell')?.remove();
+});
 
 const apiFetchMock = vi.mocked(crmApiFetch);
 const initialSettings = {
@@ -53,5 +56,27 @@ describe('SettingsManager', () => {
 
     expect(await screen.findByLabelText('Workspace name')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  });
+
+  it('applies a selected CRM theme and can restore the default colors', async () => {
+    const user = userEvent.setup();
+    const appShell = document.createElement('div');
+    appShell.className = 'app-shell';
+    document.body.append(appShell);
+    render(<SettingsManager />);
+
+    await user.click(screen.getByRole('button', { name: 'Teal' }));
+    expect(appShell).toHaveAttribute('data-crm-theme', 'teal');
+    expect(apiFetchMock).toHaveBeenLastCalledWith('/settings', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ crmTheme: 'teal' }),
+    }));
+
+    await user.click(screen.getByRole('button', { name: 'Use default color' }));
+    expect(appShell).toHaveAttribute('data-crm-theme', 'default');
+    expect(apiFetchMock).toHaveBeenLastCalledWith('/settings', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ crmTheme: 'default' }),
+    }));
   });
 });

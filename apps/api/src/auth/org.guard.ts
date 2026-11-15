@@ -4,6 +4,11 @@ import { HttpRequest } from "../common/http.types.js";
 import { IS_PUBLIC_KEY, SKIP_ORG_CONTEXT_KEY } from "./public.decorator.js";
 import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 
+const allCrmModules = [
+  "leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team",
+  "automation", "email", "reports", "audit-logs", "settings",
+];
+
 @Injectable()
 export class OrgGuard implements CanActivate {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -30,6 +35,7 @@ export class OrgGuard implements CanActivate {
       select: {
         organizationId: true,
         role: true,
+        enabledModules: true,
         organization: {
           select: {
             status: true,
@@ -54,9 +60,15 @@ export class OrgGuard implements CanActivate {
     }
     request.orgId = membership.organizationId;
     request.organizationRole = membership.role.toLowerCase() as HttpRequest["organizationRole"];
-    const enabledModules = membership.organization.enabledModules ?? [
-      "leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings",
-    ];
+    const workspaceModules = membership.organization.enabledModules ?? allCrmModules;
+    request.workspaceEnabledModules = workspaceModules;
+    const isAdministrator = membership.role === "OWNER" || membership.role === "ADMIN";
+    const enabledModules = isAdministrator
+      ? [...workspaceModules]
+      : workspaceModules.filter((module) =>
+          module !== "team" && (membership.enabledModules ?? []).includes(module),
+        );
+    if (isAdministrator) enabledModules.push("subscription");
     request.enabledModules = enabledModules;
     const module = this.moduleForPath(path);
     if (module && !enabledModules.includes(module)) {
@@ -71,6 +83,8 @@ export class OrgGuard implements CanActivate {
       ["leads", ["/leads"]],
       ["contacts", ["/contacts"]],
       ["companies", ["/companies"]],
+      ["vendors", ["/vendors"]],
+      ["billing-invoicing", ["/invoicing"]],
       ["deals", ["/deals", "/pipelines"]],
       ["activities", ["/activities"]],
       ["team", ["/organizations/members", "/organizations/membership-requests", "/organizations/join-code"]],

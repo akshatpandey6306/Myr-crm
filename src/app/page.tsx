@@ -1,25 +1,20 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import NotificationPopover from './components/NotificationPopover';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import ProfileMenu from './components/ProfileMenu';
 import GlobalSearch from './components/GlobalSearch';
 import HelpPopover from './components/HelpPopover';
 import DashboardLivePanels from './components/DashboardLivePanels';
+import ClearSampleDataButton from './components/ClearSampleDataButton';
 import MobileNavigation from './components/MobileNavigation';
-
-const navigation = [
-  { label: "Overview", icon: "grid", active: true },
-  { label: "Leads", icon: "users" },
-  { label: "Contacts", icon: "contact" },
-  { label: "Companies", icon: "building" },
-  { label: "Deals", icon: "briefcase" },
-  { label: "Activities", icon: "calendar" },
-  { label: "Automation", icon: "sparkles" },
-  { label: "Email", icon: "bell" },
-  { label: "Reports", icon: "chart" },
-  { label: "Audit Logs", icon: "search" },
-  { label: "Settings", icon: "coins" },
-  { label: "Team", icon: "users" },
-];
+import { SubscriptionExpiryBanner } from './components/WorkspaceAccessGate';
+import { crmApiFetch } from '../lib/api-client';
+import { crmNavigation, navigationForModules } from '../lib/crm-navigation';
+import { useWorkspaceModuleAccess } from './components/WorkspaceModuleAccess';
+import { readWorkspacePreference, writeWorkspacePreference } from '../lib/workspace-preferences';
 
 function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
@@ -58,25 +53,69 @@ function Icon({ name }: { name: string }) {
 }
 
 export default function Home() {
+  const enabledModules = useWorkspaceModuleAccess();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+
+  useEffect(() => {
+    const loadSidebarPreference = () => {
+      const savedPreference = readWorkspacePreference('sidebar.collapsed');
+      setSidebarCollapsed(savedPreference === null
+        ? window.matchMedia('(min-width: 601px) and (max-width: 850px)').matches
+        : savedPreference === 'true');
+    };
+    loadSidebarPreference();
+    window.addEventListener('myr:organization-changed', loadSidebarPreference);
+    return () => window.removeEventListener('myr:organization-changed', loadSidebarPreference);
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      writeWorkspacePreference('sidebar.collapsed', String(next));
+      return next;
+    });
+  }
+
+  async function signOut() {
+    setSigningOut(true);
+    setSignOutError('');
+    try {
+      const response = await crmApiFetch('/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error(`Sign out failed (HTTP ${response.status}). Please try again.`);
+      sessionStorage.removeItem('myr.session');
+      sessionStorage.removeItem('myr.user');
+      sessionStorage.removeItem('myr.organization');
+      window.location.assign('/sign-in');
+    } catch (caught) {
+      setSignOutError(caught instanceof Error ? caught.message : 'Could not sign out. Please try again.');
+      setSigningOut(false);
+    }
+  }
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
-        <a className="brand" href="#overview" aria-label="Myr CRM home">
-          <span className="brand-mark">m</span>
-          <span>myr<span className="brand-light">crm</span></span>
-        </a>
+        <div className="sidebar-brand-row">
+          <Link className="brand" href="/" aria-label="Myr CRM home">
+            <span className="brand-mark">m</span>
+            <span>myr<span className="brand-light">crm</span></span>
+          </Link>
+          <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span></button>
+        </div>
 
         <WorkspaceSwitcher />
 
         <div className="nav-section-label">WORKSPACE</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          {navigation.map((item) => (
+          {navigationForModules(crmNavigation, enabledModules).map((item) => (
             <a
-              className={`nav-item${item.active ? " active" : ""}`}
-              href={item.active ? "/" : `/${item.label.toLowerCase()}`}
+              className={`nav-item${item.label === 'Overview' ? " active" : ""}`}
+              href={item.href}
               key={item.label}
             >
-              <Icon name={item.icon} />
+              <Icon name={item.icon === 'vendors' ? 'building' : item.icon === 'billing' || item.icon === 'subscription' || item.icon === 'settings' ? 'coins' : item.icon === 'team' ? 'users' : item.icon} />
               <span>{item.label}</span>
               {"count" in item && typeof item.count === "number" && item.count > 0 && <span className="nav-count">{item.count}</span>}
             </a>
@@ -90,24 +129,28 @@ export default function Home() {
             <p>Visit our help center to get started.</p>
             <HelpPopover />
           </div>
-          <ProfileMenu />
+
         </div>
       </aside>
 
       <section className="main-panel" id="overview">
         <header className="topbar">
-          <MobileNavigation active="Overview" />
+          <MobileNavigation active="Overview" enabledModules={enabledModules ?? undefined} />
           <div className="breadcrumbs">
             <span>Workspace</span>
             <Icon name="chevron" />
             <strong>Overview</strong>
           </div>
           <div className="topbar-actions">
+            <SubscriptionExpiryBanner />
             <GlobalSearch />
             <NotificationPopover />
+            <ProfileMenu />
             <div className="preview-chip"><span /> Live workspace data</div>
+            <button className="header-signout" type="button" onClick={() => void signOut()} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button>
           </div>
         </header>
+        {signOutError && <p className="module-permissions-error" role="alert">{signOutError}</p>}
 
         <div className="content">
           <section className="welcome-row">
@@ -118,6 +161,7 @@ export default function Home() {
             </div>
             <div className="welcome-actions">
               <a className="button button-secondary" href="/reports">View reports <span className="button-caret">↗</span></a>
+              <ClearSampleDataButton />
               <a className="button button-primary" href="/leads">
                 <Icon name="plus" /> Add new lead
               </a>

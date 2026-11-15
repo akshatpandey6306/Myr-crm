@@ -4,6 +4,8 @@ const availableModules = new Set([
   'leads',
   'contacts',
   'companies',
+  'vendors',
+  'billing-invoicing',
   'deals',
   'activities',
   'team',
@@ -12,6 +14,7 @@ const availableModules = new Set([
   'reports',
   'audit-logs',
   'settings',
+  'subscription',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

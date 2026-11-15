@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync } from "node:crypto";
+import { createHash, randomBytes, scryptSync } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -6,9 +6,12 @@ import {
   Controller,
   Get,
   Inject,
+  Logger,
   NotFoundException,
   Param,
   Patch,
+  Optional,
+  PayloadTooLargeException,
   Post,
   Query,
   Req,
@@ -20,8 +23,11 @@ import { AuditService } from "../audit/audit.service.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard.js";
 import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
+import { DemoDataService } from "../demo-data/demo-data.controller.js";
+import { TenantProvisioningService } from "../provisioning/tenant-provisioning.service.js";
+import { AuthEmailService } from "../auth/email.service.js";
 
-const MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
+const MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -34,15 +40,33 @@ type PlanDraft = {
   trialDays: number;
   features: string[];
   employeeLimit: number | null;
+  maxDevicesPerUser: number;
+  deviceRestrictionEnabled: boolean;
   usageLimits: Record<string, number>;
   modules: string[];
   isActive: boolean;
 };
 
-const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "automation", "email", "reports", "audit-logs", "settings"];
-const TRIAL_MODULES = ["leads", "contacts", "companies", "deals", "activities", "team", "settings"];
+const PLAN_MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"];
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeAuditDetails(value: unknown, depth = 0): unknown {
+  if (depth > 6) return "[truncated]";
+  if (typeof value === "string") return value.slice(0, 2_000);
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => safeAuditDetails(item, depth + 1));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/(password|secret|token|credential|authorization|cookie|session|otp|hash)/i.test(key))
+      .slice(0, 100)
+      .map(([key, item]) => [key, safeAuditDetails(item, depth + 1)]),
+  );
+}
+
+function safeAuditReason(value: string | null) {
+  return value?.replace(/\b(password|secret|token|credential|authorization|cookie|session|otp|hash)\b\s*[:=]\s*\S+/gi, "$1=[redacted]").slice(0, 500) ?? null;
 }
 
 function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
@@ -55,6 +79,8 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
   const trialDays = body.trialDays ?? current?.trialDays ?? 0;
   const features = body.features ?? current?.features ?? [];
   const employeeLimit = body.employeeLimit === undefined ? current?.employeeLimit ?? null : body.employeeLimit;
+  const maxDevicesPerUser = body.maxDevicesPerUser === undefined ? current?.maxDevicesPerUser ?? 1 : body.maxDevicesPerUser;
+  const deviceRestrictionEnabled = body.deviceRestrictionEnabled === undefined ? current?.deviceRestrictionEnabled ?? true : body.deviceRestrictionEnabled;
   const usageLimits = body.usageLimits ?? current?.usageLimits ?? {};
   const modules = body.modules ?? current?.modules ?? PLAN_MODULES;
   const isActive = body.isActive ?? current?.isActive ?? true;
@@ -79,6 +105,10 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
   if (employeeLimit !== null && (!Number.isInteger(employeeLimit) || (employeeLimit as number) < 1 || (employeeLimit as number) > 100_000)) {
     throw new BadRequestException({ code: "validation_error", message: "Employee limit must be a positive whole number or unlimited" });
   }
+  if (!Number.isInteger(maxDevicesPerUser) || (maxDevicesPerUser as number) < 1 || (maxDevicesPerUser as number) > 100) {
+    throw new BadRequestException({ code: "validation_error", message: "Device limit must be between 1 and 100" });
+  }
+  if (typeof deviceRestrictionEnabled !== "boolean") throw new BadRequestException({ code: "validation_error", message: "Device restriction setting must be true or false" });
   if (!isRecord(usageLimits) || Object.entries(usageLimits).some(([key, value]) =>
     !/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/.test(key) || !Number.isInteger(value) || (value as number) < 0,
   )) {
@@ -98,6 +128,8 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
     trialDays: trialDays as number,
     features: (features as string[]).map((feature) => feature.trim()).filter(Boolean),
     employeeLimit: employeeLimit as number | null,
+    maxDevicesPerUser: maxDevicesPerUser as number,
+    deviceRestrictionEnabled,
     usageLimits: usageLimits as Record<string, number>,
     modules: [...new Set(modules as string[])],
     isActive,
@@ -130,20 +162,160 @@ function intervalEnd(from: Date, interval: "monthly" | "yearly") {
 @UseGuards(PlatformAdminGuard)
 @Controller("control-panel")
 export class ControlPanelController {
+  private readonly logger = new Logger(ControlPanelController.name);
+  private readonly tenantProvisioning: TenantProvisioningService;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
-  ) {}
+    @Inject(DemoDataService) private readonly demoData: DemoDataService,
+    @Optional() @Inject(AuthEmailService) private readonly authEmail?: AuthEmailService,
+    @Optional() @Inject(TenantProvisioningService) tenantProvisioning?: TenantProvisioningService,
+  ) {
+    this.tenantProvisioning = tenantProvisioning ?? new TenantProvisioningService();
+  }
 
   @Get("access")
   access() {
     return { data: { isPlatformAdmin: true } };
   }
 
+  @Get("security-settings")
+  async getSecuritySettings() {
+    const [settings, sessions] = await Promise.all([
+      this.prisma.globalSecuritySettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } }),
+      this.prisma.session.findMany({
+        where: { revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "ACTIVE" } },
+        select: {
+          id: true, userId: true, deviceHash: true, deviceLabel: true, userAgent: true, createdAt: true, lastSeenAt: true, expiresAt: true,
+          user: { select: { email: true, name: true, memberships: { where: { status: "ACTIVE" }, select: { organization: { select: { id: true, name: true, subscriptionPlan: true } } }, take: 1 } } },
+        },
+        orderBy: { lastSeenAt: "desc" }, take: 500,
+      }),
+    ]);
+    const planCodes = [...new Set(sessions.map((session) => session.user.memberships[0]?.organization.subscriptionPlan).filter((value): value is string => Boolean(value)))];
+    const plans = await this.prisma.subscriptionPlan.findMany({ where: { code: { in: planCodes } }, select: { code: true, maxDevicesPerUser: true, deviceRestrictionEnabled: true } });
+    const planMap = new Map(plans.map((plan) => [plan.code, plan]));
+    const groups = new Map<string, { userId: string; user: { email: string; name: string }; organization: { id: string; name: string } | null; devices: Set<string>; sessionCount: number }>();
+    for (const session of sessions) {
+      const membership = session.user.memberships[0];
+      const organization = membership?.organization ?? null;
+      const code = organization?.subscriptionPlan;
+      const plan = code ? planMap.get(code) : null;
+      const limit = plan?.maxDevicesPerUser ?? 0;
+      const group = groups.get(session.userId) ?? { userId: session.userId, user: session.user, organization, devices: new Set<string>(), sessionCount: 0 };
+      // Pre-device-tracking sessions have no device hash. Count that legacy
+      // set as one unknown device instead of treating every session as a device.
+      group.devices.add(session.deviceHash ?? "legacy-unknown-device");
+      group.sessionCount += 1;
+      groups.set(session.userId, group);
+    }
+    return { data: {
+      settings,
+      usage: [...groups.values()].map((group) => {
+        const code = group.organization?.id ? sessions.find((item) => item.userId === group.userId)?.user.memberships[0]?.organization.subscriptionPlan : null;
+        const plan = code ? planMap.get(code) : null;
+        const limit = plan?.maxDevicesPerUser ?? null;
+        const enforced = settings.deviceRestrictionsEnabled && plan?.deviceRestrictionEnabled === true && limit !== null;
+        return { userId: group.userId, user: group.user, organization: group.organization, activeDevices: group.devices.size, activeSessions: group.sessionCount, deviceLimit: limit, overLimit: Boolean(enforced && group.devices.size > limit!) };
+      }),
+      sessions: sessions.map(({ deviceHash: _deviceHash, ...session }) => ({
+        id: session.id, userId: session.userId, user: session.user,
+        organization: session.user.memberships[0]?.organization ?? null,
+        deviceLabel: session.deviceLabel ?? "Unknown device", userAgent: session.userAgent,
+        createdAt: session.createdAt.toISOString(), lastSeenAt: session.lastSeenAt.toISOString(), expiresAt: session.expiresAt.toISOString(),
+      })),
+    } };
+  }
+
+  @Patch("security-settings")
+  async updateSecuritySettings(@Body() body: unknown, @Req() request: HttpRequest) {
+    if (!isRecord(body)) throw new BadRequestException({ code: "validation_error", message: "Security settings are required" });
+    const before = await this.prisma.globalSecuritySettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+    const next = {
+      failedLoginLockoutEnabled: body.failedLoginLockoutEnabled ?? before.failedLoginLockoutEnabled,
+      maxFailedLoginAttempts: body.maxFailedLoginAttempts ?? before.maxFailedLoginAttempts,
+      lockoutDurationMinutes: body.lockoutDurationMinutes ?? before.lockoutDurationMinutes,
+      sessionLifetimeMinutes: body.sessionLifetimeMinutes ?? before.sessionLifetimeMinutes,
+      deviceRestrictionsEnabled: body.deviceRestrictionsEnabled ?? before.deviceRestrictionsEnabled,
+    };
+    if (typeof next.failedLoginLockoutEnabled !== "boolean" || typeof next.deviceRestrictionsEnabled !== "boolean" ||
+      !Number.isInteger(next.maxFailedLoginAttempts) || Number(next.maxFailedLoginAttempts) < 1 || Number(next.maxFailedLoginAttempts) > 10 ||
+      !Number.isInteger(next.lockoutDurationMinutes) || Number(next.lockoutDurationMinutes) < 1 || Number(next.lockoutDurationMinutes) > 1440 ||
+      !Number.isInteger(next.sessionLifetimeMinutes) || Number(next.sessionLifetimeMinutes) < 5 || Number(next.sessionLifetimeMinutes) > 43200) {
+      throw new BadRequestException({ code: "validation_error", message: "Set attempts to 1–10, lockout to 1–1440 minutes, and session lifetime to 5–43200 minutes" });
+    }
+    const updated = await this.prisma.globalSecuritySettings.update({ where: { id: 1 }, data: { ...next, updatedByUserId: request.userId ?? null } });
+    await this.recordAudit(request, "security.settings.update", "global_security_settings", "1", { before, after: updated });
+    return { data: updated };
+  }
+
+  @Post("sessions/:sessionId/revoke")
+  async revokeSession(@Param("sessionId") sessionId: string, @Req() request: HttpRequest) {
+    if (!UUID.test(sessionId)) throw new BadRequestException({ code: "validation_error", message: "A valid session ID is required" });
+    const session = await this.prisma.session.findUnique({ where: { id: sessionId }, select: { id: true, userId: true, revokedAt: true, user: { select: { email: true } } } });
+    if (!session || session.revokedAt) throw new NotFoundException({ code: "not_found", message: "Active session not found" });
+    await this.prisma.session.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
+    await this.recordAudit(request, "security.session.revoke", "session", session.id, { userId: session.userId, email: session.user.email });
+    return { data: { sessionId, revoked: true } };
+  }
+
   @Get("plans")
   async listPlans() {
     const plans = await this.prisma.subscriptionPlan.findMany({ orderBy: [{ isActive: "desc" }, { price: "asc" }, { code: "asc" }] });
     return { data: plans };
+  }
+
+  @Get("plans/:code")
+  async getPlan(@Param("code") code: string, @Query("organizationId") organizationId?: string) {
+    const plan = await this.prisma.subscriptionPlan.findUnique({ where: { code } });
+    if (!plan) throw new NotFoundException({ code: "not_found", message: "Subscription plan not found" });
+    if (!organizationId) return { data: plan };
+    this.validateOrganizationId(organizationId);
+    const override = await this.prisma.organizationSubscriptionPlanOverride?.findUnique?.({
+      where: { organizationId_planCode: { organizationId, planCode: code } },
+    }) ?? null;
+    return { data: override ?? plan };
+  }
+
+  @Get("provisioning-requests")
+  async listProvisioningRequests(@Query("status") status?: string) {
+    const allowed = ["RUNNING", "SUCCEEDED", "FAILED"];
+    const rows = await this.prisma.provisioningRequest.findMany({
+      where: status && allowed.includes(status) ? { status: status as "RUNNING" | "SUCCEEDED" | "FAILED" } : undefined,
+      orderBy: { createdAt: "desc" }, take: 100,
+    });
+    return { data: rows.map(({ id, requestId, orderId, product, status: state, organizationId, ownerUserId, planCode, failureCode, activationEmailSent, createdAt, updatedAt }) => ({
+      id, requestId, orderId, product, status: state, organizationId, ownerUserId, planCode, failureCode,
+      activationEmailSent, createdAt: createdAt.toISOString(), updatedAt: updatedAt.toISOString(),
+    })) };
+  }
+
+  @Post("provisioning-requests/:requestId/retry-activation-email")
+  async retryProvisioningActivationEmail(@Param("requestId") requestId: string, @Req() request: HttpRequest) {
+    if (!requestId || requestId.length > 128) throw new BadRequestException({ code: "validation_error", message: "A valid provisioning request ID is required" });
+    if (!this.authEmail) throw new ConflictException({ code: "email_delivery_unavailable", message: "Activation email delivery is unavailable" });
+    const provisioning = await this.prisma.provisioningRequest.findUnique({ where: { requestId } });
+    if (!provisioning || !provisioning.ownerUserId || provisioning.status !== "SUCCEEDED") throw new NotFoundException({ code: "not_found", message: "Completed provisioning request not found" });
+    if (provisioning.activationEmailSent) return { data: { requestId, activationEmailSent: true } };
+    const user = await this.prisma.user.findUnique({ where: { id: provisioning.ownerUserId }, select: { email: true, status: true } });
+    if (!user || user.status !== "PENDING") throw new ConflictException({ code: "account_already_active", message: "The owner account is already active or unavailable" });
+    const token = randomBytes(32).toString("base64url");
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.emailToken.updateMany({ where: { userId: provisioning.ownerUserId!, purpose: "ACCOUNT_ACTIVATION", consumedAt: null }, data: { consumedAt: now } });
+      await tx.emailToken.create({ data: { userId: provisioning.ownerUserId!, tokenHash: createHash("sha256").update(token).digest("hex"), purpose: "ACCOUNT_ACTIVATION", expiresAt: new Date(now.getTime() + 60 * 60 * 1000) } });
+    });
+    let sent = false;
+    try {
+      await this.authEmail.sendAccountActivation(token, user.email);
+      sent = true;
+    } catch {
+      sent = false;
+    }
+    await this.prisma.provisioningRequest.update({ where: { id: provisioning.id }, data: { activationEmailSent: sent } });
+    await this.recordAudit(request, "provisioning.activation_email.retry", "provisioning_request", provisioning.id, { requestId, sent });
+    return { data: { requestId, activationEmailSent: sent } };
   }
 
   @Get("subscription-activation-requests")
@@ -187,6 +359,7 @@ export class ControlPanelController {
       select: {
         id: true,
         organizationId: true,
+        requestedById: true,
         planCode: true,
         requestType: true,
       },
@@ -203,10 +376,15 @@ export class ControlPanelController {
       if (!currentOrganization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
 
       if (approved) {
-        const plan = await transaction.subscriptionPlan.findFirst({
+        const basePlan = await transaction.subscriptionPlan.findFirst({
           where: { code: subscriptionRequest.planCode, isActive: true },
           select: { code: true, billingInterval: true, modules: true },
         });
+        const override = await transaction.organizationSubscriptionPlanOverride?.findUnique?.({
+          where: { organizationId_planCode: { organizationId: subscriptionRequest.organizationId, planCode: subscriptionRequest.planCode } },
+          select: { planCode: true, billingInterval: true, modules: true, isActive: true },
+        }) ?? null;
+        const plan = !basePlan ? null : override?.isActive ? { ...override, code: override.planCode } : override ? null : basePlan;
         if (!plan) throw new ConflictException({ code: "plan_unavailable", message: "The requested plan is no longer available" });
 
         const now = new Date();
@@ -222,21 +400,26 @@ export class ControlPanelController {
               subscriptionStartedAt: now,
               subscriptionEndsAt: new Date(now.getTime() + 2 * DAY_MS),
               billingProvider: "trial",
-              enabledModules: TRIAL_MODULES,
+              enabledModules: plan.modules,
             },
           });
         } else {
           const currentStatus = effectiveSubscriptionStatus(currentOrganization.subscriptionStatus, currentOrganization.subscriptionEndsAt);
-          if (!["expired", "cancelled"].includes(currentStatus)) {
+          const currentEnd = currentOrganization.subscriptionEndsAt;
+          const renewalWindowOpen = ["active", "trial"].includes(currentStatus) &&
+            currentEnd !== null && currentEnd > now &&
+            currentEnd.getTime() <= now.getTime() + 10 * DAY_MS;
+          if (!["expired", "cancelled"].includes(currentStatus) && !renewalWindowOpen) {
             throw new ConflictException({ code: "subscription_not_ended", message: "Workspace subscription is not awaiting activation" });
           }
+          const renewalStart = renewalWindowOpen && currentEnd ? currentEnd : now;
           await transaction.organization.update({
             where: { id: subscriptionRequest.organizationId },
             data: {
               subscriptionPlan: plan.code,
               subscriptionStatus: "ACTIVE",
-              subscriptionStartedAt: now,
-              subscriptionEndsAt: intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"]),
+              ...(!renewalWindowOpen ? { subscriptionStartedAt: now } : {}),
+              subscriptionEndsAt: intervalEnd(renewalStart, plan.billingInterval as PlanDraft["billingInterval"]),
               billingProvider: "manual",
               enabledModules: plan.modules,
             },
@@ -257,13 +440,27 @@ export class ControlPanelController {
       reason,
       paymentProvider: "not_integrated",
     });
+    if (approved && subscriptionRequest.requestType === "TRIAL") {
+      try {
+        await this.demoData.load(subscriptionRequest.organizationId, subscriptionRequest.requestedById);
+      } catch (error) {
+        this.logger.error("The trial was approved, but sample workspace data could not be loaded", error instanceof Error ? error.stack : undefined);
+      }
+    }
     return { data: { id: requestId, decision: body.decision, requestType: subscriptionRequest.requestType.toLowerCase() } };
   }
 
   @Get("workspace-signups")
   async listWorkspaceSignupRequests() {
     const requests = await this.prisma.membership.findMany({
-      where: { role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      where: {
+        role: "OWNER",
+        status: "PENDING",
+        user: {
+          status: "PENDING",
+          emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+        },
+      },
       select: {
         userId: true,
         createdAt: true,
@@ -294,7 +491,15 @@ export class ControlPanelController {
     }
 
     const signup = await this.prisma.membership.findFirst({
-      where: { userId, role: "OWNER", status: "PENDING", user: { status: "PENDING" } },
+      where: {
+        userId,
+        role: "OWNER",
+        status: "PENDING",
+        user: {
+          status: "PENDING",
+          emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+        },
+      },
       select: { organizationId: true, userId: true },
     });
     if (!signup) throw new NotFoundException({ code: "not_found", message: "Pending workspace signup not found" });
@@ -358,27 +563,119 @@ export class ControlPanelController {
       trialDays: existing.trialDays,
       features: existing.features,
       employeeLimit: existing.employeeLimit,
+      maxDevicesPerUser: existing.maxDevicesPerUser,
+      deviceRestrictionEnabled: existing.deviceRestrictionEnabled,
       usageLimits: existing.usageLimits as Record<string, number>,
       modules: existing.modules,
       isActive: existing.isActive,
     };
     const plan = parsePlanDraft(body, current);
-    const updated = await this.prisma.subscriptionPlan.update({
-      where: { code },
-      data: {
-        name: plan.name,
-        price: plan.price,
-        currency: plan.currency,
-        billingInterval: plan.billingInterval,
-        trialDays: plan.trialDays,
-        features: plan.features,
-        employeeLimit: plan.employeeLimit,
-        usageLimits: plan.usageLimits,
-        modules: plan.modules,
-        isActive: plan.isActive,
-      },
+    if (isRecord(body) && body.applyTo !== undefined && body.applyTo !== "all" && body.applyTo !== "organization") {
+      throw new BadRequestException({ code: "validation_error", message: "Plan changes must target all workspaces or one workspace" });
+    }
+    const applyTo = isRecord(body) && body.applyTo === "organization" ? "organization" : "all";
+    const organizationId = isRecord(body) && typeof body.organizationId === "string" ? body.organizationId : "";
+    if (applyTo === "organization") {
+      this.validateOrganizationId(organizationId);
+      const organization = await this.prisma.organization.findUnique({ where: { id: organizationId }, select: { id: true, name: true } });
+      if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
+      const { updated, updatedActiveWorkspaces } = await this.prisma.$transaction(async (transaction) => {
+        const updated = await transaction.organizationSubscriptionPlanOverride.upsert({
+          where: { organizationId_planCode: { organizationId, planCode: code } },
+          create: {
+            organizationId,
+            planCode: code,
+            name: plan.name,
+            price: plan.price,
+            currency: plan.currency,
+            billingInterval: plan.billingInterval,
+            trialDays: plan.trialDays,
+            features: plan.features,
+            employeeLimit: plan.employeeLimit,
+            maxDevicesPerUser: plan.maxDevicesPerUser,
+            deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
+            usageLimits: plan.usageLimits,
+            modules: plan.modules,
+            isActive: plan.isActive,
+          },
+          update: {
+            name: plan.name,
+            price: plan.price,
+            currency: plan.currency,
+            billingInterval: plan.billingInterval,
+            trialDays: plan.trialDays,
+            features: plan.features,
+            employeeLimit: plan.employeeLimit,
+            maxDevicesPerUser: plan.maxDevicesPerUser,
+            deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
+            usageLimits: plan.usageLimits,
+            modules: plan.modules,
+            isActive: plan.isActive,
+          },
+        });
+        const organizations = await transaction.organization.updateMany({
+          where: { id: organizationId, subscriptionPlan: code, subscriptionStatus: "ACTIVE", subscriptionEndsAt: { gt: new Date() } },
+          data: { enabledModules: plan.modules },
+        });
+        return { updated, updatedActiveWorkspaces: organizations.count };
+      });
+      await this.recordAudit(request, "plan.update.workspace", "organization", organizationId, {
+        planCode: code,
+        workspaceName: organization.name,
+        before: current,
+        after: plan,
+        updatedActiveWorkspaces,
+      });
+      return { data: updated, appliedTo: { organizationId, organizationName: organization.name } };
+    }
+    const { updated, updatedWorkspaceOverrides, updatedActiveWorkspaces } = await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.subscriptionPlan.update({
+        where: { code },
+        data: {
+          name: plan.name,
+          price: plan.price,
+          currency: plan.currency,
+          billingInterval: plan.billingInterval,
+          trialDays: plan.trialDays,
+          features: plan.features,
+          employeeLimit: plan.employeeLimit,
+          maxDevicesPerUser: plan.maxDevicesPerUser,
+          deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
+          usageLimits: plan.usageLimits,
+          modules: plan.modules,
+          isActive: plan.isActive,
+        },
+      });
+      const overrides = await transaction.organizationSubscriptionPlanOverride.updateMany({
+        where: { planCode: code },
+        data: {
+          name: plan.name,
+          price: plan.price,
+          currency: plan.currency,
+          billingInterval: plan.billingInterval,
+          trialDays: plan.trialDays,
+          features: plan.features,
+          employeeLimit: plan.employeeLimit,
+          maxDevicesPerUser: plan.maxDevicesPerUser,
+          deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
+          usageLimits: plan.usageLimits,
+          modules: plan.modules,
+          isActive: plan.isActive,
+        },
+      });
+      const organizations = await transaction.organization.updateMany({
+        where: { subscriptionPlan: code, subscriptionStatus: "ACTIVE", subscriptionEndsAt: { gt: new Date() } },
+        data: { enabledModules: plan.modules },
+      });
+      return { updated, updatedWorkspaceOverrides: overrides.count, updatedActiveWorkspaces: organizations.count };
     });
-    await this.recordAudit(request, "plan.update", "subscription_plan", code, { before: current, after: plan });
+    await this.recordAudit(request, "plan.update", "subscription_plan", code, {
+      before: current,
+      after: plan,
+      appliedTo: "all_workspaces",
+      updatedWorkspaceOverrides,
+      updatedActiveWorkspaces,
+    });
     return { data: updated };
   }
 
@@ -402,6 +699,11 @@ export class ControlPanelController {
             where: { status: "ACTIVE", role: "OWNER", user: { status: "ACTIVE" } },
             select: { user: { select: { name: true, email: true } } },
             take: 1,
+          },
+          subscriptionPayments: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { transactionId: true, paymentType: true, amount: true, currency: true, status: true, payuId: true, verifiedAt: true, createdAt: true },
           },
         },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
@@ -458,6 +760,16 @@ export class ControlPanelController {
         createdAt: organization.createdAt,
         owner: organization.memberships[0]?.user ?? null,
         enabledModules: organization.enabledModules,
+        lastPayment: organization.subscriptionPayments?.[0] ? {
+          transactionId: organization.subscriptionPayments[0].transactionId,
+          paymentType: organization.subscriptionPayments[0].paymentType.toLowerCase(),
+          amount: organization.subscriptionPayments[0].amount.toString(),
+          currency: organization.subscriptionPayments[0].currency.trim(),
+          status: organization.subscriptionPayments[0].status.toLowerCase(),
+          payuId: organization.subscriptionPayments[0].payuId,
+          paidAt: organization.subscriptionPayments[0].verifiedAt?.toISOString() ?? null,
+          createdAt: organization.subscriptionPayments[0].createdAt.toISOString(),
+        } : null,
         subscription: {
           planCode: organization.subscriptionPlan,
           status: effectiveSubscriptionStatus(organization.subscriptionStatus, organization.subscriptionEndsAt),
@@ -530,39 +842,28 @@ export class ControlPanelController {
         ? new Date(now.getTime() + plan.trialDays * DAY_MS)
         : intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"])
       : null;
-    const organization = await this.prisma.user.create({
-      data: {
-        email: ownerEmail,
-        name: ownerName,
-        passwordHash,
-        memberships: {
-          create: {
-            role: "OWNER",
-            organization: {
-              create: {
-                name: organizationName,
-                subscriptionPlan: plan?.code ?? null,
-                subscriptionStatus: plan ? (plan.trialDays > 0 ? "TRIAL" : "ACTIVE") : "PENDING",
-                subscriptionStartedAt: plan ? now : null,
-                subscriptionEndsAt,
-                billingProvider: plan ? "manual" : null,
-                pipelines: {
-                  create: {
-                    name: "Sales pipeline",
-                    isDefault: true,
-                    stages: { create: ["Discovery", "Qualified", "Proposal", "Negotiation"].map((stageName, position) => ({ name: stageName, position })) },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      include: { memberships: { where: { status: "ACTIVE" }, include: { organization: true } } },
+    const { owner, createdOrganization } = await this.prisma.$transaction(async (tx) => {
+      const owner = await tx.user.create({ data: { email: ownerEmail, name: ownerName, passwordHash } });
+      const createdOrganization = await this.tenantProvisioning.createWorkspace(tx, {
+        ownerUserId: owner.id,
+        name: organizationName,
+        membershipStatus: "ACTIVE",
+        subscriptionPlan: plan?.code ?? null,
+        subscriptionStatus: plan ? (plan.trialDays > 0 ? "TRIAL" : "ACTIVE") : "PENDING",
+        subscriptionStartedAt: plan ? now : null,
+        subscriptionEndsAt,
+        billingProvider: plan ? "manual" : null,
+        ...(plan ? { enabledModules: plan.modules } : {}),
+      });
+      return { owner, createdOrganization };
     });
-
-    const createdOrganization = organization.memberships[0]?.organization;
-    if (!createdOrganization) throw new BadRequestException({ code: "server_error", message: "Could not create workspace" });
+    if ((plan?.trialDays ?? 0) > 0) {
+      try {
+        await this.demoData.load(createdOrganization.id, owner.id);
+      } catch (error) {
+        this.logger.error("The trial workspace was created, but sample data could not be loaded", error instanceof Error ? error.stack : undefined);
+      }
+    }
     await this.recordAudit(request, "organization.create", "organization", createdOrganization.id, {
       name: createdOrganization.name,
       ownerEmail,
@@ -603,19 +904,19 @@ export class ControlPanelController {
   @Patch("organizations/:organizationId/subscription")
   async updateOrganizationSubscription(
     @Param("organizationId") organizationId: string,
-    @Body() body: { status?: unknown; planCode?: unknown; endsAt?: unknown; extend?: unknown; reason?: unknown },
+    @Body() body: { status?: unknown; planCode?: unknown; endsAt?: unknown; extend?: unknown; trialDays?: unknown; reason?: unknown },
     @Req() request: HttpRequest,
   ) {
     this.validateOrganizationId(organizationId);
-    if (body?.status !== "active" && body?.status !== "expired" && body?.status !== "cancelled") {
-      throw new BadRequestException({ code: "validation_error", message: "Subscription status must be active, expired, or cancelled" });
+    if (body?.status !== "active" && body?.status !== "trial" && body?.status !== "expired" && body?.status !== "cancelled") {
+      throw new BadRequestException({ code: "validation_error", message: "Subscription status must be active, trial, expired, or cancelled" });
     }
     const reason = parseAuditReason(body.reason);
     const planCode = typeof body.planCode === "string" ? body.planCode : undefined;
-    const plan = body.status === "active" && planCode
+    const basePlan = (body.status === "active" || body.status === "trial") && planCode
       ? await this.prisma.subscriptionPlan.findFirst({ where: { code: planCode, isActive: true } })
       : null;
-    if (body.status === "active" && !plan) {
+    if ((body.status === "active" || body.status === "trial") && planCode && !basePlan) {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid active plan before activating the subscription" });
     }
     if (body.planCode !== undefined && !planCode) {
@@ -629,10 +930,28 @@ export class ControlPanelController {
       select: { subscriptionPlan: true, subscriptionStartedAt: true, subscriptionEndsAt: true },
     });
     if (!current) throw new NotFoundException({ code: "not_found", message: "Organization not found" });
+    const override = (body.status === "active" || body.status === "trial") && planCode
+      ? await this.prisma.organizationSubscriptionPlanOverride?.findUnique?.({
+          where: { organizationId_planCode: { organizationId, planCode } },
+        }) ?? null
+      : null;
+    const plan = override ? { ...override, code: override.planCode } : basePlan;
+    if ((body.status === "active" || body.status === "trial") && (!basePlan || !plan || (override && !override.isActive))) {
+      throw new BadRequestException({ code: "validation_error", message: "Choose a valid active plan before activating the subscription" });
+    }
 
     const now = new Date();
     let endsAt: Date | undefined;
     let startsAt = now;
+    if (body.status === "trial") {
+      const trialDays = body.trialDays === undefined ? 2 : body.trialDays;
+      if (!Number.isInteger(trialDays) || (trialDays as number) < 1 || (trialDays as number) > 30) {
+        throw new BadRequestException({ code: "validation_error", message: "Trial extension must be between 1 and 30 days" });
+      }
+      const base = current.subscriptionEndsAt && current.subscriptionEndsAt > now ? current.subscriptionEndsAt : now;
+      startsAt = current.subscriptionStartedAt ?? now;
+      endsAt = new Date(base.getTime() + (trialDays as number) * DAY_MS);
+    }
     if (body.status === "active") {
       const interval = plan!.billingInterval as PlanDraft["billingInterval"];
       if (body.endsAt !== undefined) {
@@ -655,10 +974,10 @@ export class ControlPanelController {
 
     const organization = await this.prisma.organization.update({
       where: { id: organizationId },
-      data: body.status === "active"
+      data: body.status === "active" || body.status === "trial"
         ? {
             subscriptionPlan: plan!.code,
-            subscriptionStatus: "ACTIVE",
+            subscriptionStatus: body.status === "trial" ? "TRIAL" : "ACTIVE",
             subscriptionStartedAt: startsAt,
             subscriptionEndsAt: endsAt,
             billingProvider: "manual",
@@ -680,9 +999,9 @@ export class ControlPanelController {
     }).catch((error: unknown) => this.throwIfNotFound(error, "Organization not found"));
     await this.prisma.subscriptionActivationRequest.updateMany({
       where: { organizationId, status: "PENDING" },
-      data: { status: body.status === "active" ? "ACTIVATED" : "DECLINED" },
+      data: { status: body.status === "active" || body.status === "trial" ? "ACTIVATED" : "DECLINED" },
     });
-    await this.recordAudit(request, body.status === "active" ? "subscription.activate" : body.status === "cancelled" ? "subscription.cancel" : "subscription.expire", "organization", organization.id, {
+    await this.recordAudit(request, body.status === "active" ? "subscription.activate" : body.status === "trial" ? "subscription.trial.extend" : body.status === "cancelled" ? "subscription.cancel" : "subscription.expire", "organization", organization.id, {
       before: { planCode: current.subscriptionPlan, endsAt: current.subscriptionEndsAt },
       after: { status: organization.subscriptionStatus.toLowerCase(), planCode: organization.subscriptionPlan, endsAt: organization.subscriptionEndsAt },
     }, reason);
@@ -743,6 +1062,45 @@ export class ControlPanelController {
         ...log,
         actorName: log.actorUserId ? actors.get(log.actorUserId)?.name ?? null : null,
         actorEmail: log.actorEmail ?? (log.actorUserId ? actors.get(log.actorUserId)?.email ?? null : null),
+      })),
+    };
+  }
+
+  @Get("audit-logs/export")
+  async exportAuditLogs(@Req() request: HttpRequest, @Query("action") action?: string) {
+    const filter = action?.trim();
+    if (filter && filter.length > 120) {
+      throw new BadRequestException({ code: "validation_error", message: "action must be at most 120 characters" });
+    }
+    const where = filter ? { action: filter } : {};
+    const total = await this.prisma.platformAuditLog.count({ where });
+    if (total > 10_000) {
+      throw new PayloadTooLargeException({ code: "export_too_large", message: "Filter the audit history to export no more than 10,000 entries at a time" });
+    }
+    const logs = await this.prisma.platformAuditLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 10_000,
+    });
+    const actorIds = [...new Set(logs.flatMap((log) => log.actorUserId ? [log.actorUserId] : []))];
+    const users = actorIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const actors = new Map(users.map((user) => [user.id, user]));
+    await this.recordAudit(request, "audit_log.export", "platform_audit_log", "", {
+      action: filter ?? "all",
+      exportedCount: logs.length,
+    });
+    return {
+      data: logs.map((log) => ({
+        createdAt: log.createdAt.toISOString(),
+        actorName: log.actorUserId ? actors.get(log.actorUserId)?.name ?? null : null,
+        actorEmail: log.actorEmail ?? (log.actorUserId ? actors.get(log.actorUserId)?.email ?? null : null),
+        action: log.action,
+        targetType: log.targetType,
+        targetId: log.targetId,
+        reason: safeAuditReason(log.reason),
+        details: safeAuditDetails(log.metadata),
       })),
     };
   }

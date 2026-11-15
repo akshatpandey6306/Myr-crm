@@ -28,10 +28,18 @@ import { ControlPanelController } from "./control-panel/control-panel.controller
 import { DashboardController } from "./dashboard/dashboard.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
+import { AuthEmailService } from "./auth/email.service.js";
+import { DemoDataController, DemoDataService } from "./demo-data/demo-data.controller.js";
+import { VendorsController } from "./vendors/vendors.controller.js";
+import { InvoicingController } from "./invoicing/invoicing.controller.js";
+import { PayUService } from "./billing/payu.service.js";
+import { ProvisioningController } from "./provisioning/provisioning.controller.js";
+import { TenantProvisioningService } from "./provisioning/tenant-provisioning.service.js";
+import { PartnerAdminController, PartnerIntegrationController } from "./partners/partner-integration.controller.js";
 
 @Module({
   imports: [HealthModule, PrismaModule],
-  controllers: [AuthController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController],
+  controllers: [AuthController, ProvisioningController, PartnerIntegrationController, PartnerAdminController, OrganizationsController, MembersController, LeadsController, ContactsController, CompaniesController, VendorsController, InvoicingController, DealsController, PipelinesController, ActivitiesController, AutomationsController, EmailsController, ReportsController, NotificationsController, AuditLogsController, SettingsController, BillingController, ControlPanelController, DashboardController, DemoDataController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: OrgGuard },
@@ -41,6 +49,10 @@ import { PlatformAdminGuard } from "./auth/platform-admin.guard.js";
     AuditLogsService,
     AuditService,
     PlatformAdminGuard,
+    AuthEmailService,
+    DemoDataService,
+    PayUService,
+    TenantProvisioningService,
   ],
 })
 export class AppModule {}

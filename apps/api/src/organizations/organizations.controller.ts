@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Inject, Post, Req, UnauthorizedException } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Inject, Post, Req, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
@@ -6,6 +6,20 @@ import { SkipOrganizationContext } from "../auth/public.decorator.js";
 @Controller("organizations")
 export class OrganizationsController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  @Get("modules")
+  async listEnabledModules(@Req() request: HttpRequest) {
+    if (!request.userId || !request.orgId) {
+      throw new UnauthorizedException({ code: "unauthorized", message: "Authenticated organization context required" });
+    }
+    const isAdministrator = request.organizationRole === "owner" || request.organizationRole === "admin";
+    return {
+      data: {
+        enabledModules: [...new Set(request.enabledModules ?? [])],
+        assignableModules: isAdministrator ? (request.workspaceEnabledModules ?? []) : [],
+      },
+    };
+  }
 
   @SkipOrganizationContext()
   @Get()
@@ -24,26 +38,8 @@ export class OrganizationsController {
   @SkipOrganizationContext()
   @Post()
   async create(@Req() request: HttpRequest, @Body() body: { name?: unknown }) {
-    const userId = this.userId(request);
-    const name = typeof body?.name === "string" ? body.name.trim() : "";
-    if (!name || name.length > 160) {
-      throw new BadRequestException({ code: "validation_error", message: "Organization name is required and must be at most 160 characters" });
-    }
-    const organization = await this.prisma.organization.create({
-      data: {
-        name,
-        memberships: { create: { userId, role: "OWNER" } },
-        pipelines: {
-          create: {
-            name: "Sales pipeline",
-            isDefault: true,
-            stages: { create: ["Discovery", "Qualified", "Proposal", "Negotiation"].map((stageName, position) => ({ name: stageName, position })) },
-          },
-        },
-      },
-      include: { memberships: { where: { userId, status: "ACTIVE" }, select: { role: true } } },
-    });
-    return { data: { id: organization.id, name: organization.name, role: organization.memberships[0]?.role.toLowerCase() ?? "owner" } };
+    this.userId(request);
+    throw new ForbiddenException({ code: "central_provisioning_required", message: "Workspaces are provisioned by the platform administrator or an authorized integration partner." });
   }
 
   private userId(request: HttpRequest) {

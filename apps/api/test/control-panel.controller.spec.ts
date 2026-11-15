@@ -16,6 +16,25 @@ function createController(prisma: Record<string, unknown>, audit = { record: asy
 }
 
 describe("ControlPanelController", () => {
+  it("extends an existing trial from its current expiry and audits the change", async () => {
+    const startedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    let updateData: Record<string, unknown> | undefined;
+    const controller = createController({
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads"] }) },
+      organizationSubscriptionPlanOverride: { findUnique: async () => null },
+      organization: {
+        findUnique: async () => ({ subscriptionPlan: "growth", subscriptionStartedAt: startedAt, subscriptionEndsAt: expiresAt }),
+        update: async ({ data }: { data: Record<string, unknown> }) => { updateData = data; return { id: organizationId, subscriptionStatus: "TRIAL", subscriptionPlan: "growth", subscriptionStartedAt: data.subscriptionStartedAt, subscriptionEndsAt: data.subscriptionEndsAt, billingProvider: "manual" }; },
+      },
+    });
+
+    const result = await controller.updateOrganizationSubscription(organizationId, { status: "trial", planCode: "growth", trialDays: 2, reason: "Approved 48-hour extension" }, actorRequest);
+    assert.equal(result.data.status, "trial");
+    assert.equal((updateData?.subscriptionEndsAt as Date).getTime(), expiresAt.getTime() + 48 * 60 * 60 * 1000);
+    assert.deepEqual(updateData?.enabledModules, ["leads"]);
+  });
+
   it("lists tenant owners, active member counts, subscriptions, and enabled modules", async () => {
     let pendingRequestQuery: Record<string, unknown> | undefined;
     const controller = createController({
@@ -63,6 +82,51 @@ describe("ControlPanelController", () => {
     assert.deepEqual(result.data[0]?.enabledModules, ["leads", "team"]);
     assert.deepEqual(result.data[0]?.owner, { name: "Maya Chen", email: "maya@example.com" });
     assert.equal(result.data[0]?.subscription.status, "trial");
+  });
+
+  it("exports filtered platform audit entries with sensitive metadata redacted", async () => {
+    let where: Record<string, unknown> | undefined;
+    let recordedAudit: Record<string, unknown> | undefined;
+    const auditLog = {
+      id: "log-a",
+      actorUserId: "admin-a",
+      actorEmail: null,
+      action: "organization.create",
+      targetType: "organization",
+      targetId: organizationId,
+      reason: "password=do-not-export",
+      metadata: {
+        workspaceName: "Acme",
+        password: "do-not-export",
+        nested: { sessionToken: "do-not-export", modules: ["leads"] },
+      },
+      createdAt: new Date("2026-11-12T10:00:00.000Z"),
+    };
+    const controller = createController({
+      platformAuditLog: {
+        count: async (args: { where: Record<string, unknown> }) => { where = args.where; return 1; },
+        findMany: async (args: { where: Record<string, unknown> }) => { where = args.where; return [auditLog]; },
+      },
+      user: {
+        findUnique: async () => ({ email: "admin@example.com" }),
+        findMany: async () => [{ id: "admin-a", name: "Platform Admin", email: "admin@example.com" }],
+      },
+    }, {
+      record: async (value: Record<string, unknown>) => { recordedAudit = value; },
+      list: async () => [],
+    });
+
+    const result = await controller.exportAuditLogs(actorRequest, "organization.create");
+
+    assert.deepEqual(where, { action: "organization.create" });
+    assert.equal(result.data[0]?.actorName, "Platform Admin");
+    assert.deepEqual(result.data[0]?.details, {
+      workspaceName: "Acme",
+      nested: { modules: ["leads"] },
+    });
+    assert.equal(result.data[0]?.reason, "password=[redacted]");
+    assert.equal(JSON.stringify(result).includes("do-not-export"), false);
+    assert.equal(recordedAudit?.action, "audit_log.export");
   });
 
   it("lists pending trial and activation requests for platform review", async () => {
@@ -120,7 +184,7 @@ describe("ControlPanelController", () => {
     const updatedOrganization = organizationUpdate?.data as Record<string, unknown>;
     assert.equal(updatedOrganization.subscriptionStatus, "TRIAL");
     assert.equal(updatedOrganization.billingProvider, "trial");
-    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "team", "settings"]);
+    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"]);
     assert.equal(
       new Date(updatedOrganization.subscriptionEndsAt as Date).getTime() -
         new Date(updatedOrganization.subscriptionStartedAt as Date).getTime(),
@@ -129,6 +193,42 @@ describe("ControlPanelController", () => {
     assert.deepEqual(requestUpdate?.where, { id: "22222222-2222-4222-8222-222222222222", status: "PENDING" });
     assert.deepEqual(requestUpdate?.data, { status: "ACTIVATED" });
     assert.equal(result.data.requestType, "trial");
+  });
+
+  it("extends an approved renewal from the current expiry date", async () => {
+    let organizationUpdate: Record<string, unknown> | undefined;
+    const currentEnd = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+    const transaction = {
+      organization: {
+        findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: currentEnd }),
+        update: async (args: Record<string, unknown>) => { organizationUpdate = args; },
+      },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads"] }) },
+      subscriptionActivationRequest: { updateMany: async () => ({ count: 1 }) },
+    };
+    const controller = createController({
+      subscriptionActivationRequest: {
+        findFirst: async () => ({
+          id: "request-renewal",
+          organizationId,
+          planCode: "growth",
+          requestType: "ACTIVATION",
+        }),
+      },
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    });
+
+    const result = await controller.reviewSubscriptionRequest(
+      "22222222-2222-4222-8222-222222222222",
+      { decision: "approve" },
+      actorRequest,
+    );
+
+    const updateData = organizationUpdate?.data as Record<string, unknown>;
+    assert.equal(updateData.subscriptionStatus, "ACTIVE");
+    assert.equal(updateData.subscriptionStartedAt, undefined);
+    assert.equal(new Date(updateData.subscriptionEndsAt as Date).getTime() > currentEnd.getTime(), true);
+    assert.equal(result.data.requestType, "activation");
   });
 
   it("lists tenant deals with owner and pipeline details using the requested workspace scope", async () => {
@@ -175,7 +275,14 @@ describe("ControlPanelController", () => {
     const controller = createController({
       membership: {
         findMany: async (args: Record<string, unknown>) => {
-          assert.deepEqual(args.where, { role: "OWNER", status: "PENDING", user: { status: "PENDING" } });
+          assert.deepEqual(args.where, {
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
           return [{
             userId,
             createdAt: new Date("2026-11-06T12:00:00.000Z"),
@@ -203,7 +310,18 @@ describe("ControlPanelController", () => {
     };
     const controller = createController({
       membership: {
-        findFirst: async () => ({ organizationId, userId }),
+        findFirst: async (args: Record<string, unknown>) => {
+          assert.deepEqual(args.where, {
+            userId,
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
+          return { organizationId, userId };
+        },
       },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     });
@@ -214,6 +332,31 @@ describe("ControlPanelController", () => {
       ["membership", { where: { organizationId, userId, role: "OWNER", status: "PENDING" }, data: { status: "ACTIVE" } }],
     ]);
     assert.equal(result.data.decision, "approve");
+  });
+
+  it("does not let platform admins approve a signup that is waiting for its OTP", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const controller = createController({
+      membership: {
+        findFirst: async (args: Record<string, unknown>) => {
+          assert.deepEqual(args.where, {
+            userId,
+            role: "OWNER",
+            status: "PENDING",
+            user: {
+              status: "PENDING",
+              emailTokens: { none: { purpose: "EMAIL_VERIFICATION", consumedAt: null } },
+            },
+          });
+          return null;
+        },
+      },
+    });
+
+    await assert.rejects(
+      controller.reviewWorkspaceSignup(userId, { decision: "approve" }, actorRequest),
+      NotFoundException,
+    );
   });
 
   it("searches workspace administrators without returning their account details", async () => {

@@ -1,0 +1,2 @@
+ALTER TABLE partner_customer_mappings ADD COLUMN external_subscription_ref VARCHAR(160);
+CREATE UNIQUE INDEX partner_customer_mappings_partner_id_external_subscription_ref_key ON partner_customer_mappings(partner_id, external_subscription_ref);

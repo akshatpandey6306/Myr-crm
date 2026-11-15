@@ -4,28 +4,18 @@ import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
+import { crmNavigation, navigationForModules } from '../../lib/crm-navigation';
 
-const items = [
-  { label: 'Overview', href: '/', icon: '◫' },
-  { label: 'Leads', href: '/leads', icon: '♙' },
-  { label: 'Contacts', href: '/contacts', icon: '◎' },
-  { label: 'Companies', href: '/companies', icon: '▦' },
-  { label: 'Deals', href: '/deals', icon: '◇' },
-  { label: 'Activities', href: '/activities', icon: '◷' },
-  { label: 'Automation', href: '/automation', icon: '✳' },
-  { label: 'Email', href: '/email', icon: '✉' },
-  { label: 'Reports', href: '/reports', icon: '⌁' },
-  { label: 'Audit Logs', href: '/audit-logs', icon: '◉' },
-  { label: 'Settings', href: '/settings', icon: '⚙' },
-  { label: 'Team', href: '/team', icon: '♙' },
-];
+const navigationGlyphs: Record<string, string> = {
+  grid: '⊞', users: '♙', contact: '◎', building: '▦', briefcase: '◇',
+  vendors: '♧', billing: '$', calendar: '◷', sparkles: '✳', bell: '✉',
+  chart: '⌁', search: '◉', settings: '⌁', team: '♙', subscription: '$',
+};
 
 export default function MobileNavigation({ active, enabledModules }: { active: string; enabledModules?: string[] }) {
   const [open, setOpen] = useState(false);
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
-  const visibleItems = enabledModules
-    ? items.filter((item) => item.label === 'Overview' || enabledModules.includes(item.href.slice(1)))
-    : items;
+  const visibleItems = navigationForModules(crmNavigation, enabledModules ?? null);
 
   useEffect(() => {
     let active = true;
@@ -81,7 +71,7 @@ export default function MobileNavigation({ active, enabledModules }: { active: s
               aria-current={active === item.label ? 'page' : undefined}
               onClick={() => setOpen(false)}
             >
-              <span className="mobile-nav-icon" aria-hidden="true">{item.icon}</span>
+              <span className="mobile-nav-icon" aria-hidden="true">{navigationGlyphs[item.icon]}</span>
               <span>{item.label}</span>
               {active === item.label && <i aria-hidden="true" />}
             </Link>

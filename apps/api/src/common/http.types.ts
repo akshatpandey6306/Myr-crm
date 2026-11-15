@@ -8,6 +8,7 @@ export type HttpRequest = {
   token?: string;
   orgId?: string;
   enabledModules?: string[];
+  workspaceEnabledModules?: string[];
   organizationRole?: "owner" | "admin" | "sales_manager" | "sales_rep" | "read_only";
 };
 

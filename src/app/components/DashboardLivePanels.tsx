@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import ActionMenu from './ActionMenu';
 import PipelineDistributionChart from './PipelineDistributionChart';
+import PieBarChart from './PieBarChart';
 import { crmApiFetch } from '../../lib/api-client';
 
 type Summary = {
@@ -16,6 +17,7 @@ type Summary = {
     completedActivities: number;
   };
   dealsByStatus: Array<{ status: string; count: number; value: string }>;
+  leadsByStatus: Array<{ status: string; count: number }>;
 };
 
 type Deal = {
@@ -89,26 +91,38 @@ export default function DashboardLivePanels() {
     async function load() {
       setLoading(true);
       setError('');
-      try {
-        const [summary, deals, recent, upcoming] = await Promise.all([
-          getData<{ data: Summary }>('/reports/summary', controller.signal),
-          getData<{ data: Deal[] }>('/deals?status=open&page=1&pageSize=5&sortBy=createdAt&sortOrder=desc', controller.signal),
-          getData<{ data: Activity[] }>('/activities?page=1&pageSize=4&sortBy=createdAt&sortOrder=desc', controller.signal),
-          getData<{ data: Activity[] }>('/activities?status=open&page=1&pageSize=4&sortBy=dueAt&sortOrder=asc', controller.signal),
-        ]);
-        if (active) setData({ summary: summary.data, deals: deals.data, recentActivities: recent.data, upcomingActivities: upcoming.data });
-      } catch (cause) {
-        if (!active || (cause instanceof Error && cause.name === 'AbortError')) return;
-        setError(cause instanceof Error && cause.message.includes('fetch')
-          ? 'Could not reach the CRM API. Check that the API server is running.'
-          : cause instanceof Error ? cause.message : 'Could not load dashboard data.');
-      } finally {
-        if (active) setLoading(false);
-      }
+      const [summaryResult, dealsResult, recentResult, upcomingResult] = await Promise.allSettled([
+        getData<{ data: Summary }>('/dashboard/summary', controller.signal),
+        getData<{ data: Deal[] }>('/deals?status=open&page=1&pageSize=5&sortBy=createdAt&sortOrder=desc', controller.signal),
+        getData<{ data: Activity[] }>('/activities?page=1&pageSize=4&sortBy=createdAt&sortOrder=desc', controller.signal),
+        getData<{ data: Activity[] }>('/activities?status=open&page=1&pageSize=4&sortBy=dueAt&sortOrder=asc', controller.signal),
+      ]);
+      if (!active || controller.signal.aborted) return;
+      const emptySummary: Summary = { metrics: { totalLeads: 0, openDeals: 0, openPipelineValue: '0', wonRevenue: '0', openActivities: 0, completedActivities: 0 }, dealsByStatus: [], leadsByStatus: [] };
+      const firstFailure = [summaryResult, dealsResult, recentResult, upcomingResult].find((result) => result.status === 'rejected');
+      const reason = firstFailure?.status === 'rejected' ? firstFailure.reason : null;
+      setData({
+        summary: summaryResult.status === 'fulfilled' ? summaryResult.value.data : emptySummary,
+        deals: dealsResult.status === 'fulfilled' ? dealsResult.value.data : [],
+        recentActivities: recentResult.status === 'fulfilled' ? recentResult.value.data : [],
+        upcomingActivities: upcomingResult.status === 'fulfilled' ? upcomingResult.value.data : [],
+      });
+      if (reason) setError(reason instanceof Error && reason.message.includes('fetch') ? 'Could not reach the CRM API. Check that the API server is running.' : reason instanceof Error ? reason.message : 'Some overview data could not be loaded.');
+      setLoading(false);
     }
     void load();
     return () => { active = false; controller.abort(); };
   }, [refresh]);
+
+  useEffect(() => {
+    const refreshDemoData = () => setRefresh((value) => value + 1);
+    window.addEventListener('myr:demo-data-changed', refreshDemoData);
+    window.addEventListener('myr:organization-changed', refreshDemoData);
+    return () => {
+      window.removeEventListener('myr:demo-data-changed', refreshDemoData);
+      window.removeEventListener('myr:organization-changed', refreshDemoData);
+    };
+  }, []);
 
   const metrics = data?.summary.metrics;
   const dealOutcomes = data?.summary.dealsByStatus ?? [];
@@ -157,6 +171,8 @@ export default function DashboardLivePanels() {
         <a className="panel-link" href="/activities">View all activities <span aria-hidden="true">↗</span></a>
       </article>
     </section>
+
+    <PieBarChart title="Lead status distribution" unit="leads" items={(data?.summary.leadsByStatus ?? []).map((item) => ({ label: item.status.replace(/\b\w/g, (letter) => letter.toUpperCase()), value: item.count, color: ({ new: '#477dd0', contacted: '#dd9b37', qualified: '#27976f', disqualified: '#cf5b64' } as Record<string, string>)[item.status] ?? '#8164ce' }))} />
 
     <section className="panel deals-panel" id="deals">
       <div className="panel-heading deals-heading"><div><h2>Deals in progress</h2><p>{loading ? 'Loading open deals…' : `${metrics?.openDeals ?? 0} open deals in this workspace`}</p></div><a className="text-link" href="/deals">View all deals <span aria-hidden="true">↗</span></a></div>

@@ -4,7 +4,8 @@ import { PrismaService } from "../prisma/prisma.service.js";
 
 const managers = new Set(["owner", "admin"]);
 const currencies = ["USD", "CAD", "EUR", "GBP"] as const;
-const fields = ["organizationName", "currency", "timezone", "weekStartsOn"] as const;
+const themes = ["default", "ocean", "forest", "sunset", "rose", "slate", "amber", "teal", "berry", "midnight"] as const;
+const fields = ["organizationName", "currency", "timezone", "weekStartsOn", "crmTheme"] as const;
 
 @Controller("settings")
 export class SettingsController {
@@ -25,6 +26,7 @@ export class SettingsController {
         currency: settings?.currency ?? "USD",
         timezone: settings?.timezone ?? "UTC",
         weekStartsOn: settings?.weekStartsOn ?? 1,
+        crmTheme: settings?.crmTheme ?? "default",
         updatedAt: settings?.updatedAt.toISOString() ?? null,
         canEdit: managers.has(request.organizationRole ?? ""),
       },
@@ -44,7 +46,7 @@ export class SettingsController {
     const organizationName = "organizationName" in body
       ? this.text(body.organizationName, "organizationName", 160)
       : undefined;
-    const settingsPatch: { currency?: string; timezone?: string; weekStartsOn?: number } = {};
+    const settingsPatch: { currency?: string; timezone?: string; weekStartsOn?: number; crmTheme?: string } = {};
     if ("currency" in body) {
       if (typeof body.currency !== "string" || !currencies.includes(body.currency as (typeof currencies)[number])) {
         throw this.invalid("currency must be USD, CAD, EUR, or GBP");
@@ -65,6 +67,12 @@ export class SettingsController {
         throw this.invalid("weekStartsOn must be an integer from 0 to 6");
       }
       settingsPatch.weekStartsOn = Number(body.weekStartsOn);
+    }
+    if ("crmTheme" in body) {
+      if (typeof body.crmTheme !== "string" || !themes.includes(body.crmTheme as (typeof themes)[number])) {
+        throw this.invalid("crmTheme must be a supported CRM color theme");
+      }
+      settingsPatch.crmTheme = body.crmTheme;
     }
     if (organizationName === undefined && Object.keys(settingsPatch).length === 0) {
       throw this.invalid("Provide at least one editable setting");
@@ -89,6 +97,7 @@ export class SettingsController {
         currency: updated.settings.currency,
         timezone: updated.settings.timezone,
         weekStartsOn: updated.settings.weekStartsOn,
+        crmTheme: updated.settings.crmTheme,
         updatedAt: updated.settings.updatedAt.toISOString(),
         canEdit: true,
       },
