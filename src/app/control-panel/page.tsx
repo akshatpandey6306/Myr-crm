@@ -307,6 +307,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
   const [onboardingMessage, setOnboardingMessage] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [expandedMembers, setExpandedMembers] = useState<Record<string, WorkspaceMember[] | undefined>>({});
+  const [memberDialogOrganization, setMemberDialogOrganization] = useState<Organization | null>(null);
   const [loadingMembers, setLoadingMembers] = useState<Record<string, boolean>>({});
   const [memberErrors, setMemberErrors] = useState<Record<string, string>>({});
   const [expandedDeals, setExpandedDeals] = useState<Record<string, WorkspaceDealPage | undefined>>({});
@@ -331,6 +332,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
   const [pendingSensitiveAction, setPendingSensitiveAction] = useState<PendingSensitiveAction | null>(null);
   const [actionReason, setActionReason] = useState('');
   const actionDialogRef = useRef<HTMLDialogElement>(null);
+  const memberDialogRef = useRef<HTMLDialogElement>(null);
 
   const activeSubscriptions = organizations.filter(({ subscription }) =>
     subscription.status === 'active').length;
@@ -679,6 +681,11 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
     const dialog = actionDialogRef.current;
     if (pendingSensitiveAction && dialog && !dialog.open) dialog.showModal();
   }, [pendingSensitiveAction]);
+  useEffect(() => {
+    const dialog = memberDialogRef.current;
+    if (memberDialogOrganization && dialog && !dialog.open) dialog.showModal();
+    if (!memberDialogOrganization && dialog?.open) dialog.close();
+  }, [memberDialogOrganization]);
 
   async function refreshOrganizations() {
     setRefreshing(true);
@@ -1024,10 +1031,9 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
 
 
   async function toggleMembers(organization: Organization) {
-    if (expandedMembers[organization.id]) {
-      setExpandedMembers((current) => ({ ...current, [organization.id]: undefined }));
-      return;
-    }
+    setMemberDialogOrganization(organization);
+    if (expandedMembers[organization.id] !== undefined || loadingMembers[organization.id]) return;
+    setExpandedMembers((current) => ({ ...current, [organization.id]: [] }));
     setLoadingMembers((current) => ({ ...current, [organization.id]: true }));
     setMemberErrors((current) => ({ ...current, [organization.id]: '' }));
     try {
@@ -1436,7 +1442,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Subscription plans</h2>
-                <p>Persisted plans used when onboarding tenants and setting access. Employee caps and selected modules are enforced. Plan changes do not process payments.</p>
             </div>
             <div className="control-panel-plan-scope">
               <label>Plan edit scope<select disabled={Boolean(editingPlanCode)} value={planApplyScope} onChange={(event) => setPlanApplyScope(event.target.value as 'all' | 'organization')}><option value="all">All workspaces</option><option value="organization">One workspace</option></select></label>
@@ -1642,10 +1647,10 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                             className="control-panel-member-count control-panel-member-toggle"
                             type="button"
                             onClick={() => void toggleMembers(organization)}
-                            aria-expanded={Boolean(expandedMembers[organization.id])}
+                            aria-expanded={memberDialogOrganization?.id === organization.id}
                             aria-label={`View ${organization.memberCount} active members for ${organization.name}`}
                           >
-                            {organization.memberCount} active {expandedMembers[organization.id] ? '▲' : '▼'}
+                            {organization.memberCount} active {memberDialogOrganization?.id === organization.id ? '▲' : '▼'}
                           </button>
                           <button
                             className="control-panel-member-count control-panel-member-toggle"
@@ -1721,32 +1726,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                           </button>
                         </div></td>
                     </tr>
-                     {expandedMembers[organization.id] !== undefined && (
-                      <tr className="control-panel-members-row">
-                         <td colSpan={8}>
-                           {loadingMembers[organization.id] ? (
-                             <p className="control-panel-empty">Loading members…</p>
-                           ) : memberErrors[organization.id] ? (
-                             <p className="control-panel-error" role="alert">{memberErrors[organization.id]}</p>
-                           ) : expandedMembers[organization.id]?.length ? (
-                             <table className="control-panel-members-table">
-                               <thead><tr><th>NAME</th><th>EMAIL</th><th>ROLE</th></tr></thead>
-                               <tbody>
-                                 {expandedMembers[organization.id]?.map((member) => (
-                                   <tr key={member.id}>
-                                     <td>{member.name}</td>
-                                     <td>{member.email}</td>
-                                     <td><span className="control-panel-status active">{member.role}</span></td>
-                                   </tr>
-                                 ))}
-                               </tbody>
-                             </table>
-                           ) : (
-                             <p className="control-panel-empty">No active members.</p>
-                           )}
-                         </td>
-                       </tr>
-                     )}
                      {expandedDeals[organization.id] !== undefined && (
                        <tr className="control-panel-members-row">
                          <td colSpan={8}>
@@ -1934,6 +1913,48 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
         </div>
         </div>
       </div>
+      {memberDialogOrganization && (
+        <dialog
+          ref={memberDialogRef}
+          className="control-panel-member-dialog"
+          aria-labelledby="workspace-members-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setMemberDialogOrganization(null);
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setMemberDialogOrganization(null);
+          }}
+        >
+          <header className="control-panel-member-dialog-header">
+            <div>
+              <p className="control-panel-confirmation-eyebrow">WORKSPACE MEMBERS</p>
+              <h2 id="workspace-members-title">{memberDialogOrganization.name}</h2>
+              <p>{memberDialogOrganization.memberCount} active member{memberDialogOrganization.memberCount === 1 ? '' : 's'}</p>
+            </div>
+            <button className="control-panel-member-dialog-close" type="button" aria-label="Close members" onClick={() => setMemberDialogOrganization(null)}>×</button>
+          </header>
+          <div className="control-panel-member-dialog-body">
+            {loadingMembers[memberDialogOrganization.id] ? (
+              <p className="control-panel-empty" role="status">Loading workspace members…</p>
+            ) : memberErrors[memberDialogOrganization.id] ? (
+              <div><p className="control-panel-error" role="alert">{memberErrors[memberDialogOrganization.id]}</p><button className="control-panel-action" type="button" onClick={() => { setExpandedMembers((current) => ({ ...current, [memberDialogOrganization.id]: undefined })); void toggleMembers(memberDialogOrganization); }}>Try again</button></div>
+            ) : expandedMembers[memberDialogOrganization.id]?.length ? (
+              <ul className="control-panel-member-cards">
+                {expandedMembers[memberDialogOrganization.id]?.map((member) => (
+                  <li key={member.id}>
+                    <span className="control-panel-member-avatar" aria-hidden="true">{member.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                    <span className="control-panel-member-info"><strong>{member.name}</strong><span>{member.email}</span></span>
+                    <span className="control-panel-status active">{member.role}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="control-panel-empty">No active members were returned for this workspace.</p>
+            )}
+          </div>
+        </dialog>
+      )}
       {pendingSensitiveAction && (
         <dialog
           ref={actionDialogRef}

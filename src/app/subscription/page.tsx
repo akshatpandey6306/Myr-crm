@@ -57,6 +57,12 @@ export default function SubscriptionPage() {
   const canUsePayU = billing.canManageBilling && billing.payuEnabled && subscription.provider !== 'partner';
   const checkoutPlan = billing.plans.find((plan) => plan.code === checkoutPlanCode) ?? currentPlan ?? billing.plans[0];
   const renewalWindowOpen = Boolean(subscription.endsAt && new Date(subscription.endsAt).getTime() > Date.now() && new Date(subscription.endsAt).getTime() <= Date.now() + 10 * 24 * 60 * 60 * 1000);
+  const periodStart = subscription.startsAt ? new Date(subscription.startsAt).getTime() : null;
+  const periodEnd = subscription.endsAt ? new Date(subscription.endsAt).getTime() : null;
+  const periodProgress = periodStart && periodEnd && periodEnd > periodStart
+    ? Math.max(0, Math.min(100, ((Date.now() - periodStart) / (periodEnd - periodStart)) * 100))
+    : 0;
+  const periodDaysRemaining = periodEnd ? Math.max(0, Math.ceil((periodEnd - Date.now()) / 86_400_000)) : null;
 
   async function beginCheckout(planCode: string, purchaseType: 'trial' | 'plan' | 'renewal') {
     setCheckoutError('');
@@ -92,26 +98,28 @@ export default function SubscriptionPage() {
   }
 
   return (
-    <CrmShell active="Subscription"><main className="settings-route-content">
-      <p className="welcome-copy">Subscription and billing status for {billing.organization.name}.</p>
-      <section className="panel" aria-labelledby="subscription-heading">
+    <CrmShell active="Subscription"><main className="settings-route-content subscription-page-content">
+      <section className="panel subscription-summary-panel" aria-labelledby="subscription-heading">
+        <div className="subscription-status-overview">
         <div className="billing-section-heading">
           <div><span className="auth-step">WORKSPACE BILLING</span><h2 id="subscription-heading">{currentPlan?.name ?? subscription.planCode ?? 'Subscription'}</h2></div>
           <strong className="status-pill">{status}</strong>
         </div>
         {status === 'trial' ? <p>Trial expires {date(subscription.endsAt)}.</p> : <p>{status === 'active' ? 'Current plan' : 'Plan period'}: {date(subscription.startsAt)} – {date(subscription.endsAt)}</p>}
         <p>Billing managed by: {providerName}</p>
-        {status === 'active' && billing.canManageBilling && billing.partnerPlansUrl && <p><a className="button button-primary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">Renew current plan</a></p>}
-        {status === 'trial' && billing.canManageBilling && billing.partnerPlansUrl && <p><a className="button button-primary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">Pay now or upgrade plan</a></p>}
+        {periodEnd && <div className="subscription-period-card"><div><span>PLAN PERIOD</span><strong>{periodDaysRemaining === null ? '—' : `${periodDaysRemaining} days remaining`}</strong></div><div className="subscription-period-track"><i style={{ width: `${periodProgress}%` }} /></div><small>{status === 'trial' ? 'Trial access' : 'Current subscription'} · Ends {date(subscription.endsAt)}</small></div>}
+        {status === 'active' && billing.canManageBilling && billing.partnerPlansUrl && <a className="button button-primary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">Renew current plan</a>}
+        {status === 'trial' && billing.canManageBilling && billing.partnerPlansUrl && <a className="button button-primary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">Pay now or upgrade plan</a>}
+        {!billing.partnerPlansUrl && !canUsePayU && <p>Contact your platform administrator to renew or change this workspace plan.</p>}
+        </div>
         {canUsePayU && status === 'trial' && checkoutPlan && <div className="subscription-checkout-box">
           <p>Your trial is active. Pay for the current plan now or choose another plan to upgrade immediately.</p>
           <label>Pay or upgrade to<select value={checkoutPlanCode} onChange={(event) => setCheckoutPlanCode(event.target.value)}>{billing.plans.map((plan) => <option key={plan.code} value={plan.code}>{plan.name} · {money(plan)}</option>)}</select></label>
           <label>Phone number for PayU<input type="tel" autoComplete="tel" value={checkoutPhone} onChange={(event) => setCheckoutPhone(event.target.value)} placeholder="Enter your phone number" /></label>
           <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => void beginCheckout(checkoutPlan.code, 'plan')}>{checkoutBusy ? 'Opening PayU…' : checkoutPlan.code === subscription.planCode ? 'Pay now' : `Upgrade to ${checkoutPlan.name}`}</button>
+          {checkoutError && <p className="subscription-checkout-error" role="alert">{checkoutError}</p>}
         </div>}
-        {canUsePayU && status === 'active' && renewalWindowOpen && currentPlan && <div className="subscription-checkout-box"><p>Your renewal window is open. Continue to PayU to renew this plan.</p><label>Phone number for PayU<input type="tel" autoComplete="tel" value={checkoutPhone} onChange={(event) => setCheckoutPhone(event.target.value)} placeholder="Enter your phone number" /></label><button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => void beginCheckout(currentPlan.code, 'renewal')}>{checkoutBusy ? 'Opening PayU…' : 'Pay now to renew'}</button></div>}
-        {checkoutError && <p className="subscription-checkout-error" role="alert">{checkoutError}</p>}
-        {!billing.partnerPlansUrl && !canUsePayU && <p>Contact your platform administrator to renew or change this workspace plan.</p>}
+        {canUsePayU && status === 'active' && renewalWindowOpen && currentPlan && <div className="subscription-checkout-box"><p>Your renewal window is open. Continue to PayU to renew this plan.</p><label>Phone number for PayU<input type="tel" autoComplete="tel" value={checkoutPhone} onChange={(event) => setCheckoutPhone(event.target.value)} placeholder="Enter your phone number" /></label><button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => void beginCheckout(currentPlan.code, 'renewal')}>{checkoutBusy ? 'Opening PayU…' : 'Pay now to renew'}</button>{checkoutError && <p className="subscription-checkout-error" role="alert">{checkoutError}</p>}</div>}
       </section>
 
       <section className="subscription-feature-center" aria-labelledby="subscription-feature-heading">
@@ -136,8 +144,6 @@ export default function SubscriptionPage() {
             <h2>{plan.name}{isCurrent ? ' · Current plan' : ''}</h2>
             <p><strong>{money(plan)}</strong></p>
             <p>{plan.seats > 0 ? `Up to ${plan.seats} workspace members` : 'Unlimited workspace members'}</p>
-            {plan.features.length > 0 && <ul>{plan.features.slice(0, 4).map((feature) => <li key={feature}>{feature}</li>)}</ul>}
-            {plan.modules.length > 0 && <p>Includes {plan.modules.map((module) => module.replaceAll('-', ' ')).join(', ')}</p>}
             {billing.canManageBilling && billing.partnerPlansUrl && (isCurrent && status === 'trial' || !isCurrent) && <a className="button button-secondary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">{isCurrent ? 'Choose this plan' : status === 'active' ? 'Upgrade options' : 'Choose plan'}</a>}
             {!isCurrent && !billing.partnerPlansUrl && <p>Contact your platform administrator to change plans.</p>}
           </article>;

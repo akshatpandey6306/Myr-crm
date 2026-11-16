@@ -3,9 +3,11 @@ import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const managers = new Set(["owner", "admin"]);
-const currencies = ["USD", "CAD", "EUR", "GBP"] as const;
+const currencies = ["USD", "CAD", "EUR", "GBP", "INR", "AUD", "JPY", "SGD"] as const;
 const themes = ["default", "ocean", "forest", "sunset", "rose", "slate", "amber", "teal", "berry", "midnight"] as const;
-const fields = ["organizationName", "currency", "timezone", "weekStartsOn", "crmTheme"] as const;
+const dateFormats = ["DD MMM YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"] as const;
+const timeFormats = ["12h", "24h"] as const;
+const fields = ["organizationName", "currency", "timezone", "weekStartsOn", "dateFormat", "timeFormat", "crmTheme"] as const;
 
 @Controller("settings")
 export class SettingsController {
@@ -26,6 +28,8 @@ export class SettingsController {
         currency: settings?.currency ?? "USD",
         timezone: settings?.timezone ?? "UTC",
         weekStartsOn: settings?.weekStartsOn ?? 1,
+        dateFormat: settings?.dateFormat ?? "DD MMM YYYY",
+        timeFormat: settings?.timeFormat ?? "12h",
         crmTheme: settings?.crmTheme ?? "default",
         updatedAt: settings?.updatedAt.toISOString() ?? null,
         canEdit: managers.has(request.organizationRole ?? ""),
@@ -46,10 +50,10 @@ export class SettingsController {
     const organizationName = "organizationName" in body
       ? this.text(body.organizationName, "organizationName", 160)
       : undefined;
-    const settingsPatch: { currency?: string; timezone?: string; weekStartsOn?: number; crmTheme?: string } = {};
+    const settingsPatch: { currency?: string; timezone?: string; weekStartsOn?: number; dateFormat?: string; timeFormat?: string; crmTheme?: string } = {};
     if ("currency" in body) {
       if (typeof body.currency !== "string" || !currencies.includes(body.currency as (typeof currencies)[number])) {
-        throw this.invalid("currency must be USD, CAD, EUR, or GBP");
+        throw this.invalid("currency must be a supported three-letter currency code");
       }
       settingsPatch.currency = body.currency;
     }
@@ -67,6 +71,18 @@ export class SettingsController {
         throw this.invalid("weekStartsOn must be an integer from 0 to 6");
       }
       settingsPatch.weekStartsOn = Number(body.weekStartsOn);
+    }
+    if ("dateFormat" in body) {
+      if (typeof body.dateFormat !== "string" || !dateFormats.includes(body.dateFormat as (typeof dateFormats)[number])) {
+        throw this.invalid("dateFormat must be a supported date format");
+      }
+      settingsPatch.dateFormat = body.dateFormat;
+    }
+    if ("timeFormat" in body) {
+      if (typeof body.timeFormat !== "string" || !timeFormats.includes(body.timeFormat as (typeof timeFormats)[number])) {
+        throw this.invalid("timeFormat must be 12h or 24h");
+      }
+      settingsPatch.timeFormat = body.timeFormat;
     }
     if ("crmTheme" in body) {
       if (typeof body.crmTheme !== "string" || !themes.includes(body.crmTheme as (typeof themes)[number])) {
@@ -97,6 +113,8 @@ export class SettingsController {
         currency: updated.settings.currency,
         timezone: updated.settings.timezone,
         weekStartsOn: updated.settings.weekStartsOn,
+        dateFormat: updated.settings.dateFormat,
+        timeFormat: updated.settings.timeFormat,
         crmTheme: updated.settings.crmTheme,
         updatedAt: updated.settings.updatedAt.toISOString(),
         canEdit: true,

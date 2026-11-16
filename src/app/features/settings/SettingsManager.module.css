@@ -1,24 +1,79 @@
 .feature {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 20px;
   min-width: 0;
 }
 
-.heading h1 {
-  margin: 4px 0 0;
-  font-size: 32px;
-  line-height: 1.15;
+.feature > :global(.module-notice),
+.feature > :global(.leads-error) {
+  grid-column: 1 / -1;
 }
+
+.feature > :global(.leads-error) { align-items: center; border-radius: 13px; padding: 13px 16px; box-shadow: 0 8px 20px rgb(46 36 92 / 4%); }
+.feature > :global(.leads-error) > div { display: grid; gap: 3px; }
+.feature > :global(.leads-error) strong { color: #9c3e3e; font-size: 11px; }
+.feature > :global(.leads-error) span { line-height: 1.45; }
+
+.appearanceStack { display: grid; align-content: start; gap: 15px; min-width: 0; }
+
+.workspacePulse {
+  position: relative;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(190px, .8fr) minmax(0, 1.5fr) auto;
+  align-items: center;
+  gap: 22px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--green) 24%, white);
+  border-radius: 16px;
+  background: radial-gradient(circle at 94% 4%, color-mix(in srgb, var(--green) 15%, transparent), transparent 34%), linear-gradient(115deg, var(--surface), color-mix(in srgb, var(--green-pale) 52%, white));
+  padding: 20px 22px;
+  box-shadow: 0 14px 34px rgb(46 36 92 / 6%);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.workspacePulse:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--green) 42%, white);
+  box-shadow: 0 18px 40px rgb(46 36 92 / 10%);
+}
+
+.pulseIdentity { display: flex; min-width: 0; align-items: center; gap: 13px; }
+.pulseAvatar { display: grid; width: 50px; height: 50px; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in srgb, var(--green) 24%, white); border-radius: 16px; background: color-mix(in srgb, var(--green) 14%, white); color: var(--green-dark); font-size: 20px; font-weight: 750; box-shadow: inset 0 1px white; }
+.pulseIdentity h2 { overflow: hidden; margin: 4px 0 2px; color: var(--crm-ink); font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.pulseIdentity p { margin: 0; color: var(--crm-muted); font-size: 11px; }
+.eyebrow { color: var(--green-dark); font-size: 9px; font-weight: 750; letter-spacing: .1em; }
+.pulseStats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.pulseStats > div { display: grid; min-width: 0; gap: 5px; border: 1px solid rgb(255 255 255 / 80%); border-radius: 12px; background: rgb(255 255 255 / 68%); padding: 11px 13px; }
+.pulseStats > div > span { color: var(--crm-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; }
+.pulseStats strong { overflow: hidden; color: var(--crm-ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.pulseStats small { color: var(--crm-muted); font-size: 9px; }
+.saveState { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d5eee3; border-radius: 999px; background: #f1faf5; padding: 8px 11px; color: #25815f; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.saveState i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px rgb(37 129 95 / 10%); }
+.saveStateDirty { border-color: #f3dfb9; background: #fff9ed; color: #a46a12; }
 
 .form {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   width: 100%;
-  max-width: 760px;
+  max-width: none;
   gap: 18px;
   padding: 22px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 14px;
   background: var(--surface);
+  box-shadow: 0 12px 30px rgb(46 36 92 / 5%);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.form:hover,
+.appearance:hover { border-color: color-mix(in srgb, var(--green) 28%, white); box-shadow: 0 16px 36px rgb(46 36 92 / 8%); }
+
+.formHeading,
+.formFooter {
+  grid-column: 1 / -1;
 }
 
 .formHeading {
@@ -31,7 +86,7 @@
 }
 
 .formHeading h2 {
-  margin: 0;
+  margin: 4px 0 0;
   color: var(--crm-ink);
   font-size: 17px;
 }
@@ -49,16 +104,16 @@
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #c9e6d9;
-  border-radius: 6px;
+  border-radius: 12px;
   background: #edf7f1;
   color: #23805f;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .field {
   display: grid;
-  max-width: 480px;
+  min-width: 0;
   gap: 7px;
   color: var(--crm-ink);
   font-size: 12px;
@@ -80,8 +135,9 @@
 
 .field input:focus,
 .field select:focus {
-  outline: 2px solid var(--green);
-  outline-offset: 1px;
+  border-color: var(--green);
+  outline: 3px solid color-mix(in srgb, var(--green) 18%, transparent);
+  outline-offset: 0;
 }
 
 .field input:disabled,
@@ -114,12 +170,14 @@
 .appearance {
   display: grid;
   width: 100%;
-  max-width: 760px;
+  max-width: none;
   gap: 16px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 14px;
   background: var(--surface);
   padding: 22px;
+  box-shadow: 0 12px 30px rgb(46 36 92 / 5%);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .appearanceHeading {
@@ -143,6 +201,17 @@
   line-height: 1.5;
 }
 
+.weekPreview { display: grid; gap: 13px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 18px; box-shadow: 0 12px 30px rgb(46 36 92 / 5%); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.weekPreview:hover { border-color: color-mix(in srgb, var(--green) 28%, white); box-shadow: 0 16px 36px rgb(46 36 92 / 8%); }
+.weekPreviewHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.weekPreviewHeading h2 { margin: 4px 0 0; color: var(--crm-ink); font-size: 14px; }
+.weekBadge { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid color-mix(in srgb, var(--green) 25%, white); border-radius: 11px; background: var(--green-pale); color: var(--green-dark); font-size: 10px; font-weight: 750; }
+.weekDays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.weekDays button { min-width: 0; min-height: 36px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--crm-muted); font-size: 9px; font-weight: 700; cursor: pointer; transition: transform 150ms ease, border-color 150ms ease, background 150ms ease; }
+.weekDays button:hover { transform: translateY(-2px); border-color: var(--green); }
+.weekDays button.weekDaySelected { border-color: var(--green); background: var(--green); color: #fff; box-shadow: 0 5px 12px color-mix(in srgb, var(--green) 25%, transparent); }
+.weekPreview > p { margin: 0; color: var(--crm-muted); font-size: 10px; line-height: 1.5; }
+
 .themeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
@@ -157,7 +226,7 @@
   align-items: center;
   gap: 7px 8px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 11px;
   background: var(--surface);
   padding: 9px 10px;
   color: var(--crm-ink);
@@ -166,10 +235,13 @@
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .themeOption:hover {
+  transform: translateY(-2px);
   border-color: var(--green);
+  box-shadow: 0 8px 18px rgb(46 36 92 / 8%);
 }
 
 .themeSelected {
@@ -202,13 +274,22 @@
 }
 
 @media (max-width: 700px) {
-  .heading h1 {
-    font-size: 27px;
+  .feature {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
   }
 
   .form {
+    grid-template-columns: minmax(0, 1fr);
     padding: 16px;
   }
+
+  .workspacePulse { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 16px; }
+  .pulseStats { grid-template-columns: minmax(0, 1fr); }
+  .saveState { justify-self: start; }
+  .feature > :global(.leads-error) { align-items: flex-start; flex-wrap: wrap; }
+  .weekDays { gap: 4px; }
+  .weekDays button { min-height: 34px; font-size: 8px; }
 
   .appearance {
     padding: 16px;
@@ -217,5 +298,11 @@
   .appearanceHeading {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1050px) {
+  .feature {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

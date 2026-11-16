@@ -17,11 +17,14 @@ const settingsSections = [
   { label: 'Users', href: '/settings/users' },
   { label: 'Security & devices', href: '/settings/security' },
   { label: 'Workspace control', href: '/settings/workspace' },
+  { label: 'Subscription', href: '/subscription' },
 ];
 
 export default function SettingsLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const [canManageTeam, setCanManageTeam] = useState(false);
   const [roleError, setRoleError] = useState('');
+  const [roleLoading, setRoleLoading] = useState(true);
+  const [roleRefresh, setRoleRefresh] = useState(0);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -32,6 +35,7 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
       controller = new AbortController();
       setCanManageTeam(false);
       setRoleError('');
+      setRoleLoading(true);
       void crmApiFetch('/auth/me', { signal: controller.signal })
         .then(async (response) => {
           const payload = await response.json();
@@ -55,7 +59,8 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
             setCanManageTeam(false);
             setRoleError(error instanceof Error ? error.message : 'Could not verify workspace role.');
           }
-        });
+        })
+        .finally(() => { if (!controller.signal.aborted) setRoleLoading(false); });
     };
     loadRole();
     window.addEventListener('myr:organization-changed', loadRole);
@@ -63,12 +68,12 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
       controller.abort();
       window.removeEventListener('myr:organization-changed', loadRole);
     };
-  }, []);
+  }, [roleRefresh]);
 
   const teamSettingsPath = pathname === '/settings/users' || pathname === '/settings/roles' || pathname === '/settings/workspace';
   useEffect(() => {
-    if (!canManageTeam && teamSettingsPath) router.replace('/settings');
-  }, [canManageTeam, router, teamSettingsPath]);
+    if (!roleLoading && !roleError && !canManageTeam && teamSettingsPath) router.replace('/settings');
+  }, [canManageTeam, roleError, roleLoading, router, teamSettingsPath]);
 
   return (
     <CrmShell active="Settings">
@@ -83,13 +88,13 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
               <Link className="settings-back-to-crm" href="/">Back to CRM</Link>
             </div>
             <nav aria-label="Settings sections">
-              {settingsSections.filter((section) => canManageTeam || !['/settings/users', '/settings/roles', '/settings/workspace'].includes(section.href)).map((section) => (
+              {settingsSections.filter((section) => (section.href !== '/subscription' || canManageTeam) && (canManageTeam || !['/settings/users', '/settings/roles', '/settings/workspace'].includes(section.href))).map((section) => (
                 <Link key={section.href} href={section.href}>{section.label}</Link>
               ))}
             </nav>
           </header>
-          {roleError && <p className="settings-route-content" role="alert">{roleError}</p>}
-          {teamSettingsPath && !canManageTeam ? <p className="settings-route-content">Checking administrator access…</p> : children}
+          {teamSettingsPath && roleError && <div className="settings-access-state settings-access-error" role="alert"><span>{roleError}</span><button type="button" onClick={() => setRoleRefresh((value) => value + 1)}>Retry</button></div>}
+          {teamSettingsPath && roleLoading ? <p className="settings-access-state" role="status">Checking workspace access...</p> : teamSettingsPath && (roleError || !canManageTeam) ? null : children}
         </div>
       </SettingsTeamAccessContext.Provider>
     </CrmShell>

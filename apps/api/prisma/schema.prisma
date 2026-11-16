@@ -886,6 +886,8 @@ model OrganizationSettings {
   currency                String       @default("USD") @db.Char(3)
   timezone                String       @default("UTC") @db.VarChar(64)
   weekStartsOn            Int          @default(1) @map("week_starts_on")
+  dateFormat              String       @default("DD MMM YYYY") @map("date_format") @db.VarChar(24)
+  timeFormat              String       @default("12h") @map("time_format") @db.VarChar(8)
   crmTheme                String       @default("default") @map("crm_theme") @db.VarChar(24)
   leadAutoAssignEnabled   Boolean      @default(false) @map("lead_auto_assign_enabled")
   leadAutoAssignUserIds   String[]     @default([]) @map("lead_auto_assign_user_ids") @db.Uuid
