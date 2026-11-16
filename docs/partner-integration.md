@@ -12,6 +12,47 @@ The website must first create and verify its ₹49 PayU order on its own backend
 
 `GET /partner/v1/health` checks a partner key and returns the CRM integration status. `GET /partner/v1/summary` (requires `customers:read`) returns that partner's provisioned account totals by subscription status and signed payment success/failure event counts. Call it from the website backend to populate the website admin panel; it does not expose another partner's accounts or global platform totals.
 
+## Provision a customer account
+
+The CRM accepts the flat website contract below at `POST /partner/v1/provision`. The website must verify its PayU payment server-side before sending this request. Send the generated partner API key in the `Authorization` header, and use HTTPS. The website backend should keep the returned password private and deliver it to the customer through its secure account-delivery flow; never return the partner API key or this response from browser code.
+
+`plan` must match an active CRM plan's code or name. If `planId` is supplied as a CRM plan UUID, it must identify the same plan. `validityDays` defaults to 30 and must be a whole number from 1 to 3650. The API creates an active owner account and workspace subscription that expires after the requested number of days. An `Idempotency-Key` header is recommended; if omitted, the API derives one from the normalized email so retries do not create duplicate accounts.
+
+```http
+POST /api/v1/partner/v1/provision
+Authorization: Bearer crm_partner_<secret>
+Idempotency-Key: website-order-98374
+Content-Type: application/json
+```
+
+```json
+{
+  "product": "crm",
+  "email": "customer@example.com",
+  "name": "John Doe",
+  "organization": "Acme Corp",
+  "plan": "CRM Enterprise Monthly",
+  "planId": "<optional CRM plan UUID>",
+  "validityDays": 30
+}
+```
+
+Success response:
+
+```json
+{
+  "username": "customer@example.com",
+  "password": "<generated password>",
+  "login_url": "https://crm.example.com/sign-in",
+  "organization": { "id": "<uuid>", "tenantId": "<uuid>", "slug": "acme-corp-<suffix>" },
+  "subscription": { "status": "ACTIVE", "planCode": "enterprise", "validUntil": "<UTC ISO timestamp>" }
+}
+```
+
+The generated password is hashed for login and stored encrypted with the provisioning record so an idempotent retry can receive the same credentials. Keep `PARTNER_SECRET_ENCRYPTION_KEY` stable and backed up; rotating it requires re-encrypting both stored partner webhook secrets and provisioning credentials.
+
+The original nested trial/paid contract below remains available for integrations that need CRM email activation and signed subscription webhooks.
+
 ## Provision a trial or paid customer
 
 `POST /partner/v1/provision` requires `Authorization: Bearer <partner-api-key>` and an `Idempotency-Key` header.
@@ -52,7 +93,7 @@ Example response:
 }
 ```
 
-The activation link is emailed to the customer, is one time, and expires after one hour. The API never returns a permanent password or activation token. Retry activation email from the platform provisioning controls if delivery failed.
+In this legacy nested flow, the activation link is emailed to the customer, is one time, and expires after one hour. The API does not return a password or activation token. Retry activation email from the platform provisioning controls if delivery failed.
 
 ## Customer lookup
 

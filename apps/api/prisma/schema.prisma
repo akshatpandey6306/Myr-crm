@@ -505,6 +505,7 @@ model ProvisioningRequest {
   tenantSlug        String?            @map("tenant_slug") @db.VarChar(63)
   ownerUserId       String?            @map("owner_user_id") @db.Uuid
   planCode          String             @map("plan_code") @db.VarChar(32)
+  credentialsEnc    String?            @map("credentials_enc") @db.Text
   partnerId         String?            @map("partner_id") @db.Uuid
   externalCustomerRef String?           @map("external_customer_ref") @db.VarChar(160)
   purchaseType      String?             @map("purchase_type") @db.VarChar(16)

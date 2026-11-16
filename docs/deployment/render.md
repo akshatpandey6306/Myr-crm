@@ -15,8 +15,11 @@ region as the API.
 - Build command: `npm ci && npm run db:generate --workspace @myr-crm/api && npm run api:build`
 - Start command: `npm run start --workspace @myr-crm/api`
 - Pre-deploy command: `npm run db:deploy --workspace @myr-crm/api`
-- Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`, and
-  `PLATFORM_ADMIN_EMAIL`.
+- Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`,
+  `PLATFORM_ADMIN_EMAIL`, and `PARTNER_SECRET_ENCRYPTION_KEY`.
+- Generate `PARTNER_SECRET_ENCRYPTION_KEY` as 32 random bytes encoded as 64
+  hexadecimal characters. Keep it stable and backed up; rotating it requires
+  re-encrypting stored partner webhook secrets and provisioning credentials.
 - Set `PLATFORM_ADMIN_EMAIL` to the email address of the one existing active
   account that should manage the platform. Production does not create the local
   seeded demo-admin account. Do not configure multiple platform administrators.

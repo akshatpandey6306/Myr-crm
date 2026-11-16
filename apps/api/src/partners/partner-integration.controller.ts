@@ -74,52 +74,87 @@ export class PartnerIntegrationController {
   async provision(@Headers("authorization") auth: string | undefined, @Headers("idempotency-key") idempotency: string | undefined, @Body() raw: unknown) {
     const { partner } = await this.authenticate(auth, "provision", "provision");
     const body = bodyObject(raw); const owner = bodyObject(body.owner); const organization = bodyObject(body.organization); const planInput = bodyObject(body.plan);
-    const externalCustomerRef = text(body.externalCustomerRef, 160); const externalSubscriptionRef = text(body.externalSubscriptionRef, 160) || null; const orderId = text(body.externalOrderRef, 128);
-    const requestedRequestId = text(body.requestId, 128); const requestId = requestedRequestId || randomUUID(); const idempotencyKey = text(idempotency, 200);
-    const name = text(organization.name, 160); const ownerName = text(owner.name, 120); const email = text(owner.email, 254).toLowerCase();
-    const planCode = text(planInput.code, 32); const purchaseType = body.purchaseType === "trial" ? "trial" : body.purchaseType === "paid" ? "paid" : "";
-    if (!externalCustomerRef || !orderId || !idempotencyKey || !name || !ownerName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !planCode || !purchaseType)
-      throw new BadRequestException({ code: "validation_error", message: "externalCustomerRef, externalOrderRef, Idempotency-Key, owner, organization, plan.code, and purchaseType (trial|paid) are required" });
+    const credentialResponse = typeof body.email === "string";
+    const email = text(credentialResponse ? body.email : owner.email, 254).toLowerCase();
+    const ownerName = text(credentialResponse ? body.name : owner.name, 120);
+    const name = text(credentialResponse ? (typeof body.organization === "string" ? body.organization : organization.name) : organization.name, 160);
+    const requestedPlan = text(credentialResponse ? (typeof body.plan === "string" ? body.plan : planInput.code) : planInput.code, 80);
+    const requestedPlanId = text(body.planId, 64);
+    const product = (text(body.product, 32) || "crm").toLowerCase();
+    const purchaseType = credentialResponse ? "paid" : body.purchaseType === "trial" ? "trial" : body.purchaseType === "paid" ? "paid" : "";
+    const validityDays = body.validityDays === undefined ? 30 : body.validityDays;
+    if (!Number.isSafeInteger(validityDays) || (validityDays as number) < 1 || (validityDays as number) > 3650)
+      throw new BadRequestException({ code: "validation_error", message: "validityDays must be a whole number from 1 to 3650" });
+    const rawRequestId = text(body.requestId, 128);
+    const requestedRequestId = rawRequestId ? (rawRequestId.length <= 75 ? rawRequestId : `req-${sha(rawRequestId).slice(0, 64)}`) : "";
+    const stableCustomerRef = email.length <= 160 ? email : `email-${sha(email).slice(0, 48)}`;
+    const externalCustomerRef = text(body.externalCustomerRef, 160) || stableCustomerRef;
+    const externalSubscriptionRef = text(body.externalSubscriptionRef, 160) || null;
+    const stableSuffix = sha(`${partner.id}:${email}`).slice(0, 40);
+    const rawOrderId = text(body.externalOrderRef, 128) || text(body.orderId, 128);
+    const orderId = rawOrderId ? (rawOrderId.length <= 80 ? rawOrderId : `ref-${sha(rawOrderId).slice(0, 64)}`) : `ord-${stableSuffix}`;
+    const requestId = requestedRequestId || (credentialResponse ? `req-${stableSuffix}` : randomUUID());
+    const rawIdempotencyKey = text(idempotency, 200);
+    const idempotencyKey = rawIdempotencyKey ? (rawIdempotencyKey.length <= 150 ? rawIdempotencyKey : `key-${sha(rawIdempotencyKey)}`) : (credentialResponse ? `partner:${partner.id}:email:${stableSuffix}` : "");
+    if (product !== "crm" || !name || !ownerName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !requestedPlan || !purchaseType || !externalCustomerRef || !orderId || !idempotencyKey)
+      throw new BadRequestException({ code: "validation_error", message: "A valid CRM product, email, name, organization, plan, and Idempotency-Key are required" });
+    if (credentialResponse) {
+      try { encryptionKey(); }
+      catch { throw new ServiceUnavailableException({ code: "partner_encryption_not_configured", message: "Partner credential encryption is not configured on the API. Set PARTNER_SECRET_ENCRYPTION_KEY to 64 hexadecimal characters and restart the API." }); }
+    }
 
+    const uuidPlanId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedPlanId) ? requestedPlanId : "";
+    const plan = await this.prisma.subscriptionPlan.findFirst({ where: {
+      isActive: true,
+      OR: [
+        { code: requestedPlan },
+        { name: { equals: requestedPlan, mode: "insensitive" } },
+        ...(uuidPlanId ? [{ id: uuidPlanId }] : []),
+      ],
+    } });
+    if (!plan) throw new BadRequestException({ code: "plan_not_found", message: "The selected plan is unavailable" });
+    if (uuidPlanId && (plan.id !== uuidPlanId || (requestedPlan.toLowerCase() !== plan.code.toLowerCase() && requestedPlan.toLowerCase() !== plan.name.toLowerCase())))
+      throw new BadRequestException({ code: "plan_mismatch", message: "plan and planId must identify the same active CRM plan" });
+    const planCode = plan.code;
     const existing = await this.prisma.provisioningRequest.findFirst({ where: { OR: [{ idempotencyKey: `partner:${partner.id}:${idempotencyKey}` }, { orderId: `partner:${partner.id}:${orderId}` }, { requestId: `partner:${partner.id}:${requestId}` }] } });
     if (existing) {
       if (existing.idempotencyKey !== `partner:${partner.id}:${idempotencyKey}` || existing.orderId !== `partner:${partner.id}:${orderId}` ||
         (requestedRequestId && existing.requestId !== `partner:${partner.id}:${requestedRequestId}`) ||
-        existing.externalCustomerRef !== externalCustomerRef || existing.planCode !== planCode || existing.purchaseType !== purchaseType)
+        existing.externalCustomerRef !== externalCustomerRef || existing.purchaseType !== purchaseType || existing.planCode !== planCode)
         throw new ConflictException({ code: "idempotency_conflict", message: "The idempotency key or order reference was already used with different customer details" });
       return this.provisioningResponse(existing);
     }
     const mapped = await this.prisma.partnerCustomerMapping.findUnique({ where: { partnerId_externalCustomerRef: { partnerId: partner.id, externalCustomerRef } } });
     if (mapped) throw new ConflictException({ code: "customer_exists", message: "This external customer is already linked to a CRM workspace" });
-    const [plan, existingUser, trial] = await Promise.all([
-      this.prisma.subscriptionPlan.findFirst({ where: { code: planCode, isActive: true } }),
+    const [existingUser, trial] = await Promise.all([
       this.prisma.user.findUnique({ where: { email }, select: { id: true } }),
       purchaseType === "trial" ? this.prisma.partnerTrialEligibility.findUnique({ where: { emailHash: sha(email) } }) : Promise.resolve(null),
     ]);
-    if (!plan) throw new BadRequestException({ code: "plan_not_found", message: "The selected plan is unavailable" });
     if (existingUser) throw new ConflictException({ code: "customer_exists", message: "An account already exists for this email. Contact the platform administrator to link it." });
     if (purchaseType === "trial" && trial) throw new ConflictException({ code: "trial_not_eligible", message: "This email has already used its one-time trial" });
     const now = new Date(); const trialEndsAt = purchaseType === "trial" ? new Date(now.getTime() + 72 * 60 * 60 * 1000) : null;
+    const subscriptionEndsAt = credentialResponse ? new Date(now.getTime() + (validityDays as number) * 24 * 60 * 60 * 1000) : trialEndsAt;
     const slugCandidate = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "workspace"}-${randomBytes(3).toString("hex")}`;
     const slug = text(organization.slug, 63).toLowerCase() || slugCandidate;
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug)) throw new BadRequestException({ code: "validation_error", message: "Organization slug is invalid" });
-    const activationToken = randomBytes(32).toString("base64url");
+    const password = credentialResponse ? randomBytes(24).toString("base64url") : "";
+    const activationToken = credentialResponse ? "" : randomBytes(32).toString("base64url");
     let created;
     try {
       created = await this.prisma.$transaction(async (tx) => {
         const request = await tx.provisioningRequest.create({ data: {
           requestId: `partner:${partner.id}:${requestId}`, idempotencyKey: `partner:${partner.id}:${idempotencyKey}`, orderId: `partner:${partner.id}:${orderId}`,
-          product: "crm", planCode, partnerId: partner.id, externalCustomerRef, purchaseType,
+          product, planCode, partnerId: partner.id, externalCustomerRef, purchaseType,
           trialStartedAt: purchaseType === "trial" ? now : null, trialEndsAt,
-          tenantSlug: slug, status: "RUNNING",
+          tenantSlug: slug, status: "RUNNING", credentialsEnc: credentialResponse ? encryptSecret(JSON.stringify({ username: email, password, validUntil: subscriptionEndsAt?.toISOString() ?? null })) : null,
         } });
-        const user = await tx.user.create({ data: { email, name: ownerName, passwordHash: hashPassword(randomBytes(32).toString("base64url")), status: "PENDING" } });
+        const user = await tx.user.create({ data: { email, name: ownerName, passwordHash: hashPassword(credentialResponse ? password : randomBytes(32).toString("base64url")), status: credentialResponse ? "ACTIVE" : "PENDING" } });
         const workspace = await this.provisioning.createWorkspace(tx, {
           ownerUserId: user.id, name, slug, timezone: text(organization.timezone, 64) || "UTC", subscriptionPlan: plan.code,
-          subscriptionStatus: purchaseType === "trial" ? "TRIAL" : "PENDING", subscriptionStartedAt: purchaseType === "trial" ? now : null,
-          subscriptionEndsAt: trialEndsAt, billingProvider: "partner", enabledModules: purchaseType === "trial" ? plan.modules : [],
+          subscriptionStatus: credentialResponse ? "ACTIVE" : purchaseType === "trial" ? "TRIAL" : "PENDING", subscriptionStartedAt: credentialResponse || purchaseType === "trial" ? now : null,
+          subscriptionEndsAt, billingProvider: "partner", enabledModules: credentialResponse || purchaseType === "trial" ? plan.modules : [],
         });
-        await tx.emailToken.create({ data: { userId: user.id, tokenHash: sha(activationToken), purpose: "ACCOUNT_ACTIVATION", expiresAt: new Date(now.getTime() + 60 * 60 * 1000) } });
+        if (!credentialResponse) await tx.emailToken.create({ data: { userId: user.id, tokenHash: sha(activationToken), purpose: "ACCOUNT_ACTIVATION", expiresAt: new Date(now.getTime() + 60 * 60 * 1000) } });
         await tx.partnerCustomerMapping.create({ data: { partnerId: partner.id, organizationId: workspace.id, externalCustomerRef, externalSubscriptionRef, email } });
         if (purchaseType === "trial") await tx.partnerTrialEligibility.create({ data: { emailHash: sha(email), partnerId: partner.id, startedAt: now } });
         await tx.provisioningRequest.update({ where: { id: request.id }, data: { status: "SUCCEEDED", organizationId: workspace.id, ownerUserId: user.id, activationEmailSent: false } });
@@ -133,8 +168,10 @@ export class PartnerIntegrationController {
       throw error;
     }
     let activationEmailSent = false;
-    try { await this.email.sendAccountActivation(activationToken, email); activationEmailSent = true; }
-    catch { /* platform can retry delivery from provisioning controls */ }
+    if (!credentialResponse) {
+      try { await this.email.sendAccountActivation(activationToken, email); activationEmailSent = true; }
+      catch { /* platform can retry delivery from provisioning controls */ }
+    }
     const row = await this.prisma.provisioningRequest.update({ where: { id: created.request.id }, data: { activationEmailSent } });
     await this.prisma.platformAuditLog.create({ data: { action: "partner.provision", targetType: "organization", targetId: created.workspace.id, reason: `Partner ${partner.name} provisioned external customer ${externalCustomerRef}`, metadata: { partnerId: partner.id, requestId: row.requestId, externalCustomerRef, purchaseType } } });
     return this.provisioningResponse(row);
@@ -214,8 +251,13 @@ export class PartnerIntegrationController {
     ]);
     return { partner: key.partner, key };
   }
-  private provisioningResponse(row: { requestId: string; status: string; organizationId: string | null; ownerUserId: string | null; planCode: string; tenantSlug: string | null; activationEmailSent: boolean; purchaseType?: string | null; trialEndsAt?: Date | null; externalCustomerRef?: string | null }) {
-    return { requestId: row.requestId, status: row.status, externalCustomerRef: row.externalCustomerRef, ...(row.status === "SUCCEEDED" ? { organization: { id: row.organizationId, tenantId: row.organizationId, slug: row.tenantSlug, loginUrl: `${process.env.WEB_ORIGIN?.replace(/\/$/, "") || "http://localhost:3000"}/sign-in` }, owner: { userId: row.ownerUserId, activationRequired: true }, subscription: { status: row.purchaseType === "trial" ? "TRIAL" : "PENDING", planCode: row.planCode, trialEndsAt: row.trialEndsAt?.toISOString() ?? null }, activationEmailSent: row.activationEmailSent } : {}) };
+  private provisioningResponse(row: { requestId: string; status: string; organizationId: string | null; ownerUserId: string | null; planCode: string; tenantSlug: string | null; activationEmailSent: boolean; purchaseType?: string | null; trialEndsAt?: Date | null; externalCustomerRef?: string | null; credentialsEnc?: string | null }) {
+    const loginUrl = `${process.env.WEB_ORIGIN?.replace(/\/$/, "") || "http://localhost:3000"}/sign-in`;
+    if (row.status === "SUCCEEDED" && row.credentialsEnc) {
+      const credentials = JSON.parse(decryptSecret(row.credentialsEnc)) as { username: string; password: string; validUntil?: string | null };
+      return { requestId: row.requestId, status: row.status, username: credentials.username, password: credentials.password, login_url: loginUrl, externalCustomerRef: row.externalCustomerRef, organization: { id: row.organizationId, tenantId: row.organizationId, slug: row.tenantSlug }, subscription: { status: "ACTIVE", planCode: row.planCode, validUntil: credentials.validUntil ?? null } };
+    }
+    return { requestId: row.requestId, status: row.status, externalCustomerRef: row.externalCustomerRef, ...(row.status === "SUCCEEDED" ? { organization: { id: row.organizationId, tenantId: row.organizationId, slug: row.tenantSlug, loginUrl }, owner: { userId: row.ownerUserId, activationRequired: true }, subscription: { status: row.purchaseType === "trial" ? "TRIAL" : "PENDING", planCode: row.planCode, trialEndsAt: row.trialEndsAt?.toISOString() ?? null }, activationEmailSent: row.activationEmailSent } : {}) };
   }
   private intervalEnd(from: Date, rawInterval: string) { const months = rawInterval === "yearly" ? 12 : rawInterval === "monthly" ? 1 : 0; if (!months) throw new BadRequestException({ code: "invalid_plan_interval", message: "Unsupported plan interval" }); const end = new Date(from); const day = end.getUTCDate(); end.setUTCDate(1); end.setUTCMonth(end.getUTCMonth() + months); end.setUTCDate(Math.min(day, new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate())); return end; }
   private async recordFailedPartnerAuth(reason: string) {
