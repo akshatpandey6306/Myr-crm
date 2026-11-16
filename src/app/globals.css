@@ -469,6 +469,13 @@ input:focus-visible {
 .workspace-expired-dialog h1 { margin: 0; color: #263b35; font-family: "Manrope", sans-serif; font-size: 27px; }
 .workspace-expired-copy { max-width: 650px; margin: 9px 0 20px; color: #64736e; font-size: 13px; line-height: 1.6; }
 .workspace-renewal-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.subscription-checkout-box { display: grid; gap: 10px; max-width: 560px; margin: 16px 0; border: 1px solid #e3defa; border-radius: 12px; background: linear-gradient(135deg, #faf9ff, #fff); padding: 16px; }
+.subscription-checkout-box p { margin: 0; color: #66627b; font-size: 12px; line-height: 1.5; }
+.subscription-checkout-box label { display: grid; gap: 6px; color: #66627b; font-size: 11px; font-weight: 650; }
+.subscription-checkout-box input, .subscription-checkout-box select { width: 100%; min-height: 42px; border: 1px solid #e2deef; border-radius: 9px; background: #fff; padding: 9px 11px; color: #292640; font: inherit; }
+.subscription-checkout-box .button { justify-self: start; min-height: 42px; }
+.subscription-checkout-plans-box { grid-column: 1 / -1; max-width: none; margin: 0; }
+.subscription-checkout-error { color: #b42318 !important; font-size: 12px !important; }
 .workspace-renewal-plan { display: flex; min-width: 0; flex-direction: column; border: 1px solid #dfe9e5; border-radius: 10px; background: rgb(255 255 255 / 78%); padding: 16px; }
 .workspace-renewal-plan h2 { margin: 0; color: #2e463e; font-size: 15px; }
 .workspace-renewal-plan > p { margin: 8px 0; color: #687871; font-size: 11px; }
@@ -2019,6 +2026,30 @@ td:first-child strong {
   .content {
     padding-right: 48px;
     padding-left: 48px;
+  }
+}
+
+.control-panel-workspace-list .control-panel-module-access-row .control-panel-module-editor {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
+}
+
+.control-panel-workspace-list .control-panel-module-access-row {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.control-panel-workspace-list .control-panel-module-access-row .control-panel-module-options {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+@media (max-width: 520px) {
+  .control-panel-workspace-list .control-panel-module-toggle {
+    grid-column: 1 / -1;
+  }
+
+  .control-panel-workspace-list .control-panel-module-access-row .control-panel-module-options {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -6093,4 +6124,102 @@ body {
   .app-shell .topbar .profile-menu { position: fixed; top: 56px; right: 8px; width: min(220px, calc(100vw - 16px)); }
   .mobile-nav-links { grid-template-columns: minmax(0, 1fr); }
   .mobile-nav-account { display: none; }
+}
+@media (max-width: 600px) {
+  .control-panel-plan-form .control-panel-module-options {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    padding: 12px;
+  }
+
+  .control-panel-plan-form .control-panel-module-options .control-panel-checkbox {
+    display: flex;
+    min-height: 42px;
+    align-items: center;
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: normal;
+    writing-mode: horizontal-tb;
+  }
+}
+
+.control-panel-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.control-panel-metrics-grid article {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  border: 1px solid #ebe8f4;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #faf9ff, #fff);
+  padding: 16px;
+}
+
+.control-panel-metrics-grid strong {
+  color: #37334d;
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.control-panel-metrics-grid span {
+  color: #79758d;
+  font-size: 11px;
+}
+
+@media (max-width: 600px) {
+  .control-panel-workspace-list > tbody > tr:not(.control-panel-members-row) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-panel-workspace-list > tbody > tr:not(.control-panel-members-row) > td {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .control-panel-page .control-panel-plan-table,
+  .control-panel-page .control-panel-security-usage-table,
+  .control-panel-page .control-panel-security-sessions-table {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .control-panel-page .control-panel-plan-table table {
+    width: 740px;
+    min-width: 740px;
+    table-layout: auto;
+    white-space: nowrap;
+  }
+
+  .control-panel-page .control-panel-security-usage-table table {
+    width: 680px;
+    min-width: 680px;
+    table-layout: auto;
+    white-space: nowrap;
+  }
+
+  .control-panel-page .control-panel-security-sessions-table table {
+    width: 880px;
+    min-width: 880px;
+    table-layout: auto;
+    white-space: nowrap;
+  }
+
+  .control-panel-page .control-panel-plan-table th,
+  .control-panel-page .control-panel-plan-table td,
+  .control-panel-page .control-panel-security-usage-table th,
+  .control-panel-page .control-panel-security-usage-table td,
+  .control-panel-page .control-panel-security-sessions-table th,
+  .control-panel-page .control-panel-security-sessions-table td {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
 }

@@ -1,6 +1,13 @@
 import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import nodemailer from "nodemailer";
 
+function smtpPassword() {
+  const password = process.env.SMTP_PASSWORD ?? "";
+  return process.env.SMTP_HOST?.trim().toLowerCase() === "smtp.gmail.com"
+    ? password.replace(/\s+/g, "")
+    : password;
+}
+
 @Injectable()
 export class AuthEmailService {
   private readonly logger = new Logger(AuthEmailService.name);
@@ -8,7 +15,7 @@ export class AuthEmailService {
   isConfigured() {
     const port = Number(process.env.SMTP_PORT || 587);
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASSWORD;
+    const pass = smtpPassword();
     return Boolean(
       process.env.SMTP_HOST?.trim() &&
       process.env.SMTP_FROM?.trim() &&
@@ -24,7 +31,7 @@ export class AuthEmailService {
     const from = process.env.SMTP_FROM?.trim();
     const port = Number(process.env.SMTP_PORT || 587);
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASSWORD;
+    const pass = smtpPassword();
     if (!host || !from || !Number.isInteger(port) || port < 1 || port > 65535 || Boolean(user) !== Boolean(pass)) {
       throw new ServiceUnavailableException({
         code: "smtp_not_configured",
@@ -60,7 +67,7 @@ export class AuthEmailService {
     const from = process.env.SMTP_FROM?.trim();
     const port = Number(process.env.SMTP_PORT || 587);
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASSWORD;
+    const pass = smtpPassword();
     if (!host || !from || !Number.isInteger(port) || port < 1 || port > 65535 || Boolean(user) !== Boolean(pass)) {
       throw new ServiceUnavailableException({ code: "smtp_not_configured", message: "Account activation email is unavailable until SMTP is configured." });
     }
@@ -82,7 +89,7 @@ export class AuthEmailService {
     const from = process.env.SMTP_FROM?.trim();
     const port = Number(process.env.SMTP_PORT || 587);
     const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASSWORD;
+    const pass = smtpPassword();
     if (!host || !from || !Number.isInteger(port) || port < 1 || port > 65535 || Boolean(user) !== Boolean(pass)) {
       throw new ServiceUnavailableException({ code: "smtp_not_configured", message: "Password reset email is unavailable until SMTP is configured." });
     }

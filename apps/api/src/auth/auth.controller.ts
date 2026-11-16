@@ -10,6 +10,7 @@ import {
   Inject,
   HttpException,
   HttpStatus,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -37,6 +38,8 @@ type CookieResponse = {
 
 @Controller("auth")
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuthEmailService) private readonly email: AuthEmailService,
@@ -380,7 +383,14 @@ export class AuthController {
     }
     const genericMessage = "If an active account uses that email, a password reset link will be sent.";
     const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true, email: true, status: true } });
-    if (!user || user.status !== "ACTIVE" || !this.email.isConfigured()) return { message: genericMessage };
+    if (!user || user.status !== "ACTIVE") {
+      this.logger.debug("Password reset skipped because the submitted address has no active account");
+      return { message: genericMessage };
+    }
+    if (!this.email.isConfigured()) {
+      this.logger.error("Password reset skipped because SMTP is not configured in the running API process");
+      return { message: genericMessage };
+    }
     const token = randomBytes(32).toString("base64url");
     const now = new Date();
     await this.prisma.$transaction(async (transaction) => {
@@ -389,8 +399,10 @@ export class AuthController {
     });
     try {
       await this.email.sendPasswordReset(token, user.email);
+      this.logger.log("Password reset email accepted by the SMTP transport");
     } catch {
       // Keep the response identical so callers cannot discover registered emails.
+      this.logger.error("Password reset delivery failed; public response remains generic");
     }
     return { message: genericMessage };
   }

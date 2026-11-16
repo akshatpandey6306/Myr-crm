@@ -173,7 +173,7 @@ export class BillingController {
       currentEnd !== null && currentEnd > now &&
       currentEnd.getTime() <= now.getTime() + RENEWAL_WINDOW_DAYS * DAY_MS;
     const allowed = purchaseType === "trial" && subscriptionStatus === "pending" ||
-      purchaseType === "plan" && ["pending", "expired", "cancelled"].includes(subscriptionStatus) ||
+      purchaseType === "plan" && ["pending", "trial", "expired", "cancelled"].includes(subscriptionStatus) ||
       purchaseType === "renewal" && renewalWindowOpen;
     if (!allowed) {
       throw new ConflictException({ code: "subscription_not_payable", message: "This payment type is not available for the workspace's current subscription" });
@@ -385,7 +385,7 @@ export class BillingController {
         organization?.subscriptionEndsAt?.getTime() === payment.renewalBaseEndsAt.getTime();
       const canActivate = organization?.status === "ACTIVE" && plan && (
         payment.paymentType === "TRIAL" && organization.subscriptionStatus === "PENDING" ||
-        payment.paymentType === "PLAN" && ["pending", "expired", "cancelled"].includes(currentStatus) ||
+        payment.paymentType === "PLAN" && ["pending", "trial", "expired", "cancelled"].includes(currentStatus) ||
         payment.paymentType === "RENEWAL" && renewalStillMatches && ["active", "trial", "expired", "cancelled"].includes(currentStatus)
       );
       const paymentData = {

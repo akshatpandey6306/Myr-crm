@@ -129,7 +129,7 @@ export default function Home() {
             <p>Visit our help center to get started.</p>
             <HelpPopover />
           </div>
-
+          
         </div>
       </aside>
 

@@ -1,6 +1,6 @@
 # Myr CRM Production Readiness Snapshot
 
-**Assessment date:** 2026-11-15
+**Assessment date:** 2026-11-15  
 **Scope:** Current Myr CRM workspace, including the Next.js application and NestJS API. The supplied HRM audit PDF was used as an assessment checklist, not as evidence about this CRM.
 
 ## Executive summary

@@ -489,6 +489,8 @@ enum ProvisioningStatus {
   RUNNING
   SUCCEEDED
   FAILED
+
+  @@map("provisioning_status")
 }
 
 model ProvisioningRequest {

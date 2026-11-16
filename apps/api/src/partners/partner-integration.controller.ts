@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
-import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Headers, Inject, NotFoundException, Param, Patch, Post, Body, Req, UnauthorizedException, UseGuards } from "@nestjs/common";
+import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Headers, Inject, Logger, NotFoundException, Param, Patch, Post, Body, Req, ServiceUnavailableException, UnauthorizedException, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { Public, SkipOrganizationContext } from "../auth/public.decorator.js";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard.js";
@@ -49,6 +49,27 @@ export class PartnerIntegrationController {
     return { status: "ok", partner: { id: partner.id, name: partner.name } };
   }
 
+  @Get("summary") async summary(@Headers("authorization") auth: string | undefined) {
+    const { partner } = await this.authenticate(auth, "customers:read", "partner.summary");
+    const [accounts, events] = await Promise.all([
+      this.prisma.partnerCustomerMapping.findMany({ where: { partnerId: partner.id }, select: { organization: { select: { subscriptionStatus: true } } } }),
+      this.prisma.partnerWebhookEvent.groupBy({ by: ["eventType"], where: { partnerId: partner.id }, _count: { _all: true } }),
+    ]);
+    const byStatus = accounts.reduce<Record<string, number>>((counts, account) => {
+      const status = account.organization.subscriptionStatus.toLowerCase();
+      counts[status] = (counts[status] ?? 0) + 1;
+      return counts;
+    }, {});
+    const eventCounts = Object.fromEntries(events.map((event) => [event.eventType, event._count._all]));
+    return { data: {
+      accounts: { total: accounts.length, bySubscriptionStatus: byStatus },
+      payments: {
+        verified: eventCounts["subscription.activated"] ?? 0,
+        failed: eventCounts["payment.failed"] ?? 0,
+      },
+    } };
+  }
+
   @Post("provision")
   async provision(@Headers("authorization") auth: string | undefined, @Headers("idempotency-key") idempotency: string | undefined, @Body() raw: unknown) {
     const { partner } = await this.authenticate(auth, "provision", "provision");
@@ -78,7 +99,7 @@ export class PartnerIntegrationController {
     if (!plan) throw new BadRequestException({ code: "plan_not_found", message: "The selected plan is unavailable" });
     if (existingUser) throw new ConflictException({ code: "customer_exists", message: "An account already exists for this email. Contact the platform administrator to link it." });
     if (purchaseType === "trial" && trial) throw new ConflictException({ code: "trial_not_eligible", message: "This email has already used its one-time trial" });
-    const now = new Date(); const trialEndsAt = purchaseType === "trial" ? new Date(now.getTime() + 48 * 60 * 60 * 1000) : null;
+    const now = new Date(); const trialEndsAt = purchaseType === "trial" ? new Date(now.getTime() + 72 * 60 * 60 * 1000) : null;
     const slugCandidate = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "workspace"}-${randomBytes(3).toString("hex")}`;
     const slug = text(organization.slug, 63).toLowerCase() || slugCandidate;
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug)) throw new BadRequestException({ code: "validation_error", message: "Organization slug is invalid" });
@@ -206,11 +227,37 @@ export class PartnerIntegrationController {
 @Controller("control-panel/partners")
 @UseGuards(PlatformAdminGuard)
 export class PartnerAdminController {
+  private readonly logger = new Logger(PartnerAdminController.name);
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get() async list() {
     const partners = await this.prisma.integrationPartner.findMany({ include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true, lastUsedAt: true, revokedAt: true, createdAt: true } }, _count: { select: { mappings: true, webhookEvents: true, usageLogs: true } } }, orderBy: { createdAt: "desc" } });
     return { data: partners.map(({ webhookSecretEnc, ...partner }) => ({ ...partner, hasWebhookSecret: Boolean(webhookSecretEnc) })) };
+  }
+  @Get("metrics") async metrics() {
+    const [partnerCustomers, adminAudit, payments, partnerEvents, customersByPartner] = await Promise.all([
+      this.prisma.partnerCustomerMapping.count(),
+      this.prisma.platformAuditLog.findMany({ where: { action: "organization.create", targetType: "organization", targetId: { not: null } }, select: { targetId: true } }),
+      this.prisma.subscriptionPayment.groupBy({ by: ["status"], _count: { _all: true }, _sum: { amount: true } }),
+      this.prisma.partnerWebhookEvent.groupBy({ by: ["eventType"], _count: { _all: true } }),
+      this.prisma.partnerCustomerMapping.groupBy({ by: ["partnerId"], _count: { _all: true } }),
+    ]);
+    const platformAdminOrganizationIds = new Set(adminAudit.flatMap((entry) => entry.targetId ? [entry.targetId] : []));
+    const paymentCounts = Object.fromEntries(payments.map((entry) => [entry.status.toLowerCase(), {
+      count: entry._count._all,
+      amount: Number(entry._sum.amount ?? 0),
+    }]));
+    const eventCounts = Object.fromEntries(partnerEvents.map((entry) => [entry.eventType, entry._count._all]));
+    return { data: {
+      onboarded: { partners: partnerCustomers, platformAdmin: platformAdminOrganizationIds.size },
+      payments: paymentCounts,
+      partnerPaymentEvents: {
+        succeeded: (eventCounts["payment.succeeded"] ?? 0) + (eventCounts["subscription.activated"] ?? 0),
+        failed: eventCounts["payment.failed"] ?? 0,
+      },
+      customersByPartner: Object.fromEntries(customersByPartner.map((entry) => [entry.partnerId, entry._count._all])),
+    } };
   }
   @Post() async create(@Body() raw: unknown, @Req() req: HttpRequest) {
     const body = bodyObject(raw); const name = text(body.name, 120); const permissions = Array.isArray(body.permissions) ? body.permissions.filter((item): item is string => typeof item === "string") : allowedPermissions;
@@ -218,15 +265,39 @@ export class PartnerAdminController {
     const webhookUrl = body.webhookUrl == null ? null : text(body.webhookUrl, 2048); const plansUrl = body.plansUrl == null ? null : text(body.plansUrl, 2048);
     for (const url of [webhookUrl, plansUrl]) if (url && (!/^https:\/\//i.test(url) || url.length > 2048)) throw new BadRequestException({ code: "validation_error", message: "Partner URLs must use HTTPS" });
     const key = newApiKey(); const webhookSecret = randomBytes(32).toString("base64url");
-    const partner = await this.prisma.integrationPartner.create({ data: { name, permissions: [...new Set(permissions)], webhookUrl, plansUrl, webhookSecretEnc: encryptSecret(webhookSecret), apiKeys: { create: { keyPrefix: key.prefix, keyHash: key.hash, permissions: [...new Set(permissions)] } } }, include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true } } } });
-    await this.audit(req.userId, "partner.create", partner.id, `Created integration partner ${name}`);
+    let partner;
+    try {
+      partner = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.integrationPartner.create({ data: { name, permissions: [...new Set(permissions)], webhookUrl, plansUrl, webhookSecretEnc: encryptSecret(webhookSecret), apiKeys: { create: { keyPrefix: key.prefix, keyHash: key.hash, permissions: [...new Set(permissions)] } } }, include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true } } } });
+        await tx.platformAuditLog.create({ data: { actorUserId: req.userId ?? null, action: "partner.create", targetType: "integration_partner", targetId: created.id, reason: `Created integration partner ${name}` } });
+        return created;
+      });
+    } catch (error) {
+      const prismaCode = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "";
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("PARTNER_SECRET_ENCRYPTION_KEY")) {
+        throw new ServiceUnavailableException({ code: "partner_encryption_not_configured", message: "Partner secret encryption is not configured on the API. Set PARTNER_SECRET_ENCRYPTION_KEY to 64 hexadecimal characters and restart the API." });
+      }
+      if (["P2021", "P2022"].includes(prismaCode)) {
+        throw new ServiceUnavailableException({ code: "partner_schema_not_ready", message: "Partner integration database tables are missing. Run the API database migrations, then restart the API." });
+      }
+      if (["P1001", "P1002", "P1017"].includes(prismaCode)) {
+        throw new ServiceUnavailableException({ code: "database_unavailable", message: "The CRM database is unavailable. Start or reconnect PostgreSQL, then try again." });
+      }
+      this.logger.error(`Partner creation failed (${prismaCode || "unknown database or transaction error"})`);
+      throw error;
+    }
     return { data: { ...partner, webhookSecretEnc: undefined, apiKey: key.secret, webhookSigningSecret: webhookSecret, secretsShownOnce: true } };
   }
   @Post(":partnerId/keys/rotate") async rotate(@Param("partnerId") partnerId: string, @Req() req: HttpRequest) {
     const partner = await this.prisma.integrationPartner.findUnique({ where: { id: partnerId } }); if (!partner) throw new NotFoundException({ code: "not_found", message: "Partner not found" });
     const key = newApiKey();
-    const created = await this.prisma.$transaction(async (tx) => { await tx.partnerApiKey.updateMany({ where: { partnerId, active: true }, data: { active: false, revokedAt: new Date() } }); return tx.partnerApiKey.create({ data: { partnerId, keyPrefix: key.prefix, keyHash: key.hash, permissions: partner.permissions } }); });
-    await this.audit(req.userId, "partner.key.rotate", partnerId, "Rotated partner API key");
+    const created = await this.prisma.$transaction(async (tx) => {
+      await tx.partnerApiKey.updateMany({ where: { partnerId, active: true }, data: { active: false, revokedAt: new Date() } });
+      const next = await tx.partnerApiKey.create({ data: { partnerId, keyPrefix: key.prefix, keyHash: key.hash, permissions: partner.permissions } });
+      await tx.platformAuditLog.create({ data: { actorUserId: req.userId ?? null, action: "partner.key.rotate", targetType: "integration_partner", targetId: partnerId, reason: "Rotated partner API key" } });
+      return next;
+    });
     return { data: { id: created.id, keyPrefix: created.keyPrefix, apiKey: key.secret, secretsShownOnce: true } };
   }
   @Post(":partnerId/webhook-secret/rotate") async rotateWebhookSecret(@Param("partnerId") partnerId: string, @Req() req: HttpRequest) {

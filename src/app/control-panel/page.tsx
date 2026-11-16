@@ -1707,8 +1707,8 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                                   : `Activate ${currentPlanName}`}
                           </button>
                           {(organization.subscription.status === 'trial' || (organization.subscription.status === 'expired' && organization.subscription.provider === 'partner')) && <button suppressHydrationWarning className="control-panel-action" type="button" disabled={busyOrganizationId === organization.id || !subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode && plan.isActive)} onClick={() => requestSubscriptionStatus(organization, 'trial')}>Extend 48 hours</button>}
-                          <button className="control-panel-action" type="button" aria-expanded={Boolean(expandedModules[organization.id])} disabled={busyOrganizationId === organization.id} onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: !current[organization.id] }))}>
-                            Modules
+                          <button className="control-panel-action control-panel-module-toggle" type="button" aria-controls={`workspace-modules-${organization.id}`} aria-expanded={Boolean(expandedModules[organization.id])} disabled={busyOrganizationId === organization.id} onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: !current[organization.id] }))}>
+                            {expandedModules[organization.id] ? 'Close modules' : `Edit modules (${organization.enabledModules.length})`}
                           </button>
                           {hasActiveSubscription
                             ? <>
@@ -1722,7 +1722,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                         </div></td>
                     </tr>
                      {expandedMembers[organization.id] !== undefined && (
-                       <tr className="control-panel-members-row">
+                      <tr className="control-panel-members-row">
                          <td colSpan={8}>
                            {loadingMembers[organization.id] ? (
                              <p className="control-panel-empty">Loading members…</p>
@@ -1787,7 +1787,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                        </tr>
                      )}
                      {expandedModules[organization.id] && (
-                       <tr className="control-panel-members-row">
+                       <tr id={`workspace-modules-${organization.id}`} className="control-panel-members-row control-panel-module-access-row">
                          <td colSpan={8}>
                            <div className="control-panel-module-editor">
                              <div>
@@ -1852,7 +1852,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
 
         <section className="panel control-panel-table" aria-label="Device usage by user">
           <div className="panel-heading"><div className="control-panel-section-title"><h2>Active device usage</h2><p>Limits apply per user. Existing sessions are retained after a limit is reduced; new devices are blocked until usage is within policy.</p></div></div>
-          <div className="table-scroll"><table><thead><tr><th>USER</th><th>WORKSPACE</th><th>ACTIVE DEVICES</th><th>ACTIVE SESSIONS</th><th>PLAN LIMIT</th><th>STATUS</th></tr></thead><tbody>
+          <div className="table-scroll control-panel-security-usage-table"><table><thead><tr><th>USER</th><th>WORKSPACE</th><th>ACTIVE DEVICES</th><th>ACTIVE SESSIONS</th><th>PLAN LIMIT</th><th>STATUS</th></tr></thead><tbody>
             {securityUsage.map((usage) => <tr key={usage.userId}><td>{usage.user.name}<small>{usage.user.email}</small></td><td>{usage.organization?.name ?? 'Platform account'}</td><td>{usage.activeDevices}</td><td>{usage.activeSessions}</td><td>{usage.deviceLimit ?? 'Not configured'}</td><td>{usage.overLimit ? <span className="control-panel-status cancelled">Over limit</span> : <span className="control-panel-status active">Within limit</span>}</td></tr>)}
             {securityUsage.length === 0 && <tr><td colSpan={6} className="control-panel-empty">No active sessions found.</td></tr>}
           </tbody></table></div>
@@ -1860,7 +1860,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
 
         <section className="panel control-panel-table" aria-label="Active sessions">
           <div className="panel-heading"><div className="control-panel-section-title"><h2>Active sessions</h2><p>Up to 500 non-expired sessions. Revocation is immediate and audited.</p></div><button className="control-panel-action" type="button" onClick={() => void loadSecuritySettings()}>Refresh sessions</button></div>
-          <div className="table-scroll"><table><thead><tr><th>USER</th><th>DEVICE</th><th>WORKSPACE</th><th>LAST ACTIVE</th><th>EXPIRES</th><th>ACTION</th></tr></thead><tbody>
+          <div className="table-scroll control-panel-security-sessions-table"><table><thead><tr><th>USER</th><th>DEVICE</th><th>WORKSPACE</th><th>LAST ACTIVE</th><th>EXPIRES</th><th>ACTION</th></tr></thead><tbody>
             {securitySessions.map((session) => <tr key={session.id}><td>{session.user.name}<small>{session.user.email}</small></td><td>{session.deviceLabel}<small>{session.userAgent ?? 'User agent unavailable'}</small></td><td>{session.organization?.name ?? 'Platform account'}</td><td>{new Date(session.lastSeenAt).toLocaleString()}</td><td>{new Date(session.expiresAt).toLocaleString()}</td><td><button className="control-panel-action" type="button" onClick={() => void revokeAdminSession(session)}>Revoke</button></td></tr>)}
             {securitySessions.length === 0 && <tr><td colSpan={6} className="control-panel-empty">No active sessions found.</td></tr>}
           </tbody></table></div>

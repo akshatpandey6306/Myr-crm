@@ -2,9 +2,15 @@
 
 All partner operations are server-to-server. Base API URL is `https://<crm-api-origin>/api/v1`. Never place a partner key or webhook secret in browser code. The Platform Admin creates a partner at **Control Panel → Partners**. Copy the generated API key and webhook signing secret once into the partner server's secret manager. Only the SHA-256 API-key digest and AES-256-GCM encrypted webhook secret are stored by the CRM.
 
-Set `PARTNER_SECRET_ENCRYPTION_KEY` to 32 random bytes represented by 64 hexadecimal characters. Keep this stable and back it up securely; rotating it requires re-encrypting stored webhook secrets. API-key rotation revokes the previous active key. Permissions supported are `provision`, `customers:read`, and `subscriptions:write`.
+Set `PARTNER_SECRET_ENCRYPTION_KEY` in the CRM API environment to 32 random bytes represented by 64 hexadecimal characters. Keep this stable and back it up securely; rotating it requires re-encrypting stored webhook secrets. Restart the API after changing environment values. API-key rotation revokes the previous active key. Permissions supported are `provision`, `customers:read`, and `subscriptions:write`.
 
-`GET /partner/v1/health` checks a partner key and returns the CRM integration status.
+The generated `crm_partner_…` API key belongs in the partner website's **server-side** environment (for example, `CRM_PARTNER_API_KEY`). The browser must call the partner website backend; it must never receive this key. Use the generated webhook signing secret as a separate server-side value (`CRM_PARTNER_WEBHOOK_SECRET`). The partner website control panel should save these server secrets and display its own account/payment counts from the CRM partner dashboard endpoints; this CRM repository does not contain that separate website's admin UI.
+
+### Website registration and ₹49 three-day trial
+
+The website must first create and verify its ₹49 PayU order on its own backend, including calling PayU's server-side payment verification. Only after PayU confirms the expected order and INR 49 amount should the backend call the CRM provisioning endpoint with `purchaseType: "trial"`. The CRM then creates the owner account, sends its activation email, and starts a 72-hour trial using the selected active CRM plan. Do not send the partner key or PayU salt/key from browser code. A paid plan should use `purchaseType: "paid"`; keep that workspace pending until a signed `subscription.activated` webhook arrives after the website has verified payment. This lets the CRM update the workspace only from a partner-authenticated server event.
+
+`GET /partner/v1/health` checks a partner key and returns the CRM integration status. `GET /partner/v1/summary` (requires `customers:read`) returns that partner's provisioned account totals by subscription status and signed payment success/failure event counts. Call it from the website backend to populate the website admin panel; it does not expose another partner's accounts or global platform totals.
 
 ## Provision a trial or paid customer
 
@@ -30,7 +36,7 @@ Content-Type: application/json
 }
 ```
 
-Use `purchaseType: "paid"` after the partner website has accepted the order. The CRM creates that organization with a `PENDING` subscription. A verified subscription webhook activates it after payment is confirmed. Trial requests start immediately for exactly 48 hours using the CRM UTC clock; trial eligibility is one time per normalized email across all partners. Duplicate request/order identifiers are idempotent only when their customer, plan, and purchase type match. Reusing them with different details returns `409`.
+Use `purchaseType: "paid"` after the partner website has accepted the order. The CRM creates that organization with a `PENDING` subscription. A signed subscription webhook activates it after payment is confirmed. Trial requests start immediately for exactly 72 hours using the CRM UTC clock; trial eligibility is one time per normalized email across all partners. Duplicate request/order identifiers are idempotent only when their customer, plan, and purchase type match. Reusing them with different details returns `409`.
 
 Example response:
 

@@ -7,6 +7,7 @@ const sections = new Set<ControlPanelSection>([
   'approvals',
   'provisioning',
   'partners',
+  'security',
   'workspaces',
   'audit-log',
 ]);
