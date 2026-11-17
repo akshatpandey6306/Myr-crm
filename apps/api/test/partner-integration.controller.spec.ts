@@ -78,6 +78,7 @@ describe("PartnerIntegrationController", () => {
     const prisma = {
       partnerApiKey: { findUnique: async () => ({ id: "key-1", active: true, revokedAt: null, permissions: ["provision"], partner }), update: async () => ({}) },
       partnerApiUsageLog: { create: async () => ({}) },
+      subscriptionPlan: { findFirst: async () => ({ code: "starter", isActive: true }) },
       provisioningRequest: { findFirst: async () => ({ idempotencyKey: "partner:partner-1:once", externalCustomerRef: "different", planCode: "starter", purchaseType: "trial" }) },
     };
     const controller = new PartnerIntegrationController(prisma as never, {} as never, {} as never);

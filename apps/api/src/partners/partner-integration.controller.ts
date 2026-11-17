@@ -277,6 +277,28 @@ export class PartnerAdminController {
     const partners = await this.prisma.integrationPartner.findMany({ include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true, lastUsedAt: true, revokedAt: true, createdAt: true } }, _count: { select: { mappings: true, webhookEvents: true, usageLogs: true } } }, orderBy: { createdAt: "desc" } });
     return { data: partners.map(({ webhookSecretEnc, ...partner }) => ({ ...partner, hasWebhookSecret: Boolean(webhookSecretEnc) })) };
   }
+  @Get(":partnerId/credentials") async revealCredentials(@Param("partnerId") partnerId: string, @Req() req: HttpRequest) {
+    const partner = await this.prisma.integrationPartner.findUnique({
+      where: { id: partnerId },
+      select: {
+        id: true,
+        webhookSecretEnc: true,
+        apiKeys: { where: { active: true }, select: { id: true, keyPrefix: true, keySecretEnc: true } },
+      },
+    });
+    if (!partner) throw new NotFoundException({ code: "not_found", message: "Partner not found" });
+    const credentials = {
+      webhookSigningSecret: partner.webhookSecretEnc ? decryptSecret(partner.webhookSecretEnc) : null,
+      apiKeys: partner.apiKeys.map((key) => ({
+        id: key.id,
+        keyPrefix: key.keyPrefix,
+        apiKey: key.keySecretEnc ? decryptSecret(key.keySecretEnc) : null,
+        requiresRotation: !key.keySecretEnc,
+      })),
+    };
+    await this.audit(req.userId, "partner.credentials.reveal", partnerId, "Revealed integration partner credentials to a platform administrator");
+    return { data: credentials };
+  }
   @Get("metrics") async metrics() {
     const [partnerCustomers, adminAudit, payments, partnerEvents, customersByPartner] = await Promise.all([
       this.prisma.partnerCustomerMapping.count(),
@@ -310,7 +332,7 @@ export class PartnerAdminController {
     let partner;
     try {
       partner = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.integrationPartner.create({ data: { name, permissions: [...new Set(permissions)], webhookUrl, plansUrl, webhookSecretEnc: encryptSecret(webhookSecret), apiKeys: { create: { keyPrefix: key.prefix, keyHash: key.hash, permissions: [...new Set(permissions)] } } }, include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true } } } });
+        const created = await tx.integrationPartner.create({ data: { name, permissions: [...new Set(permissions)], webhookUrl, plansUrl, webhookSecretEnc: encryptSecret(webhookSecret), apiKeys: { create: { keyPrefix: key.prefix, keyHash: key.hash, keySecretEnc: encryptSecret(key.secret), permissions: [...new Set(permissions)] } } }, include: { apiKeys: { select: { id: true, keyPrefix: true, permissions: true, active: true } } } });
         await tx.platformAuditLog.create({ data: { actorUserId: req.userId ?? null, action: "partner.create", targetType: "integration_partner", targetId: created.id, reason: `Created integration partner ${name}` } });
         return created;
       });
@@ -336,7 +358,7 @@ export class PartnerAdminController {
     const key = newApiKey();
     const created = await this.prisma.$transaction(async (tx) => {
       await tx.partnerApiKey.updateMany({ where: { partnerId, active: true }, data: { active: false, revokedAt: new Date() } });
-      const next = await tx.partnerApiKey.create({ data: { partnerId, keyPrefix: key.prefix, keyHash: key.hash, permissions: partner.permissions } });
+      const next = await tx.partnerApiKey.create({ data: { partnerId, keyPrefix: key.prefix, keyHash: key.hash, keySecretEnc: encryptSecret(key.secret), permissions: partner.permissions } });
       await tx.platformAuditLog.create({ data: { actorUserId: req.userId ?? null, action: "partner.key.rotate", targetType: "integration_partner", targetId: partnerId, reason: "Rotated partner API key" } });
       return next;
     });

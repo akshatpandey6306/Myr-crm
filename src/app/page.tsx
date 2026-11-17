@@ -160,11 +160,11 @@ export default function Home() {
               <p className="welcome-copy">Here&apos;s what&apos;s happening with your workspace today.</p>
             </div>
             <div className="welcome-actions">
-              <a className="button button-secondary" href="/reports">View reports <span className="button-caret">↗</span></a>
+              {enabledModules?.includes('reports') && <a className="button button-secondary" href="/reports">View reports <span className="button-caret">↗</span></a>}
               <ClearSampleDataButton />
-              <a className="button button-primary" href="/leads">
+              {enabledModules?.includes('leads') && <a className="button button-primary" href="/leads">
                 <Icon name="plus" /> Add new lead
-              </a>
+              </a>}
             </div>
           </section>
 

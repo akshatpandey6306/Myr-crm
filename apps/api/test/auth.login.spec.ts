@@ -12,6 +12,29 @@ const emailService = {
   sendPasswordReset: async () => undefined,
 };
 
+const securitySettings = {
+  failedLoginLockoutEnabled: false,
+  deviceRestrictionsEnabled: false,
+  maxFailedLoginAttempts: 5,
+  lockoutDurationMinutes: 15,
+  sessionLifetimeMinutes: 60,
+};
+
+function loginPrisma(user: ReturnType<typeof makeUser>, onSessionCreate: () => void = () => {}) {
+  return {
+    user: { findUnique: async () => user },
+    globalSecuritySettings: {
+      upsert: async () => securitySettings,
+      findUnique: async () => securitySettings,
+    },
+    subscriptionPlan: { findUnique: async () => null },
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      $queryRaw: async () => [],
+      session: { count: async () => 0, create: async () => { onSessionCreate(); } },
+    }),
+  };
+}
+
 function makeHash(password: string) {
   const salt = randomBytes(16);
   const derived = scryptSync(password, salt, 64);
@@ -42,14 +65,11 @@ describe('AuthController login', () => {
     it(`logs in ${account.email}`, async () => {
       const user = makeUser(account.email, account.password);
       let sessionCreated = false;
-      const prisma = {
-        user: { findUnique: async () => user },
-        session: { create: async () => { sessionCreated = true; } },
-      };
+      const prisma = loginPrisma(user, () => { sessionCreated = true; });
       const controller = new AuthController(prisma as never, emailService as never);
       let cookieOptions: { httpOnly: boolean } | undefined;
       const httpResponse = { cookie: (_name: string, _value: string, options: { httpOnly: boolean }) => { cookieOptions = options; } };
-      const result = await controller.login({ email: account.email, password: account.password }, httpResponse as never);
+      const result = await controller.login({ email: account.email, password: account.password }, { headers: {} } as never, httpResponse as never);
       assert.equal(result.user.email, account.email);
       assert.equal(typeof result.expiresAt, 'string');
       assert.equal(cookieOptions?.httpOnly, true);
@@ -59,14 +79,11 @@ describe('AuthController login', () => {
 
   it('rejects invalid credentials', async () => {
     const user = makeUser('maya@studionorth.co', 'password123');
-    const prisma = {
-      user: { findUnique: async () => user },
-      session: { create: async () => undefined },
-    };
+    const prisma = loginPrisma(user);
     const controller = new AuthController(prisma as never, emailService as never);
     const httpResponse = { cookie: () => {} };
     await assert.rejects(
-      () => controller.login({ email: 'maya@studionorth.co', password: 'wrong' }, httpResponse as never),
+      () => controller.login({ email: 'maya@studionorth.co', password: 'wrong' }, { headers: {} } as never, httpResponse as never),
       UnauthorizedException,
     );
   });

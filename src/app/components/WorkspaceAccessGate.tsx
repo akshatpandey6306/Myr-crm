@@ -35,6 +35,7 @@ type WorkspaceAccess = {
   plans: RenewalPlan[];
   activationRequest: ActivationRequest | null;
   canManageBilling: boolean;
+  payuEnabled: boolean;
   partnerPlansUrl: string | null;
   trialExpired: boolean;
 };
@@ -58,6 +59,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [accessCheckResult, setAccessCheckResult] = useState<'idle' | 'checking' | 'still-paused'>('idle');
   const isUngatedRoute = [
     '/sign-in',
     '/forgot-password',
@@ -88,6 +90,13 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     sessionStorage.removeItem('myr.user');
     sessionStorage.removeItem('myr.organization');
     window.location.assign('/sign-in');
+  }
+
+  function checkAccessNow() {
+    setAccessCheckResult('checking');
+    setLoading(true);
+    setError('');
+    setRefreshKey((value) => value + 1);
   }
 
   useEffect(() => {
@@ -143,7 +152,8 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
         const status = String(current.status);
         const validEndDate = endsAt !== null && new Date(endsAt).getTime() > Date.now();
         const active = ['active', 'trial'].includes(status) && validEndDate;
-        const expired = ['expired', 'cancelled', 'pending'].includes(status) || (['active', 'trial'].includes(status) && !validEndDate);
+        const expired = !['active', 'trial'].includes(status) || !validEndDate;
+        if (active) setAccessCheckResult('idle');
         if (!active && !expired) {
           window.location.assign('/dashboard');
           return;
@@ -169,6 +179,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
             (activation.requestType === 'trial' || activation.requestType === 'activation')
             ? activation as ActivationRequest : null,
           canManageBilling: data && data.canManageBilling === true,
+          payuEnabled: data && data.payuEnabled === true,
           partnerPlansUrl: typeof data.partnerPlansUrl === 'string' && /^https:\/\//i.test(data.partnerPlansUrl) ? data.partnerPlansUrl : null,
           trialExpired: status === 'trial' && expired,
         });
@@ -177,7 +188,10 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
           setError(caught instanceof Error ? caught.message : 'Could not verify workspace access.');
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setAccessCheckResult((current) => current === 'checking' ? 'still-paused' : current);
+        }
       }
     }
     void checkAccess();
@@ -210,23 +224,25 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     </main>;
   }
   if (!access) return null;
-  const isExpired = access.subscription.status === 'expired' || access.subscription.status === 'cancelled' || access.subscription.status === 'pending';
+  const isExpired = !['active', 'trial'].includes(access.subscription.status);
   return (
     <SubscriptionContext.Provider value={access}>
       {isExpired ? (
         <>
           <div className="workspace-expired-background" aria-hidden="true" inert>{children}</div>
-          <ExpiredSubscriptionOverlay access={access} onRequest={(activationRequest) => setAccess((current) => current ? { ...current, activationRequest } : current)} />
+          <ExpiredSubscriptionOverlay access={access} accessCheckResult={accessCheckResult} onCheckAccess={checkAccessNow} onSignOut={signOut} onRequest={(activationRequest) => setAccess((current) => current ? { ...current, activationRequest } : current)} />
         </>
       ) : children}
     </SubscriptionContext.Provider>
   );
 }
 
-function ExpiredSubscriptionOverlay({ access, onRequest }: { access: WorkspaceAccess; onRequest: (request: ActivationRequest) => void }) {
+function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, onSignOut, onRequest }: { access: WorkspaceAccess; accessCheckResult: 'idle' | 'checking' | 'still-paused'; onCheckAccess: () => void; onSignOut: () => Promise<void>; onRequest: (request: ActivationRequest) => void }) {
   const [busyPlan, setBusyPlan] = useState('');
+  const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const canPayWithPayU = access.canManageBilling && access.payuEnabled;
 
   async function requestRenewal(plan: RenewalPlan) {
     setBusyPlan(plan.code);
@@ -254,24 +270,83 @@ function ExpiredSubscriptionOverlay({ access, onRequest }: { access: WorkspaceAc
     }
   }
 
+  async function payForPlan(plan: RenewalPlan) {
+    const normalizedPhone = phone.trim().replace(/[\s()-]/g, '');
+    if (!/^\+?[1-9]\d{6,14}$/.test(normalizedPhone)) {
+      setError('Enter a valid phone number for PayU checkout.');
+      return;
+    }
+    setBusyPlan(plan.code);
+    setError('');
+    setMessage('');
+    try {
+      const response = await crmApiFetch('/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planCode: plan.code, purchaseType: 'plan', phone: normalizedPhone }),
+      });
+      const responseText = await response.text();
+      let payload: { error?: { message?: unknown }; data?: unknown } | null = null;
+      try { payload = JSON.parse(responseText) as { error?: { message?: unknown }; data?: unknown }; } catch { /* Keep the API response readable. */ }
+      if (!response.ok) {
+        const apiMessage = payload?.error?.message;
+        const plainTextMessage = responseText.trim().startsWith('<') ? '' : responseText.trim().slice(0, 180);
+        throw new Error(typeof apiMessage === 'string' ? apiMessage : plainTextMessage || `Could not start PayU checkout (HTTP ${response.status}).`);
+      }
+      const checkout = isRecord(payload?.data) ? payload.data : null;
+      if (!checkout || typeof checkout.checkoutUrl !== 'string' || !isRecord(checkout.fields)) {
+        throw new Error('PayU returned an invalid checkout response.');
+      }
+      const action = new URL(checkout.checkoutUrl);
+      if (action.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(action.hostname)) {
+        throw new Error('The PayU checkout URL must use HTTPS.');
+      }
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = action.toString();
+      for (const [name, value] of Object.entries(checkout.fields)) {
+        if (typeof value !== 'string') continue;
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
+      setBusyPlan('');
+    }
+  }
+
   return (
     <div className="workspace-expired-overlay" role="presentation">
       <section className="workspace-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-expired-title">
         <p className="date-label">WORKSPACE SUBSCRIPTION</p>
         <h1 id="workspace-expired-title">{access.organizationName} is paused</h1>
         <p className="workspace-expired-copy">{access.subscription.status === 'pending' ? 'Your subscription is waiting for payment verification.' : access.trialExpired ? 'Your CRM trial has ended.' : 'Your subscription is inactive.'} {access.subscription.status === 'pending' ? 'Access will begin after your partner confirms the payment.' : 'Your organization must have an active plan to continue using your CRM.'} Your data remains private and retained.</p>
-        {access.activationRequest && (
+        {access.activationRequest && !canPayWithPayU && (
           <p className="workspace-renewal-status" role="status">A renewal request for {access.plans.find((plan) => plan.code === access.activationRequest?.planCode)?.name ?? access.activationRequest.planCode} is awaiting platform review.</p>
         )}
         {message && <p className="workspace-renewal-status" role="status">{message}</p>}
         {error && <p className="workspace-renewal-error" role="alert">{error}</p>}
-        {!access.partnerPlansUrl && <div className="workspace-renewal-plans">
+        {accessCheckResult === 'still-paused' && <p className="workspace-renewal-status" role="status">Workspace access is still paused. If you just paid, wait for PayU verification to finish, then check again. Otherwise, choose a plan to restore access.</p>}
+        {canPayWithPayU && <div className="subscription-checkout-box subscription-checkout-plans-box">
+          <p>Pay securely with PayU to restore workspace access. Your saved workspace data will remain in place.</p>
+          <label>Phone number for PayU<input type="tel" autoComplete="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Enter your phone number" /></label>
+        </div>}
+        {(!access.partnerPlansUrl || canPayWithPayU) && <div className="workspace-renewal-plans">
           {access.plans.map((plan) => (
             <article className="workspace-renewal-plan" key={plan.code}>
               <h2>{plan.name}</h2>
               <p><strong>{plan.currency} {plan.monthlyPrice.toLocaleString('en-IN')}</strong> / {plan.billingInterval === 'yearly' ? 'year' : 'month'}</p>
               <ul>{plan.features.slice(0, 3).map((feature) => <li key={feature}>{feature}</li>)}</ul>
-              {access.canManageBilling ? (
+              {canPayWithPayU ? (
+                <button className="button button-primary" type="button" disabled={Boolean(busyPlan)} onClick={() => void payForPlan(plan)}>
+                  {busyPlan === plan.code ? 'Opening PayU…' : `Pay ${plan.currency} ${plan.monthlyPrice.toLocaleString('en-IN')} with PayU`}
+                </button>
+              ) : access.canManageBilling && !access.partnerPlansUrl ? (
                 <button className="button button-primary" type="button" disabled={Boolean(busyPlan) || Boolean(access.activationRequest)} onClick={() => void requestRenewal(plan)}>
                   {busyPlan === plan.code ? 'Sending request…' : access.activationRequest ? 'Request pending' : 'Request renewal'}
                 </button>
@@ -279,10 +354,11 @@ function ExpiredSubscriptionOverlay({ access, onRequest }: { access: WorkspaceAc
             </article>
           ))}
         </div>}
-        {access.partnerPlansUrl && <p className="workspace-renewal-status">Choose a plan on your subscription provider’s website. CRM access returns after payment is verified.</p>}
-        {!access.partnerPlansUrl && !access.plans.length && <p className="workspace-renewal-status">No plans are available. Contact your platform administrator.</p>}
+        {access.partnerPlansUrl && !canPayWithPayU && <p className="workspace-renewal-status">Choose a plan on your subscription provider’s website. CRM access returns after payment is verified.</p>}
+        {(!access.partnerPlansUrl || canPayWithPayU) && !access.plans.length && <p className="workspace-renewal-status">No plans are available. Contact your platform administrator.</p>}
         <footer className="workspace-expired-actions">
-          <button className="button button-secondary" type="button" onClick={() => window.location.reload()}>Check access</button>
+          <button className="button button-secondary" type="button" onClick={() => void onSignOut()}>Sign out</button>
+          <button className="button button-secondary" type="button" disabled={accessCheckResult === 'checking'} onClick={onCheckAccess}>{accessCheckResult === 'checking' ? 'Checking…' : 'Check access'}</button>
           {access.partnerPlansUrl && <a className="button button-primary" href={access.partnerPlansUrl} target="_blank" rel="noopener noreferrer">View Plans / Renew</a>}
         </footer>
       </section>
@@ -306,7 +382,7 @@ export function SubscriptionExpiryBanner() {
     <div className={`subscription-expiry-banner${daysLeft <= 3 ? ' is-urgent' : ''}`} role="status" aria-live="polite">
       <strong>{daysLeft}</strong>
       <span>{daysLeft === 1 ? 'day left' : 'days left'} before plan expiry</span>
-      <Link href="/subscription">Renew</Link>
+      <a href="/subscription" aria-label="Open subscription and renew your plan">Renew</a>
     </div>
   );
 }

@@ -19,6 +19,7 @@ const policies = new Map<string, Policy>([
   ["POST /auth/password-reset/confirm", { limit: 10, windowSeconds: 3600 }],
   ["POST /billing/request-activation", { limit: 3, windowSeconds: 3600, userKey: true }],
   ["POST /billing/checkout", { limit: 50, windowSeconds: 3600, userKey: true }],
+  ["GET /billing/payment-status/:transactionId", { limit: 12, windowSeconds: 600, userKey: true }],
   ["POST /internal/v1/tenants/provision", { limit: 120, windowSeconds: 600 }],
   ["POST /partner/v1/provision", { limit: 50, windowSeconds: 3600 }],
   ["GET /partner/v1/health", { limit: 120, windowSeconds: 600 }],

@@ -25,6 +25,11 @@ export default function SubscriptionPage() {
   const [checkoutPhone, setCheckoutPhone] = useState('');
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
+  const [paymentResult, setPaymentResult] = useState('');
+  const [paymentTransaction, setPaymentTransaction] = useState('');
+  const [paymentChecking, setPaymentChecking] = useState(false);
+  const [purchasedPlanCode, setPurchasedPlanCode] = useState('');
+  const [paymentRetry, setPaymentRetry] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -39,6 +44,51 @@ export default function SubscriptionPage() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get('payment');
+    const transactionId = params.get('transaction') ?? '';
+    if (!outcome) return;
+    setPaymentTransaction(transactionId);
+    if (!transactionId) {
+      setPaymentResult('failed');
+      setCheckoutError('The payment reference is missing. Check your subscription status or contact support.');
+      return;
+    }
+    setPaymentResult('pending');
+
+    let active = true;
+    async function checkPaymentStatus() {
+      setPaymentChecking(true);
+      try {
+        const response = await crmApiFetch(`/billing/payment-status/${encodeURIComponent(transactionId)}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not check payment status.');
+        const payment = payload?.data as { status?: string; planCode?: string } | undefined;
+        if (!active || !payment?.status) return;
+        const result = payment.status === 'succeeded' ? 'success' : payment.status;
+        setPaymentResult(result);
+        setPurchasedPlanCode(payment.planCode ?? '');
+        if (result === 'success') {
+          const currentResponse = await crmApiFetch('/billing/current');
+          const currentPayload = await currentResponse.json();
+          if (currentResponse.ok && active) {
+            const info = currentPayload.data as BillingInfo;
+            setBilling(info);
+            setCheckoutPlanCode(info.subscription.planCode ?? info.plans[0]?.code ?? '');
+            setFeaturePlanCode(info.subscription.planCode ?? info.plans[0]?.code ?? '');
+          }
+        }
+      } catch (caught) {
+        if (active) setCheckoutError(caught instanceof Error ? caught.message : 'Could not check payment status.');
+      } finally {
+        if (active) setPaymentChecking(false);
+      }
+    }
+    void checkPaymentStatus();
+    return () => { active = false; };
+  }, [paymentRetry]);
 
   useEffect(() => {
     if (billing && !billing.canManageBilling) router.replace('/');
@@ -74,8 +124,15 @@ export default function SubscriptionPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planCode, purchaseType, phone: checkoutPhone.trim() }),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error?.message ?? 'Could not start PayU checkout.');
+      const responseText = await response.text();
+      let payload: { error?: { message?: unknown }; data?: unknown } | null = null;
+      try { payload = JSON.parse(responseText) as { error?: { message?: unknown }; data?: unknown }; } catch { /* Preserve a readable API error below. */ }
+      if (!response.ok) {
+        const apiMessage = payload?.error?.message;
+        const plainTextMessage = responseText.trim().startsWith('<') ? '' : responseText.trim().slice(0, 180);
+        throw new Error(typeof apiMessage === 'string' ? apiMessage : plainTextMessage || `Could not start PayU checkout (HTTP ${response.status}).`);
+      }
+      if (!payload) throw new Error('The API returned an invalid checkout response.');
       const result = payload?.data as { checkoutUrl?: unknown; fields?: unknown } | undefined;
       if (typeof result?.checkoutUrl !== 'string' || typeof result.fields !== 'object' || result.fields === null) throw new Error('PayU returned an invalid checkout response.');
       const action = new URL(result.checkoutUrl);
@@ -99,6 +156,13 @@ export default function SubscriptionPage() {
 
   return (
     <CrmShell active="Subscription"><main className="settings-route-content subscription-page-content">
+      {paymentResult && <section className={`subscription-payment-result subscription-payment-${paymentResult}`} role={paymentResult === 'failed' ? 'alert' : 'status'}>
+        <div><strong>{paymentResult === 'success' ? 'Payment verified' : paymentResult === 'failed' ? 'Payment was not completed' : paymentResult === 'review' ? 'Payment verified; activation needs review' : 'Payment verification is pending'}</strong>
+          <p>{paymentResult === 'success' ? `Your ${billing?.plans.find((plan) => plan.code === (purchasedPlanCode || billing.subscription.planCode))?.name ?? 'subscription'} plan is active. Your workspace is ready.` : paymentResult === 'failed' ? 'PayU did not confirm this payment. You can return to the plans and try again.' : paymentResult === 'review' ? 'The payment was confirmed, but the workspace plan needs administrator review. Your payment has not been discarded.' : 'We are checking the payment directly with PayU. Access will update only after confirmation.'}</p>
+        </div>
+        {checkoutError && <p role="alert">{checkoutError}</p>}
+        {paymentResult === 'pending' && paymentTransaction && <button type="button" className="button button-secondary" disabled={paymentChecking} onClick={() => { setCheckoutError(''); setPaymentRetry((retry) => retry + 1); }}>{paymentChecking ? 'Checking…' : 'Check payment status'}</button>}
+      </section>}
       <section className="panel subscription-summary-panel" aria-labelledby="subscription-heading">
         <div className="subscription-status-overview">
         <div className="billing-section-heading">
@@ -129,6 +193,7 @@ export default function SubscriptionPage() {
           <div className="subscription-feature-card-aura" aria-hidden="true" /><div className="subscription-feature-card-top"><span>{plan.name} workspace plan</span><span className="subscription-feature-price">{money(plan)}</span></div>
           <div className="subscription-feature-card-main"><div><h3>{plan.code === subscription.planCode ? 'Your current toolkit' : `Unlock ${plan.name}`}</h3><p>Built for teams of {plan.seats > 0 ? `up to ${plan.seats}` : 'unlimited'} members.</p><div className="subscription-feature-pills">{plan.modules.map((module) => <span key={module}>{module.replaceAll('-', ' ')}</span>)}</div></div><div className="subscription-feature-benefits"><span>Included capabilities</span>{(plan.features.length ? plan.features : plan.modules.map((module) => module.replaceAll('-', ' '))).map((feature) => <p key={feature}><b>✦</b>{feature}</p>)}</div></div>
           {canUsePayU && status === 'trial' && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : plan.code === subscription.planCode ? 'Pay now' : `Upgrade to ${plan.name}`}</button>}
+          {canUsePayU && status === 'active' && plan.code !== subscription.planCode && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : `Upgrade to ${plan.name}`}</button>}
           {canUsePayU && ['pending', 'expired', 'cancelled'].includes(status) && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, status === 'pending' ? 'trial' : 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : status === 'pending' ? `Start ₹${billing.trialAmount} trial` : `Choose ${plan.name}`}</button>}
           {canUsePayU && status === 'active' && renewalWindowOpen && plan.code === subscription.planCode && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => void beginCheckout(plan.code, 'renewal')}>{checkoutBusy ? 'Opening PayU…' : 'Renew plan'}</button>}
           {plan.code !== subscription.planCode && billing.partnerPlansUrl && <a className="button button-primary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">Explore this plan</a>}
@@ -144,8 +209,14 @@ export default function SubscriptionPage() {
             <h2>{plan.name}{isCurrent ? ' · Current plan' : ''}</h2>
             <p><strong>{money(plan)}</strong></p>
             <p>{plan.seats > 0 ? `Up to ${plan.seats} workspace members` : 'Unlimited workspace members'}</p>
+            {canUsePayU && status === 'trial' && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : isCurrent ? 'Pay now' : `Upgrade to ${plan.name}`}</button>}
+            {canUsePayU && status === 'active' && !isCurrent && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : `Upgrade to ${plan.name}`}</button>}
+            {canUsePayU && status === 'pending' && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'trial'); }}>{checkoutBusy ? 'Opening PayU…' : `Start ₹${billing.trialAmount} trial`}</button>}
+            {canUsePayU && ['expired', 'cancelled'].includes(status) && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => { setCheckoutPlanCode(plan.code); void beginCheckout(plan.code, 'plan'); }}>{checkoutBusy ? 'Opening PayU…' : `Choose ${plan.name}`}</button>}
+            {canUsePayU && status === 'active' && renewalWindowOpen && isCurrent && <button className="button button-primary" type="button" disabled={checkoutBusy} onClick={() => void beginCheckout(plan.code, 'renewal')}>{checkoutBusy ? 'Opening PayU…' : 'Pay now to renew'}</button>}
+            {canUsePayU && status === 'active' && !renewalWindowOpen && isCurrent && <p className="workspace-renewal-owner-note">Renewal payment opens during the final 10 days of this plan.</p>}
             {billing.canManageBilling && billing.partnerPlansUrl && (isCurrent && status === 'trial' || !isCurrent) && <a className="button button-secondary" href={billing.partnerPlansUrl} target="_blank" rel="noreferrer">{isCurrent ? 'Choose this plan' : status === 'active' ? 'Upgrade options' : 'Choose plan'}</a>}
-            {!isCurrent && !billing.partnerPlansUrl && <p>Contact your platform administrator to change plans.</p>}
+            {!canUsePayU && !billing.partnerPlansUrl && !isCurrent && <p>Contact your platform administrator to change plans.</p>}
           </article>;
         })}
         {!billing.plans.length && <p>No other plans are currently available.</p>}

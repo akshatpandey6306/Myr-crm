@@ -95,26 +95,21 @@ export class DemoDataService {
     return { data: { loaded: Object.values(counts).some((count) => count > 0), counts } };
   }
 
-  async ensureTrialSamples(organizationId: string, userId: string) {
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { subscriptionStatus: true },
-    });
-    if (organization?.subscriptionStatus !== "TRIAL") return;
-
+  async ensureWorkspaceSamples(organizationId: string, userId: string) {
     const marker = await this.prisma.organizationDemoData.findUnique({ where: { organizationId } });
     if (marker?.clearedAt) return;
     if (marker?.loadedAt) return;
 
-    const counts = await this.counts(organizationId);
-    if (Object.values(counts).some((count) => count > 0)) {
-      await this.prisma.organizationDemoData.upsert({
-        where: { organizationId },
-        update: { loadedAt: new Date() },
-        create: { organizationId, loadedAt: new Date() },
-      });
-      return;
-    }
+    const [leads, contacts, companies, deals, activities, vendors, invoices] = await Promise.all([
+      this.prisma.lead.count({ where: { organizationId } }),
+      this.prisma.contact.count({ where: { organizationId } }),
+      this.prisma.company.count({ where: { organizationId } }),
+      this.prisma.deal.count({ where: { organizationId } }),
+      this.prisma.activity.count({ where: { organizationId } }),
+      this.prisma.vendor.count({ where: { organizationId } }),
+      this.prisma.billingInvoice.count({ where: { organizationId } }),
+    ]);
+    if (leads + contacts + companies + deals + activities + vendors + invoices > 0) return;
     await this.load(organizationId, userId);
   }
 
@@ -403,7 +398,7 @@ export class DemoDataController {
   @Get("status")
   async status(@Req() request: HttpRequest) {
     const { organizationId, userId } = this.requireAdministrator(request);
-    await this.demoData.ensureTrialSamples(organizationId, userId);
+    await this.demoData.ensureWorkspaceSamples(organizationId, userId);
     return this.demoData.status(organizationId);
   }
 

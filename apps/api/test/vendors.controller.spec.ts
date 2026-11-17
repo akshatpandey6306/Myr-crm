@@ -32,6 +32,7 @@ describe("VendorsController", () => {
     const prisma = {
       vendor: {
         count: async ({ where }: { where: Record<string, unknown> }) => { whereClauses.push(where); return 0; },
+        groupBy: async ({ where }: { where: Record<string, unknown> }) => { whereClauses.push(where); return []; },
         findMany: async ({ where }: { where: Record<string, unknown> }) => { whereClauses.push(where); return []; },
       },
     };
@@ -44,6 +45,35 @@ describe("VendorsController", () => {
     assert.ok(whereClauses.length > 0);
     assert.ok(whereClauses.every((where) => where.organizationId === "org-a"));
     assert.ok(whereClauses.every((where) => where.archivedAt === null));
+  });
+
+  it("returns the same vendor totals from one status aggregation", async () => {
+    const groupByCalls: Array<Record<string, unknown>> = [];
+    const prisma = {
+      vendor: {
+        count: async () => { throw new Error("Summary should use one grouped query"); },
+        groupBy: async (args: Record<string, unknown>) => {
+          groupByCalls.push(args);
+          return [
+            { status: "ACTIVE", _count: { _all: 5 } },
+            { status: "PENDING", _count: { _all: 2 } },
+            { status: "ON_HOLD", _count: { _all: 1 } },
+          ];
+        },
+      },
+    };
+    const controller = new VendorsController(prisma as never);
+
+    assert.deepEqual(await controller.summary(request("sales_rep")), {
+      data: { total: 8, active: 5, pending: 2, onHold: 1 },
+    });
+    assert.equal(groupByCalls.length, 1);
+    assert.deepEqual(groupByCalls[0]?.by, ["status"]);
+    assert.deepEqual(groupByCalls[0]?.where, {
+      organizationId: "org-a",
+      archivedAt: null,
+      ownerUserId: "user-a",
+    });
   });
 
   it("uses verified workspace and actor IDs when creating vendors", async () => {

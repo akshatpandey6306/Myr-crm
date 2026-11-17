@@ -57,6 +57,14 @@
 .statusStages small { color: var(--crm-muted, #85859b); font-size: 8px; }
 .statusStages > div > i { position: absolute; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--green, #6855d9), #5c9ce0); }
 .roleDirectory { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.roleBuilder { display: grid; gap: 14px; border: 1px solid var(--line, #e8e6f0); border-radius: 15px; background: linear-gradient(135deg, var(--surface, #fff), color-mix(in srgb, var(--green-pale, #f2efff) 48%, white)); padding: 17px; box-shadow: 0 10px 26px rgb(40 34 88 / 5%); }
+.roleBuilder h3 { margin: 4px 0; color: var(--crm-ink, #282642); font: 700 15px/1.25 "Manrope", sans-serif; }
+.roleBuilder p { margin: 0; color: var(--crm-muted, #777991); font-size: 10px; line-height: 1.5; }
+.roleBuilder form { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(190px, 1fr) minmax(170px, 1.2fr) auto; align-items: end; gap: 10px; }
+.roleBuilder label { display: grid; min-width: 0; gap: 6px; color: var(--crm-muted, #777991); font-size: 9px; font-weight: 700; }
+.roleBuilder input,.roleBuilder select { width: 100%; min-width: 0; height: 38px; border: 1px solid var(--line, #e8e6f0); border-radius: 8px; background: var(--surface, #fff); padding: 0 10px; color: var(--crm-ink, #34324b); font: inherit; font-size: 10px; }
+.roleBuilder form button { min-height: 38px; cursor: pointer; }
+.roleBuilder form button:disabled { opacity: .6; cursor: wait; }
 .roleCard { display: grid; min-width: 0; min-height: 158px; align-content: start; gap: 12px; border: 1px solid var(--line, #e8e6f0); border-top: 3px solid var(--role-accent, #6855d9); border-radius: 13px; background: linear-gradient(155deg, var(--surface, #fff), var(--role-tint, #f8f6ff)); padding: 13px; color: inherit; text-align: left; cursor: pointer; transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
 .roleCard[data-tone="plum"] { --role-accent: #934ebc; --role-tint: #faf4ff; }
 .roleCard[data-tone="violet"] { --role-accent: #6855d9; --role-tint: #f5f2ff; }
@@ -98,6 +106,7 @@
   .statusPanel { grid-column: auto; }
   .statusStages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .roleDirectory { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .roleBuilder form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .roleCard { min-height: 144px; }
 }
 @media (max-width: 460px) {
@@ -108,6 +117,7 @@
   .statusStages { gap: 7px; }
   .statusStages > div { grid-template-columns: 1fr; justify-items: start; gap: 6px; padding: 9px; }
   .roleDirectory { gap: 7px; }
+  .roleBuilder form { grid-template-columns: minmax(0, 1fr); }
   .roleCard { min-height: 150px; padding: 10px; }
   .memberToolbar { align-items: stretch; flex-direction: column; }
   .search { min-width: 0; width: 100%; }

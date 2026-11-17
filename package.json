@@ -6,7 +6,8 @@
     "apps/api"
   ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-all.mjs",
+    "dev:web": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
@@ -21,7 +22,8 @@
     "db:seed": "npm run db:seed --workspace @myr-crm/api"
   },
   "dependencies": {
-    "next": "16.4.3",
+    "@next/swc-wasm-nodejs": "^16.4.6",
+    "next": "^16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

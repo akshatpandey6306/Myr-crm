@@ -9,6 +9,32 @@ const emailService = {
   sendSignupOtp: async () => undefined,
 };
 
+const securitySettings = {
+  failedLoginLockoutEnabled: false,
+  deviceRestrictionsEnabled: false,
+  maxFailedLoginAttempts: 5,
+  lockoutDurationMinutes: 15,
+  sessionLifetimeMinutes: 60,
+};
+
+function loginPrisma(user: Record<string, unknown>, onSessionCreate: (args: Record<string, unknown>) => void = () => {}) {
+  return {
+    user: { findUnique: async () => user },
+    globalSecuritySettings: {
+      upsert: async () => securitySettings,
+      findUnique: async () => securitySettings,
+    },
+    subscriptionPlan: { findUnique: async () => null },
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      $queryRaw: async () => [],
+      session: {
+        count: async () => 0,
+        create: async (args: Record<string, unknown>) => { onSessionCreate(args); return {}; },
+      },
+    }),
+  };
+}
+
 function hashPassword(password: string) {
   const salt = randomBytes(16);
   return `scrypt$${salt.toString("hex")}$${scryptSync(password, salt, 64).toString("hex")}`;
@@ -158,31 +184,28 @@ describe("AuthController", () => {
 
   it("sets a secure HttpOnly session cookie after verified login without returning the session token", async () => {
     let sessionCreate: Record<string, unknown> | undefined;
-    let cookie: { name: string; value: string; options: Record<string, unknown> } | undefined;
-    const prisma = {
-      user: {
-        findUnique: async () => ({
+    const cookies: { name: string; value: string; options: Record<string, unknown> }[] = [];
+    const prisma = loginPrisma({
           id: "user-a",
           email: "maya@example.com",
           name: "Maya Chen",
           passwordHash: hashPassword("password123"),
           status: "ACTIVE",
           emailVerifiedAt: new Date(),
-          memberships: [{ status: "ACTIVE", organization: { id: "org-a", name: "Northwind" } }],
-        }),
-      },
-      session: { create: async (args: Record<string, unknown>) => { sessionCreate = args; return {}; } },
-    };
+          memberships: [{ status: "ACTIVE", organizationId: "org-a", organization: { id: "org-a", name: "Northwind", subscriptionPlan: null } }],
+        }, (args) => { sessionCreate = args; });
     const controller = new AuthController(prisma as never, emailService as never);
     const response = await controller.login(
       { email: "Maya@Example.com", password: "password123" },
-      { cookie: (name, value, options) => { cookie = { name, value, options }; }, clearCookie: () => undefined },
+      { headers: {} } as never,
+      { cookie: (name, value, options) => { cookies.push({ name, value, options }); }, clearCookie: () => undefined },
     );
 
-    assert.equal(cookie?.name, "myr_session");
-    assert.equal(cookie?.options.httpOnly, true);
-    assert.equal(cookie?.options.sameSite, "lax");
-    assert.equal(cookie?.options.path, "/");
+    const cookie = cookies.find(({ name }) => name === "myr_session");
+    assert.ok(cookie);
+    assert.equal(cookie.options.httpOnly, true);
+    assert.equal(cookie.options.sameSite, "lax");
+    assert.equal(cookie.options.path, "/");
     assert.equal((sessionCreate?.data as { tokenHash: string }).tokenHash.length, 64);
     assert.equal(createHash("sha256").update(cookie!.value).digest("hex"), (sessionCreate?.data as { tokenHash: string }).tokenHash);
     assert.equal("token" in response, false);
@@ -195,9 +218,7 @@ describe("AuthController", () => {
     process.env.NODE_ENV = "production";
     let sessionCreated = false;
     let cookieSet = false;
-    const controller = new AuthController({
-      user: {
-        findUnique: async () => ({
+    const controller = new AuthController(loginPrisma({
           id: "user-a",
           email: "maya@example.com",
           name: "Maya Chen",
@@ -205,13 +226,11 @@ describe("AuthController", () => {
           status: "ACTIVE",
           emailVerifiedAt: null,
           memberships: [],
-        }),
-      },
-      session: { create: async () => { sessionCreated = true; } },
-    } as never, emailService as never);
+        }, () => { sessionCreated = true; }) as never, emailService as never);
     try {
       const result = await controller.login(
         { email: "maya@example.com", password: "password123" },
+        { headers: {} } as never,
         { cookie: () => { cookieSet = true; }, clearCookie: () => undefined },
       );
 
@@ -226,9 +245,12 @@ describe("AuthController", () => {
     }
   });
 
-  it("explicitly disables password reset while email delivery is off", async () => {
-    const controller = new AuthController({} as never, emailService as never);
-    assert.throws(() => controller.requestPasswordReset(), ServiceUnavailableException);
+  it("keeps password reset responses generic when email delivery is off", async () => {
+    const controller = new AuthController({
+      user: { findUnique: async () => ({ id: "user-a", email: "maya@example.com", status: "ACTIVE" }) },
+    } as never, emailService as never);
+    const response = await controller.requestPasswordReset({ email: "maya@example.com" });
+    assert.match(response.message, /If an active account uses that email/);
   });
 
   it("consumes a password-reset token, changes the password, and revokes existing sessions", async () => {

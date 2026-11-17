@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Inject, Logger, Optional, Post, Body, Req, Res, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Inject, Logger, NotFoundException, Optional, Param, Post, Body, Req, Res, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
@@ -134,7 +134,7 @@ export class BillingController {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid plan and payment type" });
     }
     if (!this.payu.isConfigured()) {
-      throw new ServiceUnavailableException({ code: "payu_not_configured", message: "PayU test credentials and a reachable callback URL must be configured on the API" });
+      throw new ServiceUnavailableException({ code: "payu_not_configured", message: "PayU merchant credentials and a reachable callback URL must be configured on the API" });
     }
     const phone = typeof body.phone === "string" ? body.phone.trim().replace(/[\s()-]/g, "") : "";
     if (!/^\+?[1-9]\d{6,14}$/.test(phone)) {
@@ -173,7 +173,7 @@ export class BillingController {
       currentEnd !== null && currentEnd > now &&
       currentEnd.getTime() <= now.getTime() + RENEWAL_WINDOW_DAYS * DAY_MS;
     const allowed = purchaseType === "trial" && subscriptionStatus === "pending" ||
-      purchaseType === "plan" && ["pending", "trial", "expired", "cancelled"].includes(subscriptionStatus) ||
+      purchaseType === "plan" && (subscriptionStatus !== "active" || membership.organization.subscriptionPlan !== plan.code) ||
       purchaseType === "renewal" && renewalWindowOpen;
     if (!allowed) {
       throw new ConflictException({ code: "subscription_not_payable", message: "This payment type is not available for the workspace's current subscription" });
@@ -216,30 +216,32 @@ export class BillingController {
   @ExternalCallback()
   @Post("payu/return")
   async payuReturn(@Body() body: Record<string, unknown>, @Res() response: PayUReturnResponse) {
-    const redirect = (payment: "success" | "failed" | "pending" | "review") => {
+    const redirect = (payment: "success" | "failed" | "pending" | "review", transactionId?: string) => {
       const url = new URL("/subscription", getWebOrigin());
       url.searchParams.set("payment", payment);
+      if (transactionId) url.searchParams.set("transaction", transactionId);
       response.redirect(303, url.toString());
     };
+    const transactionId = typeof body.txnid === "string" ? body.txnid : "";
+    const hasValidReference = /^[a-f0-9]{24}$/i.test(transactionId);
     if (!this.payu.verifyCallbackHash(body)) {
-      redirect("failed");
+      redirect(hasValidReference ? "pending" : "failed", hasValidReference ? transactionId : undefined);
       return;
     }
-    const transactionId = typeof body.txnid === "string" ? body.txnid : "";
     const payment = transactionId
       ? await this.prisma.subscriptionPayment.findUnique({ where: { transactionId } })
       : null;
     if (!payment || body.udf1 !== payment.id || body.productinfo !== payment.productInfo ||
       amountInPaise(body.amount) !== amountInPaise(payment.amount.toString())) {
-      redirect("failed");
+      redirect(hasValidReference ? "pending" : "failed", hasValidReference ? transactionId : undefined);
       return;
     }
     if (payment.status === "SUCCEEDED") {
-      redirect("success");
+      redirect(payment.failureReason ? "review" : "success", transactionId);
       return;
     }
     if (payment.status !== "PENDING") {
-      redirect("failed");
+      redirect("failed", transactionId);
       return;
     }
     const callbackStatus = String(body.status).toLowerCase();
@@ -248,11 +250,11 @@ export class BillingController {
         where: { id: payment.id, status: "PENDING" },
         data: { status: "FAILED", failureReason: "PayU reported an unsuccessful payment" },
       });
-      redirect("failed");
+      redirect("failed", transactionId);
       return;
     }
     if (callbackStatus !== "success") {
-      redirect("pending");
+      redirect("pending", transactionId);
       return;
     }
 
@@ -261,11 +263,11 @@ export class BillingController {
       verified = await this.payu.verifyPayment(transactionId);
     } catch (error) {
       this.logger.warn(`PayU verification is pending for transaction ${transactionId}`, error instanceof Error ? error.message : undefined);
-      redirect("pending");
+      redirect("pending", transactionId);
       return;
     }
     if (verified.status === "pending") {
-      redirect("pending");
+      redirect("pending", transactionId);
       return;
     }
     if (verified.status !== "success" || verified.transactionId !== transactionId ||
@@ -274,7 +276,7 @@ export class BillingController {
         where: { id: payment.id, status: "PENDING" },
         data: { status: "FAILED", failureReason: "PayU verification did not match the order" },
       });
-      redirect("failed");
+      redirect("failed", transactionId);
       return;
     }
 
@@ -286,7 +288,49 @@ export class BillingController {
         this.logger.error("The paid trial started, but sample workspace data could not be loaded", error instanceof Error ? error.stack : undefined);
       }
     }
-    redirect(result);
+    redirect(result, transactionId);
+  }
+
+  @Get("payment-status/:transactionId")
+  async paymentStatus(@Req() request: HttpRequest, @Param("transactionId") transactionId: string) {
+    if (!/^[a-f0-9]{24}$/i.test(transactionId)) throw new NotFoundException({ code: "payment_not_found", message: "Payment was not found" });
+    const membership = await this.findMembership(request);
+    if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+      throw new ForbiddenException({ code: "forbidden", message: "Only a workspace owner or administrator can view payment status" });
+    }
+    const payment = await this.prisma.subscriptionPayment.findFirst({ where: { organizationId: membership.organization.id, transactionId } });
+    if (!payment) throw new NotFoundException({ code: "payment_not_found", message: "Payment was not found" });
+
+    let status = payment.status === "SUCCEEDED"
+      ? payment.failureReason ? "review" : "success"
+      : payment.status.toLowerCase();
+    let failureReason = payment.failureReason;
+    if (payment.status === "PENDING") {
+      try {
+        const verified = await this.payu.verifyPayment(transactionId);
+        if (verified.status === "failure") {
+          failureReason = "PayU confirmed that the payment failed";
+          await this.prisma.subscriptionPayment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { status: "FAILED", failureReason } });
+          status = "failed";
+        } else if (verified.status === "success") {
+          if (verified.transactionId !== transactionId || amountInPaise(verified.amount) !== amountInPaise(payment.amount.toString()) || !verified.payuId) {
+            failureReason = "PayU verification did not match the order";
+            await this.prisma.subscriptionPayment.updateMany({ where: { id: payment.id, status: "PENDING" }, data: { status: "FAILED", failureReason } });
+            status = "failed";
+          } else {
+            status = await this.activateVerifiedPayment(payment, verified);
+            failureReason = status === "review" ? "Payment verified; workspace state needs platform review" : null;
+            if (status === "success" && payment.paymentType === "TRIAL") {
+              try { await this.demoData.load(payment.organizationId, payment.requestedByUserId); }
+              catch (error) { this.logger.error("The paid trial started, but sample workspace data could not be loaded", error instanceof Error ? error.stack : undefined); }
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`PayU status recheck is pending for transaction ${transactionId}`, error instanceof Error ? error.message : undefined);
+      }
+    }
+    return { data: { status, planCode: payment.planCode, paymentType: payment.paymentType.toLowerCase(), amount: payment.amount.toString(), failureReason } };
   }
 
   @Post("request-activation")
@@ -307,7 +351,8 @@ export class BillingController {
     const renewalWindowOpen = ["active", "trial"].includes(subscriptionStatus) &&
       currentEnd !== null && currentEnd > now &&
       currentEnd.getTime() <= now.getTime() + RENEWAL_WINDOW_DAYS * DAY_MS;
-    if (!["expired", "cancelled"].includes(subscriptionStatus) && !renewalWindowOpen) {
+    const subscriptionInactive = !["active", "trial"].includes(subscriptionStatus);
+    if (!subscriptionInactive && !renewalWindowOpen) {
       throw new ConflictException({ code: "subscription_not_renewable", message: "Renewal can be requested during the final 10 days of a plan or after it expires" });
     }
     const plan = await this.prisma.subscriptionPlan.findFirst({
@@ -355,7 +400,7 @@ export class BillingController {
   }
 
   private async activateVerifiedPayment(
-    payment: { id: string; organizationId: string; requestedByUserId: string; planCode: string; paymentType: "TRIAL" | "PLAN" | "RENEWAL"; renewalBaseEndsAt: Date | null },
+    payment: { id: string; organizationId: string; requestedByUserId: string; planCode: string; paymentType: "TRIAL" | "PLAN" | "RENEWAL"; renewalBaseEndsAt: Date | null; createdAt: Date },
     verified: PayUVerification,
   ): Promise<"success" | "review"> {
     return this.prisma.$transaction(async (transaction) => {
@@ -366,7 +411,7 @@ export class BillingController {
 
       const organization = await transaction.organization.findUnique({
         where: { id: payment.organizationId },
-        select: { id: true, status: true, subscriptionStatus: true, subscriptionEndsAt: true },
+        select: { id: true, status: true, subscriptionStatus: true, subscriptionPlan: true, subscriptionStartedAt: true, subscriptionEndsAt: true },
       });
       const basePlan = await transaction.subscriptionPlan.findFirst({
         where: { code: payment.planCode, isActive: true },
@@ -385,7 +430,8 @@ export class BillingController {
         organization?.subscriptionEndsAt?.getTime() === payment.renewalBaseEndsAt.getTime();
       const canActivate = organization?.status === "ACTIVE" && plan && (
         payment.paymentType === "TRIAL" && organization.subscriptionStatus === "PENDING" ||
-        payment.paymentType === "PLAN" && ["pending", "trial", "expired", "cancelled"].includes(currentStatus) ||
+        payment.paymentType === "PLAN" && (currentStatus !== "active" || organization.subscriptionPlan !== payment.planCode &&
+          (!organization.subscriptionStartedAt || organization.subscriptionStartedAt <= payment.createdAt)) ||
         payment.paymentType === "RENEWAL" && renewalStillMatches && ["active", "trial", "expired", "cancelled"].includes(currentStatus)
       );
       const paymentData = {

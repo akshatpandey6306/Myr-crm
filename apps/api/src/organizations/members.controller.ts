@@ -41,6 +41,8 @@ const assignableRoles: Record<string, "ADMIN" | "SALES_MANAGER" | "SALES_REP" | 
   sales_rep: "SALES_REP",
   read_only: "READ_ONLY",
 };
+const roleProfiles = new Set(["ADMIN", "SALES_MANAGER", "SALES_REP", "READ_ONLY"]);
+const builtInRoleNames = new Set(["owner", "admin", "sales manager", "sales representative", "sales rep", "read only", "read-only user"]);
 @Controller("organizations")
 export class MembersController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -53,6 +55,7 @@ export class MembersController {
       select: {
         userId: true,
         role: true,
+        customRole: { select: { id: true, name: true } },
         enabledModules: true,
         createdAt: true,
         user: { select: { name: true, email: true, emailVerifiedAt: true } },
@@ -60,16 +63,63 @@ export class MembersController {
       orderBy: [{ role: "asc" }, { createdAt: "asc" }],
     });
     return {
-      data: memberships.map(({ userId, role, enabledModules, createdAt, user }) => ({
+      data: memberships.map(({ userId, role, customRole, enabledModules, createdAt, user }) => ({
         userId,
         name: user.name,
         email: user.email,
         role: role.toLowerCase(),
+        customRoleId: customRole?.id ?? null,
+        customRoleName: customRole?.name ?? null,
         enabledModules,
         emailVerified: Boolean(user.emailVerifiedAt),
         joinedAt: createdAt.toISOString(),
       })),
     };
+  }
+
+  @Get("roles")
+  async listWorkspaceRoles(@Req() request: HttpRequest) {
+    const { organizationId } = this.requireAdministrator(request);
+    const roles = await this.prisma.workspaceRole.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, description: true, permissionProfile: true, createdAt: true },
+    });
+    return { data: roles.map((role) => ({ ...role, permissionProfile: role.permissionProfile.toLowerCase() })) };
+  }
+
+  @Post("roles")
+  async createWorkspaceRole(
+    @Req() request: HttpRequest,
+    @Body() body: { name?: unknown; description?: unknown; permissionProfile?: unknown },
+  ) {
+    const { organizationId, userId } = this.requireAdministrator(request);
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const description = typeof body?.description === "string" ? body.description.trim() : "";
+    const profileName = typeof body?.permissionProfile === "string" ? body.permissionProfile : "";
+    const permissionProfile = assignableRoles[profileName];
+    if (name.length < 2 || name.length > 60 || description.length > 200 || !permissionProfile || !roleProfiles.has(permissionProfile)) {
+      throw new BadRequestException({ code: "validation_error", message: "Enter a role name (2–60 characters), optional description (up to 200 characters), and a supported permission profile" });
+    }
+    if (builtInRoleNames.has(name.toLowerCase())) {
+      throw new BadRequestException({ code: "validation_error", message: "Choose a name that is different from the built-in roles" });
+    }
+    const duplicate = await this.prisma.workspaceRole.findFirst({
+      where: { organizationId, name: { equals: name, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (duplicate) throw new ConflictException({ code: "role_name_in_use", message: "This workspace already has a role with that name" });
+    try {
+      const role = await this.prisma.workspaceRole.create({
+        data: { organizationId, name, description, permissionProfile },
+        select: { id: true, name: true, description: true, permissionProfile: true, createdAt: true },
+      });
+      await this.prisma.auditLog.create({ data: { organizationId, actorUserId: userId, action: "CREATE", resourceType: "workspace_role", resourceId: role.id } });
+      return { data: { ...role, permissionProfile: role.permissionProfile.toLowerCase() } };
+    } catch (error) {
+      if (this.prismaCode(error) === "P2002") throw new ConflictException({ code: "role_name_in_use", message: "This workspace already has a role with that name" });
+      throw error;
+    }
   }
 
   @Get("members/session-history")
@@ -104,8 +154,8 @@ export class MembersController {
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body?.password === "string" ? body.password : "";
-    const role = typeof body?.role === "string" ? assignableRoles[body.role] : "SALES_REP";
-    if (name.length < 2 || name.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || password.length < 8 || password.length > 128 || !role) {
+    const requestedRole = typeof body?.role === "string" ? body.role : "sales_rep";
+    if (name.length < 2 || name.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || password.length < 8 || password.length > 128 || !requestedRole) {
       throw new BadRequestException({ code: "validation_error", message: "Enter a name, valid email, password (8–128 characters), and supported employee role" });
     }
 
@@ -123,22 +173,65 @@ export class MembersController {
         if (plan?.employeeLimit !== null && plan?.employeeLimit !== undefined && activeCount >= plan.employeeLimit) {
           throw new ConflictException({ code: "member_limit_reached", message: "This workspace plan's team-member limit has been reached." });
         }
-        const existing = await transaction.user.findUnique({ where: { email }, select: { id: true } });
-        if (existing) throw new ConflictException({ code: "email_in_use", message: "An account already uses this email address." });
+        const customRole = assignableRoles[requestedRole] ? null : await transaction.workspaceRole.findFirst({
+          where: { id: requestedRole, organizationId },
+          select: { id: true, name: true, permissionProfile: true },
+        });
+        const role = assignableRoles[requestedRole] ?? customRole?.permissionProfile;
+        if (!role || !roleProfiles.has(role)) {
+          throw new BadRequestException({ code: "validation_error", message: "Choose a role available in this workspace" });
+        }
+        const existing = await transaction.user.findUnique({
+          where: { email },
+          include: { memberships: { select: { organizationId: true, status: true } } },
+        });
+        if (existing) {
+          const priorMembership = existing.memberships.find((membership) => membership.organizationId === organizationId);
+          const belongsElsewhere = existing.memberships.some((membership) => membership.organizationId !== organizationId && ["ACTIVE", "PENDING"].includes(membership.status));
+          if (existing.status !== "ACTIVE" || belongsElsewhere || priorMembership?.status !== "REMOVED") {
+            throw new ConflictException({
+              code: "email_in_use",
+              message: belongsElsewhere
+                ? "This email already belongs to another workspace. Use a different email for this workspace."
+                : "An account already uses this email address. A removed employee can be re-added only to their original workspace.",
+            });
+          }
+          const reactivated = await transaction.user.update({
+            where: { id: existing.id },
+            data: { name, passwordHash: hashPassword(password), emailVerifiedAt: new Date(), failedLoginAttempts: 0, lockedUntil: null },
+            select: { id: true, email: true, name: true },
+          });
+          await transaction.membership.update({
+            where: { organizationId_userId: { organizationId, userId: existing.id } },
+            data: { role, customRoleId: customRole?.id ?? null, status: "ACTIVE", enabledModules: [] },
+          });
+          await transaction.session.updateMany({ where: { userId: existing.id, revokedAt: null }, data: { revokedAt: new Date() } });
+          await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "UPDATE", resourceType: "member", resourceId: existing.id } });
+          return { member: reactivated, role, customRole, reactivated: true };
+        }
         const created = await transaction.user.create({
           data: {
             email,
             name,
             passwordHash: hashPassword(password),
             emailVerifiedAt: new Date(),
-            memberships: { create: { organizationId, role, status: "ACTIVE", enabledModules: [] } },
+            memberships: { create: { organizationId, role, customRoleId: customRole?.id ?? null, status: "ACTIVE", enabledModules: [] } },
           },
           select: { id: true, email: true, name: true },
         });
         await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "CREATE", resourceType: "member", resourceId: created.id } });
-        return created;
+        return { member: created, role, customRole, reactivated: false };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      return { data: { ...member, role: role.toLowerCase(), enabledModules: [], emailVerified: true, joinedAt: new Date().toISOString() } };
+      return { data: {
+        ...member.member,
+        role: member.role.toLowerCase(),
+        customRoleId: member.customRole?.id ?? null,
+        customRoleName: member.customRole?.name ?? null,
+        reactivated: member.reactivated,
+        enabledModules: [],
+        emailVerified: true,
+        joinedAt: new Date().toISOString(),
+      } };
     } catch (error) {
       if (this.prismaCode(error) === "P2002") throw new ConflictException({ code: "email_in_use", message: "An account already uses this email address." });
       if (this.prismaCode(error) === "P2034") throw new ConflictException({ code: "member_limit_reached", message: "Workspace membership changed while creating the employee. Refresh and try again." });
@@ -260,13 +353,16 @@ export class MembersController {
     @Body() body: { role?: unknown },
   ) {
     const { organizationId } = this.requireAdministrator(request);
-    const role = typeof body?.role === "string" ? assignableRoles[body.role] : undefined;
-    if (!role) {
-      throw new BadRequestException({ code: "validation_error", message: "Choose admin, sales_manager, sales_rep, or read_only" });
-    }
+    const requestedRole = typeof body?.role === "string" ? body.role : "";
+    const customRole = assignableRoles[requestedRole] ? null : await this.prisma.workspaceRole.findFirst({
+      where: { id: requestedRole, organizationId },
+      select: { id: true, name: true, permissionProfile: true },
+    });
+    const role = assignableRoles[requestedRole] ?? customRole?.permissionProfile;
+    if (!role || !roleProfiles.has(role)) throw new BadRequestException({ code: "validation_error", message: "Choose a role available in this workspace" });
     const updated = await this.prisma.membership.updateMany({
       where: { organizationId, userId: targetUserId, status: "ACTIVE", role: { not: "OWNER" } },
-      data: { role },
+      data: { role, customRoleId: customRole?.id ?? null },
     });
     if (!updated.count) {
       const target = await this.prisma.membership.findFirst({
@@ -276,7 +372,7 @@ export class MembersController {
       if (!target) throw new NotFoundException({ code: "not_found", message: "Organization member not found" });
       throw new ForbiddenException({ code: "owner_transfer_required", message: "Transfer ownership before changing the Owner role" });
     }
-    return { data: { userId: targetUserId, role: role.toLowerCase() } };
+    return { data: { userId: targetUserId, role: role.toLowerCase(), customRoleId: customRole?.id ?? null, customRoleName: customRole?.name ?? null } };
   }
 
   @Patch("members/:userId/modules")
@@ -425,6 +521,14 @@ export class MembersController {
     });
     if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
 
+    const activeWorkspace = await this.prisma.membership.findFirst({
+      where: { userId: requesterId, status: "ACTIVE", organizationId: { not: organization.id } },
+      select: { organizationId: true },
+    });
+    if (activeWorkspace) {
+      throw new ForbiddenException({ code: "workspace_membership_exists", message: "This account already belongs to another workspace. Ask that workspace administrator to manage your account." });
+    }
+
     const existingMembership = await this.prisma.membership.findUnique({
       where: { organizationId_userId: { organizationId: organization.id, userId: requesterId } },
       select: { status: true },
@@ -527,6 +631,13 @@ export class MembersController {
     try {
       await this.prisma.$transaction(async (transaction) => {
         if (decision === "approve") {
+          const otherWorkspace = await transaction.membership.findFirst({
+            where: { userId: targetUserId, status: "ACTIVE", organizationId: { not: organizationId } },
+            select: { organizationId: true },
+          });
+          if (otherWorkspace) {
+            throw new ConflictException({ code: "workspace_membership_exists", message: "This account already belongs to another workspace and cannot be added here." });
+          }
           const organization = await transaction.organization.findUnique({
             where: { id: organizationId },
             select: { subscriptionStatus: true, subscriptionEndsAt: true, subscriptionPlan: true },

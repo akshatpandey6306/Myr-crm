@@ -6,13 +6,13 @@ import { ControlPanelController } from "../src/control-panel/control-panel.contr
 const organizationId = "11111111-1111-4111-8111-111111111111";
 const actorRequest = { userId: "admin-a" } as never;
 
-function createController(prisma: Record<string, unknown>, audit = { record: async () => undefined, list: async () => [] }) {
+function createController(prisma: Record<string, unknown>, audit = { record: async () => undefined, list: async () => [] }, authEmail = { isConfigured: () => false, sendWorkspaceWelcome: async () => undefined }) {
   return new ControlPanelController({
     user: { findUnique: async () => ({ email: "admin@example.com" }) },
     subscriptionActivationRequest: { updateMany: async () => ({ count: 0 }), findMany: async () => [] },
     deal: { groupBy: async () => [], findMany: async () => [], count: async () => 0 },
     ...prisma,
-  } as never, audit as never);
+  } as never, audit as never, { load: async () => ({}) } as never, authEmail as never);
 }
 
 describe("ControlPanelController", () => {
@@ -137,7 +137,7 @@ describe("ControlPanelController", () => {
           planCode: "growth",
           requestType: "TRIAL",
           createdAt: new Date("2026-11-05T12:00:00.000Z"),
-          organization: { id: organizationId, name: "Acme" },
+          organization: { id: organizationId, name: "Acme", subscriptionPlan: null, subscriptionStatus: "PENDING", subscriptionEndsAt: null },
           requestedBy: { name: "Maya Chen", email: "maya@example.com" },
         }],
       },
@@ -149,6 +149,19 @@ describe("ControlPanelController", () => {
     assert.equal(result.data[0]?.requestedBy.email, "maya@example.com");
     assert.equal(result.data[0]?.requestType, "trial");
     assert.equal(result.data[0]?.requestedAt, "2026-11-05T12:00:00.000Z");
+  });
+
+  it("hides stale activation requests for workspaces with an active plan outside the renewal window", async () => {
+    const createdAt = new Date();
+    const requests = [
+      { id: "stale", planCode: "growth", requestType: "ACTIVATION", createdAt, organization: { id: organizationId, name: "Already active", subscriptionPlan: "starter", subscriptionStatus: "ACTIVE", subscriptionEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }, requestedBy: { name: "Maya", email: "maya@example.com" } },
+      { id: "renewal", planCode: "growth", requestType: "ACTIVATION", createdAt, organization: { id: organizationId, name: "Renewing", subscriptionPlan: "growth", subscriptionStatus: "ACTIVE", subscriptionEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000) }, requestedBy: { name: "Maya", email: "maya@example.com" } },
+    ];
+    const controller = createController({ subscriptionActivationRequest: { findMany: async () => requests } });
+
+    const result = await controller.listSubscriptionActivationRequests();
+
+    assert.deepEqual(result.data.map(({ id }) => id), ["renewal"]);
   });
 
   it("starts a two-day limited trial only after platform approval", async () => {
@@ -184,7 +197,7 @@ describe("ControlPanelController", () => {
     const updatedOrganization = organizationUpdate?.data as Record<string, unknown>;
     assert.equal(updatedOrganization.subscriptionStatus, "TRIAL");
     assert.equal(updatedOrganization.billingProvider, "trial");
-    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "settings"]);
+    assert.deepEqual(updatedOrganization.enabledModules, ["leads", "email"]);
     assert.equal(
       new Date(updatedOrganization.subscriptionEndsAt as Date).getTime() -
         new Date(updatedOrganization.subscriptionStartedAt as Date).getTime(),
@@ -229,6 +242,41 @@ describe("ControlPanelController", () => {
     assert.equal(updateData.subscriptionStartedAt, undefined);
     assert.equal(new Date(updateData.subscriptionEndsAt as Date).getTime() > currentEnd.getTime(), true);
     assert.equal(result.data.requestType, "activation");
+  });
+
+  it("clears a stale activation request when the workspace is already active on that plan", async () => {
+    let organizationUpdated = false;
+    let requestUpdate: Record<string, unknown> | undefined;
+    const transaction = {
+      organization: {
+        findUnique: async () => ({
+          subscriptionPlan: "growth",
+          subscriptionStatus: "ACTIVE",
+          subscriptionEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        }),
+        update: async () => { organizationUpdated = true; },
+      },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads"] }) },
+      subscriptionActivationRequest: {
+        updateMany: async (args: Record<string, unknown>) => { requestUpdate = args; return { count: 1 }; },
+      },
+    };
+    const controller = createController({
+      subscriptionActivationRequest: {
+        findFirst: async () => ({ id: "request-stale", organizationId, planCode: "growth", requestType: "ACTIVATION" }),
+      },
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    });
+
+    const result = await controller.reviewSubscriptionRequest(
+      "22222222-2222-4222-8222-222222222222",
+      { decision: "approve" },
+      actorRequest,
+    );
+
+    assert.equal(result.data.alreadyActive, true);
+    assert.equal(organizationUpdated, false);
+    assert.deepEqual(requestUpdate?.data, { status: "ACTIVATED" });
   });
 
   it("lists tenant deals with owner and pipeline details using the requested workspace scope", async () => {
@@ -398,6 +446,38 @@ describe("ControlPanelController", () => {
       }, actorRequest),
       BadRequestException,
     );
+  });
+
+  it("emails the new workspace owner their onboarding credentials and sign-in link", async () => {
+    let welcome: Record<string, unknown> | undefined;
+    const controller = createController({
+      user: {
+        findUnique: async ({ where }: { where: { email?: string; id?: string } }) => where.email
+          ? null
+          : { email: "admin@example.com" },
+      },
+      $transaction: async (work: (tx: Record<string, unknown>) => Promise<unknown>) => work({
+        user: { create: async () => ({ id: "owner-a" }) },
+        organization: { create: async ({ data }: { data: { name: string } }) => ({ id: organizationId, name: data.name }) },
+      }),
+    }, undefined, {
+      isConfigured: () => true,
+      sendWorkspaceWelcome: async (input: Record<string, unknown>) => { welcome = input; },
+    });
+
+    const result = await controller.createOrganization({
+      organizationName: "Acme Workspace",
+      ownerName: "Maya Chen",
+      ownerEmail: "Maya@example.com",
+      ownerPassword: "initial-pass-123",
+    }, actorRequest);
+
+    assert.equal(result.data.welcomeEmailSent, true);
+    assert.deepEqual(welcome && { to: welcome.to, ownerName: welcome.ownerName, organizationName: welcome.organizationName }, {
+      to: "maya@example.com", ownerName: "Maya Chen", organizationName: "Acme Workspace",
+    });
+    assert.equal(welcome?.password, "initial-pass-123");
+    assert.equal(JSON.stringify(result).includes("initial-pass-123"), false);
   });
 
   it("creates and audits a persisted subscription plan", async () => {

@@ -41,12 +41,12 @@ describe('SettingsManager', () => {
 
     const currency = await screen.findByRole('combobox', { name: /Currency/ });
     await user.selectOptions(currency, 'EUR');
-    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('Workspace settings saved');
     expect(apiFetchMock).toHaveBeenCalledWith('/settings', expect.objectContaining({
       method: 'PATCH',
-      body: JSON.stringify({ organizationName: 'Northstar Studio', currency: 'EUR', timezone: 'UTC', weekStartsOn: 1 }),
+      body: JSON.stringify({ organizationName: 'Northstar Studio', currency: 'EUR', timezone: 'UTC', weekStartsOn: 1, dateFormat: 'DD MMM YYYY', timeFormat: '12h' }),
     }));
   });
 
@@ -55,7 +55,8 @@ describe('SettingsManager', () => {
     render(<SettingsManager />);
 
     expect(await screen.findByLabelText('Workspace name')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: /Currency/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Use default color' })).toBeDisabled();
   });
 
   it('applies a selected CRM theme and can restore the default colors', async () => {

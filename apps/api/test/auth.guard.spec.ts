@@ -22,7 +22,7 @@ describe("AuthGuard cookie sessions", () => {
       session: {
         findFirst: async (args: Record<string, unknown>) => {
           query = args;
-          return { userId: "user-a", user: { emailVerifiedAt: new Date() } };
+          return { id: "session-a", userId: "user-a", lastSeenAt: new Date(), user: { emailVerifiedAt: new Date() } };
         },
       },
     } as never);
@@ -112,7 +112,7 @@ describe("AuthGuard cookie sessions", () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.REQUIRE_EMAIL_VERIFICATION = "true";
     process.env.NODE_ENV = "production";
-    const guard = new AuthGuard({ session: { findFirst: async () => ({ userId: "user-a", user: { emailVerifiedAt: null } }) } } as never);
+    const guard = new AuthGuard({ session: { findFirst: async () => ({ id: "session-a", userId: "user-a", lastSeenAt: new Date(), user: { emailVerifiedAt: null } }) } } as never);
     const request = { headers: { cookie: "myr_session=demo-session" }, method: "GET", path: "/api/v1/leads", params: {} };
 
     try {

@@ -271,6 +271,7 @@ model Organization {
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships            Membership[]
+  workspaceRoles         WorkspaceRole[]
   leads                  Lead[]
   leadCalls              LeadCall[]
   contacts               Contact[]
@@ -401,11 +402,13 @@ model Membership {
   userId                 String                   @map("user_id") @db.Uuid
   organizationId         String                   @map("organization_id") @db.Uuid
   role                   MembershipRole           @default(SALES_REP)
+  customRoleId           String?                  @map("custom_role_id") @db.Uuid
   status                 MembershipStatus         @default(ACTIVE)
   enabledModules         String[]                 @default([]) @map("enabled_modules")
   createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
   user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customRole             WorkspaceRole?            @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
   leadsOwned             Lead[]                   @relation("LeadOwner")
   leadsCreated           Lead[]                   @relation("LeadCreator")
   leadCallsLogged        LeadCall[]                @relation("LeadCallLogger")
@@ -436,6 +439,22 @@ model Membership {
   @@index([userId, status])
   @@index([organizationId, status, role])
   @@map("memberships")
+}
+
+model WorkspaceRole {
+  id                String         @id @default(uuid()) @db.Uuid
+  organizationId    String         @map("organization_id") @db.Uuid
+  name              String         @db.VarChar(60)
+  description       String         @default("") @db.VarChar(200)
+  permissionProfile MembershipRole @map("permission_profile")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships       Membership[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, createdAt])
+  @@map("workspace_roles")
 }
 
 model Session {
@@ -545,6 +564,7 @@ model PartnerApiKey {
   partnerId    String             @map("partner_id") @db.Uuid
   keyPrefix    String             @map("key_prefix") @db.VarChar(24)
   keyHash      String             @unique @map("key_hash") @db.Char(64)
+  keySecretEnc String?            @map("key_secret_enc") @db.Text
   permissions  String[]           @default([])
   active       Boolean            @default(true)
   lastUsedAt   DateTime?          @map("last_used_at") @db.Timestamptz(3)

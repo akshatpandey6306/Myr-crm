@@ -45,7 +45,7 @@ describe('subscription expiry', () => {
 
     const countdown = await screen.findByText('days left before plan expiry');
     expect(countdown.parentElement).toHaveTextContent('5');
-    expect(screen.getByRole('link', { name: 'Renew' })).toHaveAttribute('href', '/subscription');
+    expect(screen.getByRole('link', { name: /renew/i })).toHaveAttribute('href', '/subscription');
   });
 
   it('locks an expired workspace behind the renewal overlay and submits a request', async () => {

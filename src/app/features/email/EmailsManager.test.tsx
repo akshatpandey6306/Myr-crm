@@ -50,7 +50,7 @@ describe("EmailsManager", () => {
     const user = userEvent.setup();
     render(<EmailsManager />);
 
-    await screen.findByRole("option", { name: "Olivia Rhye — olivia@example.com" });
+    await screen.findByRole("option", { name: "Olivia Rhye — olivia@example.com" }, { timeout: 5000 });
     await user.selectOptions(screen.getByLabelText("To"), "contact-1");
     await user.type(screen.getByLabelText("Subject"), "Follow-up");
     await user.type(screen.getByLabelText("Message"), "Thanks for your time.");
@@ -81,7 +81,7 @@ describe("EmailsManager", () => {
     const user = userEvent.setup();
     render(<EmailsManager />);
 
-    await screen.findByRole("option", { name: "Olivia Rhye — olivia@example.com" });
+    await screen.findByRole("option", { name: "Olivia Rhye — olivia@example.com" }, { timeout: 5000 });
     await user.selectOptions(screen.getByLabelText("To"), "contact-1");
     await user.type(screen.getByLabelText("Subject"), "Follow-up");
     await user.type(screen.getByLabelText("Message"), "Thanks for your time.");

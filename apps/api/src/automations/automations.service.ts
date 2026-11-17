@@ -19,15 +19,19 @@ export class AutomationsService {
     const rules = await tx.automationRule.findMany({
       where: { organizationId: event.organizationId, trigger, enabled: true, archivedAt: null },
     });
+    const matchingRules = rules.filter((rule) =>
+      rule.trigger !== "LEAD_STATUS_CHANGED" || rule.triggerStatus === event.status,
+    );
+    if (matchingRules.length === 0) return generatedActivityIds;
 
-    for (const rule of rules) {
-      if (rule.trigger === "LEAD_STATUS_CHANGED" && rule.triggerStatus !== event.status) continue;
+    const previousRuns = await tx.automationRun.findMany({
+      where: { leadId: event.leadId, ruleId: { in: matchingRules.map(({ id }) => id) } },
+      select: { ruleId: true },
+    });
+    const completedRuleIds = new Set(previousRuns.map(({ ruleId }) => ruleId));
 
-      const previousRun = await tx.automationRun.findUnique({
-        where: { ruleId_leadId: { ruleId: rule.id, leadId: event.leadId } },
-        select: { id: true },
-      });
-      if (previousRun) continue;
+    for (const rule of matchingRules) {
+      if (completedRuleIds.has(rule.id)) continue;
 
       const dueAt = new Date();
       dueAt.setUTCDate(dueAt.getUTCDate() + rule.dueInDays);

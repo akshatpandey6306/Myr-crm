@@ -281,11 +281,9 @@ export class InvoicingController {
       const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
       return { start, end };
     });
-    const [all, paid, partial, unpaid, overdue, recentInvoices, recentPayments, monthlyRevenueRows] = await Promise.all([
+    const [all, paymentStatusRows, overdue, recentInvoices, recentPayments, monthlyRevenueRows] = await Promise.all([
       this.prisma.billingInvoice.aggregate({ where, _sum: { grandTotal: true, amountPaid: true, balanceDue: true }, _count: { _all: true } }),
-      this.prisma.billingInvoice.count({ where: { ...where, paymentStatus: "PAID" } }),
-      this.prisma.billingInvoice.count({ where: { ...where, paymentStatus: "PARTIALLY_PAID" } }),
-      this.prisma.billingInvoice.count({ where: { ...where, paymentStatus: "UNPAID" } }),
+      this.prisma.billingInvoice.groupBy({ by: ["paymentStatus"], where, _count: { _all: true } }),
       this.prisma.billingInvoice.aggregate({ where: { ...where, dueDate: { lt: todayUtc() }, balanceDue: { gt: 0 } }, _sum: { balanceDue: true }, _count: { _all: true } }),
       this.prisma.billingInvoice.findMany({ where, orderBy: { createdAt: "desc" }, take: 5 }),
       this.prisma.billingPayment.findMany({
@@ -303,6 +301,7 @@ export class InvoicingController {
         _sum: { amount: true },
       }))),
     ]);
+    const paymentStatusCounts = Object.fromEntries(paymentStatusRows.map((row) => [row.paymentStatus, row._count._all]));
     const settings = await this.prisma.billingSettings.findUnique({ where: { organizationId }, select: { currency: true } });
     return {
       data: {
@@ -313,9 +312,9 @@ export class InvoicingController {
         outstanding: all._sum.balanceDue?.toString() ?? "0.0000",
         overdueAmount: overdue._sum.balanceDue?.toString() ?? "0.0000",
         overdueCount: overdue._count._all,
-        paidCount: paid,
-        partiallyPaidCount: partial,
-        unpaidCount: unpaid,
+        paidCount: paymentStatusCounts.PAID ?? 0,
+        partiallyPaidCount: paymentStatusCounts.PARTIALLY_PAID ?? 0,
+        unpaidCount: paymentStatusCounts.UNPAID ?? 0,
         monthlyRevenue: monthlyRevenueRows.map((row, index) => ({
           month: monthRanges[index]!.start.toLocaleString("en-US", { month: "short", timeZone: "UTC" }),
           amount: row._sum.amount?.toString() ?? "0.0000",

@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { crmApiFetch } from '../../lib/api-client';
+import { crmNavigation } from '../../lib/crm-navigation';
 import MobileNavigation from './MobileNavigation';
 
 vi.mock('../../lib/api-client', () => ({ crmApiFetch: vi.fn() }));
@@ -26,7 +27,7 @@ describe('MobileNavigation', () => {
 
   it('opens the menu and closes it from the backdrop or Escape', async () => {
     const user = userEvent.setup();
-    render(<MobileNavigation active="Activities" />);
+    render(<MobileNavigation active="Activities" enabledModules={crmNavigation.map(({ href }) => href.slice(1))} />);
 
     await user.click(screen.getByRole('button', { name: 'Open main menu' }));
     expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument();

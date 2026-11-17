@@ -327,18 +327,26 @@ export class ControlPanelController {
         planCode: true,
         requestType: true,
         createdAt: true,
-        organization: { select: { id: true, name: true } },
+        organization: { select: { id: true, name: true, subscriptionPlan: true, subscriptionStatus: true, subscriptionEndsAt: true } },
         requestedBy: { select: { name: true, email: true } },
       },
       orderBy: { createdAt: "asc" },
     });
+    const now = new Date();
+    const actionableRequests = requests.filter((request) => {
+      const status = effectiveSubscriptionStatus(request.organization.subscriptionStatus, request.organization.subscriptionEndsAt);
+      if (request.requestType === "TRIAL") return status === "pending";
+      if (["expired", "cancelled"].includes(status)) return true;
+      const endsAt = request.organization.subscriptionEndsAt;
+      return ["active", "trial"].includes(status) && endsAt !== null && endsAt > now && endsAt.getTime() <= now.getTime() + 10 * DAY_MS;
+    });
     return {
-      data: requests.map((request) => ({
+      data: actionableRequests.map((request) => ({
         id: request.id,
         planCode: request.planCode,
         requestType: request.requestType.toLowerCase(),
         requestedAt: request.createdAt.toISOString(),
-        organization: request.organization,
+        organization: { id: request.organization.id, name: request.organization.name },
         requestedBy: request.requestedBy,
       })),
     };
@@ -368,10 +376,11 @@ export class ControlPanelController {
 
     const approved = body.decision === "approve";
     const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+    let alreadyActive = false;
     await this.prisma.$transaction(async (transaction) => {
       const currentOrganization = await transaction.organization.findUnique({
         where: { id: subscriptionRequest.organizationId },
-        select: { subscriptionStatus: true, subscriptionEndsAt: true },
+        select: { subscriptionPlan: true, subscriptionStatus: true, subscriptionEndsAt: true },
       });
       if (!currentOrganization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
 
@@ -409,21 +418,24 @@ export class ControlPanelController {
           const renewalWindowOpen = ["active", "trial"].includes(currentStatus) &&
             currentEnd !== null && currentEnd > now &&
             currentEnd.getTime() <= now.getTime() + 10 * DAY_MS;
-          if (!["expired", "cancelled"].includes(currentStatus) && !renewalWindowOpen) {
+          alreadyActive = currentStatus === "active" && currentOrganization.subscriptionPlan === plan.code && !renewalWindowOpen;
+          if (!alreadyActive && !["expired", "cancelled"].includes(currentStatus) && !renewalWindowOpen) {
             throw new ConflictException({ code: "subscription_not_ended", message: "Workspace subscription is not awaiting activation" });
           }
-          const renewalStart = renewalWindowOpen && currentEnd ? currentEnd : now;
-          await transaction.organization.update({
-            where: { id: subscriptionRequest.organizationId },
-            data: {
-              subscriptionPlan: plan.code,
-              subscriptionStatus: "ACTIVE",
-              ...(!renewalWindowOpen ? { subscriptionStartedAt: now } : {}),
-              subscriptionEndsAt: intervalEnd(renewalStart, plan.billingInterval as PlanDraft["billingInterval"]),
-              billingProvider: "manual",
-              enabledModules: plan.modules,
-            },
-          });
+          if (!alreadyActive) {
+            const renewalStart = renewalWindowOpen && currentEnd ? currentEnd : now;
+            await transaction.organization.update({
+              where: { id: subscriptionRequest.organizationId },
+              data: {
+                subscriptionPlan: plan.code,
+                subscriptionStatus: "ACTIVE",
+                ...(!renewalWindowOpen ? { subscriptionStartedAt: now } : {}),
+                subscriptionEndsAt: intervalEnd(renewalStart, plan.billingInterval as PlanDraft["billingInterval"]),
+                billingProvider: "manual",
+                enabledModules: plan.modules,
+              },
+            });
+          }
         }
       }
 
@@ -437,6 +449,7 @@ export class ControlPanelController {
     await this.recordAudit(request, `subscription_request.${subscriptionRequest.requestType.toLowerCase()}.${body.decision}`, "organization", subscriptionRequest.organizationId, {
       requestId,
       planCode: subscriptionRequest.planCode,
+      alreadyActive,
       reason,
       paymentProvider: "not_integrated",
     });
@@ -447,7 +460,7 @@ export class ControlPanelController {
         this.logger.error("The trial was approved, but sample workspace data could not be loaded", error instanceof Error ? error.stack : undefined);
       }
     }
-    return { data: { id: requestId, decision: body.decision, requestType: subscriptionRequest.requestType.toLowerCase() } };
+    return { data: { id: requestId, decision: body.decision, requestType: subscriptionRequest.requestType.toLowerCase(), alreadyActive } };
   }
 
   @Get("workspace-signups")
@@ -869,14 +882,31 @@ export class ControlPanelController {
       ownerEmail,
       planCode: plan?.code ?? null,
     });
+    const welcomeEmailSent = await this.sendWorkspaceWelcome(ownerEmail, ownerName, createdOrganization.name, ownerPassword);
 
     return {
       data: {
         id: createdOrganization.id,
         name: createdOrganization.name,
         owner: { name: ownerName, email: ownerEmail },
+        welcomeEmailSent,
       },
     };
+  }
+
+  private async sendWorkspaceWelcome(email: string, ownerName: string, organizationName: string, password: string) {
+    if (!this.authEmail?.isConfigured()) {
+      this.logger.warn(`Workspace ${organizationName} was created, but welcome email delivery is unavailable because SMTP is not configured.`);
+      return false;
+    }
+    try {
+      await this.authEmail.sendWorkspaceWelcome({ to: email, ownerName, organizationName, password });
+      this.logger.log(`Workspace welcome email sent to ${email}.`);
+      return true;
+    } catch (error) {
+      this.logger.warn(`Workspace ${organizationName} was created, but its welcome email could not be delivered: ${error instanceof Error ? error.message : "email delivery failed"}`);
+      return false;
+    }
   }
 
   @Patch("organizations/:organizationId/access")

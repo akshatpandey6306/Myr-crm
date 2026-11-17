@@ -207,6 +207,7 @@ function createPrisma(overrides: Record<string, Record<string, Mock>> = {}): Fak
     billingInvoice: {
       aggregate: async () => ({ _sum: { grandTotal: "0", amountPaid: "0", balanceDue: "0" }, _count: { _all: 0 } }),
       count: async () => 0,
+      groupBy: async () => [],
       findFirst: async () => invoice(),
       findMany: async () => [],
       create: async () => invoice(),

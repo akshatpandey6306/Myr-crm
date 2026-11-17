@@ -6,6 +6,7 @@ import ActionMenu from './ActionMenu';
 import PipelineDistributionChart from './PipelineDistributionChart';
 import PieBarChart from './PieBarChart';
 import { crmApiFetch } from '../../lib/api-client';
+import { useWorkspaceModuleAccess } from './WorkspaceModuleAccess';
 
 type Summary = {
   metrics: {
@@ -80,6 +81,11 @@ async function getData<T>(path: string, signal: AbortSignal): Promise<T> {
 }
 
 export default function DashboardLivePanels() {
+  const enabledModules = useWorkspaceModuleAccess();
+  const modulesReady = enabledModules !== null;
+  const leadsEnabled = enabledModules?.includes('leads') ?? false;
+  const dealsEnabled = enabledModules?.includes('deals') ?? false;
+  const activitiesEnabled = enabledModules?.includes('activities') ?? false;
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -89,13 +95,14 @@ export default function DashboardLivePanels() {
     const controller = new AbortController();
     let active = true;
     async function load() {
+      if (!modulesReady) return;
       setLoading(true);
       setError('');
       const [summaryResult, dealsResult, recentResult, upcomingResult] = await Promise.allSettled([
         getData<{ data: Summary }>('/dashboard/summary', controller.signal),
-        getData<{ data: Deal[] }>('/deals?status=open&page=1&pageSize=5&sortBy=createdAt&sortOrder=desc', controller.signal),
-        getData<{ data: Activity[] }>('/activities?page=1&pageSize=4&sortBy=createdAt&sortOrder=desc', controller.signal),
-        getData<{ data: Activity[] }>('/activities?status=open&page=1&pageSize=4&sortBy=dueAt&sortOrder=asc', controller.signal),
+        dealsEnabled ? getData<{ data: Deal[] }>('/deals?status=open&page=1&pageSize=5&sortBy=createdAt&sortOrder=desc', controller.signal) : Promise.resolve({ data: [] as Deal[] }),
+        activitiesEnabled ? getData<{ data: Activity[] }>('/activities?page=1&pageSize=4&sortBy=createdAt&sortOrder=desc', controller.signal) : Promise.resolve({ data: [] as Activity[] }),
+        activitiesEnabled ? getData<{ data: Activity[] }>('/activities?status=open&page=1&pageSize=4&sortBy=dueAt&sortOrder=asc', controller.signal) : Promise.resolve({ data: [] as Activity[] }),
       ]);
       if (!active || controller.signal.aborted) return;
       const emptySummary: Summary = { metrics: { totalLeads: 0, openDeals: 0, openPipelineValue: '0', wonRevenue: '0', openActivities: 0, completedActivities: 0 }, dealsByStatus: [], leadsByStatus: [] };
@@ -112,7 +119,7 @@ export default function DashboardLivePanels() {
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [refresh]);
+  }, [activitiesEnabled, dealsEnabled, modulesReady, refresh]);
 
   useEffect(() => {
     const refreshDemoData = () => setRefresh((value) => value + 1);
@@ -133,32 +140,40 @@ export default function DashboardLivePanels() {
   );
   const outcomeColors: Record<string, string> = { open: '#3678D4', won: '#24936F', lost: '#E56F4A' };
   const metricCards = [
+    ...(leadsEnabled ? [
     { label: 'Total leads', value: loading ? '…' : String(metrics?.totalLeads ?? 0), note: 'Active workspace leads', icon: 'users', tone: 'mint' },
+    ] : []),
+    ...(dealsEnabled ? [
     { label: 'Open deals', value: loading ? '…' : String(metrics?.openDeals ?? 0), note: 'Active opportunities', icon: 'briefcase', tone: 'peach' },
     { label: 'Pipeline value', value: loading ? '…' : currency(metrics?.openPipelineValue ?? 0), note: 'Value of open deals', icon: 'coins', tone: 'lavender' },
     { label: 'Won revenue', value: loading ? '…' : currency(metrics?.wonRevenue ?? 0), note: 'Value of won deals', icon: 'trophy', tone: 'yellow' },
+    ] : []),
   ];
+
+  if (!modulesReady) return null;
+  const showDealPanels = dealsEnabled;
+  const showActivityPanel = activitiesEnabled;
 
   return <>
     {error && <div className="leads-error" role="alert"><span>{error}</span>{error.toLowerCase().includes('authenticated') || error.toLowerCase().includes('token') ? <Link href="/sign-in">Sign in</Link> : <button type="button" onClick={() => setRefresh((value) => value + 1)}>Retry</button>}</div>}
 
-    <section className="metric-grid" aria-label="CRM summary" aria-busy={loading}>
+    {metricCards.length > 0 && <section className="metric-grid" aria-label="CRM summary" aria-busy={loading}>
       {metricCards.map((metric) => <article className="metric-card" key={metric.label}>
         <div className="metric-top"><span>{metric.label}</span><span className={`metric-icon ${metric.tone}`} aria-hidden="true">{metric.icon === 'users' ? '♙' : metric.icon === 'briefcase' ? '▣' : metric.icon === 'coins' ? '$' : '★'}</span></div>
         <div className="metric-value">{metric.value}</div>
         <div className="metric-foot"><span>{metric.note}</span></div>
       </article>)}
-    </section>
+    </section>}
 
-    <section className="dashboard-grid">
-      <article className="panel pipeline-panel">
+    {(showDealPanels || showActivityPanel) && <section className={`dashboard-grid${showDealPanels && showActivityPanel ? '' : ' dashboard-grid-single-panel'}`}>
+      {showDealPanels && <article className="panel pipeline-panel">
         <div className="panel-heading"><div><h2>Deal value by status</h2><p>Live value across your open and closed deals</p></div><a className="select-button" href="/deals">All deals <span>↗</span></a></div>
         <div className="pipeline-total"><strong>{loading ? '…' : currency(totalValue)}</strong><span className="muted-copy">total deal value</span></div>
         <PipelineDistributionChart items={dealOutcomes.map((item) => ({ label: item.status.replace(/\b\w/g, (letter) => letter.toUpperCase()), value: Number(item.value), color: outcomeColors[item.status] ?? '#8254C7' }))} />
         <div className="pipeline-footer"><span>{largestOutcome ? <>Largest category <b>{largestOutcome.status}</b> · {totalValue ? `${((Number(largestOutcome.value) / totalValue) * 100).toFixed(1)}%` : '0%'} of total</> : 'No deal data yet'}</span><a href="/deals">View deals <span aria-hidden="true">↗</span></a></div>
-      </article>
+      </article>}
 
-      <article className="panel activity-panel">
+      {showActivityPanel && <article className="panel activity-panel">
         <div className="panel-heading"><div><h2>Recent activities</h2><p>Latest activities recorded in this workspace</p></div><ActionMenu label="More activity options" destination="/activities" copyText="Recent activities" /></div>
         <div className="activity-list" aria-busy={loading}>
           {data?.recentActivities.map((activity) => <div className="activity-item" key={activity.id}>
@@ -169,12 +184,12 @@ export default function DashboardLivePanels() {
           {loading && <p className="muted-copy">Loading activities…</p>}
         </div>
         <a className="panel-link" href="/activities">View all activities <span aria-hidden="true">↗</span></a>
-      </article>
-    </section>
+      </article>}
+    </section>}
 
-    <PieBarChart title="Lead status distribution" unit="leads" items={(data?.summary.leadsByStatus ?? []).map((item) => ({ label: item.status.replace(/\b\w/g, (letter) => letter.toUpperCase()), value: item.count, color: ({ new: '#477dd0', contacted: '#dd9b37', qualified: '#27976f', disqualified: '#cf5b64' } as Record<string, string>)[item.status] ?? '#8164ce' }))} />
+    {leadsEnabled && <PieBarChart title="Lead status distribution" unit="leads" items={(data?.summary.leadsByStatus ?? []).map((item) => ({ label: item.status.replace(/\b\w/g, (letter) => letter.toUpperCase()), value: item.count, color: ({ new: '#477dd0', contacted: '#dd9b37', qualified: '#27976f', disqualified: '#cf5b64' } as Record<string, string>)[item.status] ?? '#8164ce' }))} />}
 
-    <section className="panel deals-panel" id="deals">
+    {showDealPanels && <section className="panel deals-panel" id="deals">
       <div className="panel-heading deals-heading"><div><h2>Deals in progress</h2><p>{loading ? 'Loading open deals…' : `${metrics?.openDeals ?? 0} open deals in this workspace`}</p></div><a className="text-link" href="/deals">View all deals <span aria-hidden="true">↗</span></a></div>
       <div className="table-scroll"><table><thead><tr><th>COMPANY</th><th>DEAL NAME</th><th>OWNER</th><th>STAGE</th><th>AMOUNT</th><th><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>{data?.deals.map((deal) => <tr key={deal.id}>
@@ -186,13 +201,13 @@ export default function DashboardLivePanels() {
           <td><ActionMenu label={`More options for ${deal.name}`} destination="/deals" copyText={deal.name} buttonClass="row-more" /></td>
         </tr>)}</tbody>
       </table>{!loading && !error && !data?.deals.length && <p className="muted-copy">No open deals yet.</p>}</div>
-    </section>
+    </section>}
 
-    <section className="panel tasks-panel" id="activities">
+    {activitiesEnabled && <section className="panel tasks-panel" id="activities">
       <div className="panel-heading deals-heading"><div><h2>Upcoming activities</h2><p>{loading ? 'Loading open activities…' : `${metrics?.openActivities ?? 0} open or in-progress activities`}</p></div><a className="text-link" href="/activities">View activities <span aria-hidden="true">↗</span></a></div>
       <div className="task-list" aria-busy={loading}>{data?.upcomingActivities.map((activity) => <div className="task-item" key={activity.id}>
         <span className="task-check" aria-hidden="true" /><div className="task-copy"><strong>{activity.title}</strong><span>{dateLabel(activity.dueAt)}{activity.assignedToName ? ` · ${activity.assignedToName}` : ''}</span></div><span className={`task-tag task-${activity.type.toLowerCase()}`}>{activity.type.replace(/\b\w/g, (letter) => letter.toUpperCase())}</span><ActionMenu label={`More options for ${activity.title}`} destination="/activities" copyText={activity.title} buttonClass="row-more" />
       </div>)}{!loading && !error && !data?.upcomingActivities.length && <p className="muted-copy">No open activities yet.</p>}</div>
-    </section>
+    </section>}
   </>;
 }

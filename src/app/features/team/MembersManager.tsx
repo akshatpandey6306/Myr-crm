@@ -7,7 +7,8 @@ import LeadCsvImport from '../leads/LeadCsvImport';
 import styles from './MembersManager.module.css';
 
 type Role = 'owner' | 'admin' | 'sales_manager' | 'sales_rep' | 'read_only';
-type Member = { userId: string; name: string; email: string; role: Role; enabledModules: string[]; emailVerified: boolean; joinedAt: string };
+type Member = { userId: string; name: string; email: string; role: Role; customRoleId?: string | null; customRoleName?: string | null; reactivated?: boolean; enabledModules: string[]; emailVerified: boolean; joinedAt: string };
+type WorkspaceRole = { id: string; name: string; description: string; permissionProfile: Exclude<Role, 'owner'> };
 type MembershipRequest = { userId: string; name: string; email: string; requestedAt: string };
 type SessionActivity = { name: string; email: string; loginAt: string; logoutAt: string | null; lastSeenAt: string; status: 'active' | 'signed_out' | 'expired'; device: string };
 type EmployeeImportRow = { name: string; email: string; password: string; localErrors?: string[] };
@@ -34,6 +35,7 @@ const roleOptions: { value: Exclude<Role, 'owner'>; label: string }[] = [
   { value: 'sales_rep', label: 'Sales Representative' },
   { value: 'read_only', label: 'Read-only User' },
 ];
+const roleLabel = (value: string, customRoles: WorkspaceRole[]) => customRoles.find((role) => role.id === value)?.name ?? roleOptions.find((role) => role.value === value)?.label ?? value.replaceAll('_', ' ');
 
 async function responseMessage(response: Response) {
   const payload = await response.json();
@@ -45,7 +47,6 @@ export default function MembersManager() {
   const [members, setMembers] = useState<Member[]>([]);
   const [sessionActivity, setSessionActivity] = useState<SessionActivity[]>([]);
   const [requests, setRequests] = useState<MembershipRequest[]>([]);
-  const [joinCode, setJoinCode] = useState('');
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -58,31 +59,32 @@ export default function MembersManager() {
   const [employeeCsvNotice, setEmployeeCsvNotice] = useState('');
   const [employeeCsvBusy, setEmployeeCsvBusy] = useState(false);
   const [availableModules, setAvailableModules] = useState<string[]>([]);
+  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
   const [editingModulesFor, setEditingModulesFor] = useState<Member | null>(null);
   const [moduleDraft, setModuleDraft] = useState<string[]>([]);
   const [savingModules, setSavingModules] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({ name: '', email: '', password: '', role: 'sales_rep' as Exclude<Role, 'owner'> });
+  const [newEmployee, setNewEmployee] = useState({ name: '', email: '', password: '', role: 'sales_rep' });
   const [creatingEmployee, setCreatingEmployee] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [membersResponse, requestsResponse, joinCodeResponse, meResponse, modulesResponse, sessionsResponse] = await Promise.all([
+      const [membersResponse, requestsResponse, meResponse, modulesResponse, sessionsResponse, rolesResponse] = await Promise.all([
         crmApiFetch('/organizations/members'),
         crmApiFetch('/organizations/membership-requests'),
-        crmApiFetch('/organizations/join-code'),
         crmApiFetch('/auth/me'),
         crmApiFetch('/organizations/modules'),
         crmApiFetch('/organizations/members/session-history'),
+        crmApiFetch('/organizations/roles'),
       ]);
-      const [membersPayload, requestsPayload, joinCodePayload, mePayload, modulesPayload, sessionsPayload] = await Promise.all([
+      const [membersPayload, requestsPayload, mePayload, modulesPayload, sessionsPayload, rolesPayload] = await Promise.all([
         responseMessage(membersResponse),
         responseMessage(requestsResponse),
-        responseMessage(joinCodeResponse),
         responseMessage(meResponse),
         responseMessage(modulesResponse),
         responseMessage(sessionsResponse),
+        responseMessage(rolesResponse),
       ]);
       setMembers(membersPayload.data as Member[]);
       setSessionActivity(Array.isArray(sessionsPayload.data) ? sessionsPayload.data as SessionActivity[] : []);
@@ -91,7 +93,7 @@ export default function MembersManager() {
         : modulesPayload.data.enabledModules;
       setAvailableModules(assignableModules.filter((module: string) => module !== 'team'));
       setRequests(requestsPayload.data as MembershipRequest[]);
-      setJoinCode(joinCodePayload.data.joinCode as string);
+      setWorkspaceRoles(Array.isArray(rolesPayload.data) ? rolesPayload.data as WorkspaceRole[] : []);
       const saved = sessionStorage.getItem('myr.organization');
       let organizationId = '';
       if (saved) {
@@ -227,7 +229,7 @@ export default function MembersManager() {
     }
   }
 
-  async function changeRole(member: Member, newRole: Exclude<Role, 'owner'>) {
+  async function changeRole(member: Member, newRole: string) {
     setError('');
     try {
       await responseMessage(await crmApiFetch(`/organizations/members/${member.userId}`, {
@@ -235,7 +237,7 @@ export default function MembersManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role: newRole }),
       }));
-      setNotice(`${member.name} is now a ${roleOptions.find((item) => item.value === newRole)?.label}.`);
+      setNotice(`${member.name} is now assigned the ${roleLabel(newRole, workspaceRoles)} role.`);
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not update this role.');
@@ -332,7 +334,7 @@ export default function MembersManager() {
       }));
       const created = payload.data as Member;
       setMembers((current) => [...current, created]);
-      setNotice(`Account created for ${created.name}. Share the sign-in email, initial password, and workspace code with them securely.`);
+      setNotice(`${created.reactivated ? 'Account reactivated' : 'Account created'} for ${created.name}. Share the sign-in email and initial password with them securely. Their account is linked to this workspace.`);
       setNewEmployee({ name: '', email: '', password: '', role: 'sales_rep' });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create the employee account.');
@@ -359,7 +361,7 @@ export default function MembersManager() {
             <tbody>{members.map((member) => <tr key={member.userId}>
               <td><strong>{member.name}</strong></td>
               <td>{member.email}</td>
-              <td>{member.role === 'owner' ? <span className={styles.roleBadge}>Owner</span> : <select aria-label={`Role for ${member.name}`} value={member.role} disabled={!canManage} onChange={(event) => void changeRole(member, event.target.value as Exclude<Role, 'owner'>)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>}</td>
+              <td>{member.role === 'owner' ? <span className={styles.roleBadge}>Owner</span> : <select aria-label={`Role for ${member.name}`} value={member.customRoleId ?? member.role} disabled={!canManage} onChange={(event) => void changeRole(member, event.target.value)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
               <td>{member.role === 'owner' || member.role === 'admin'
                 ? <span className={styles.roleBadge}>All CRM modules</span>
                 : <button type="button" className={styles.moduleAccessButton} onClick={() => editModuleAccess(member)}>{member.enabledModules.filter((module) => availableModules.includes(module)).length} modules · Manage</button>}</td>
@@ -387,13 +389,13 @@ export default function MembersManager() {
 
       {canManage && <>
         <section className={styles.panel}>
-          <div className={styles.panelHeading}><div><h2>Add employee manually</h2><p>Create an account and active workspace membership. Employees can use the workspace code when signing in.</p></div></div>
+          <div className={styles.panelHeading}><div><h2>Add employee manually</h2><p>Create an account with an active membership in this workspace. Employees sign in with their work email and password.</p></div></div>
           <form className={styles.csvImport} onSubmit={(event) => void createEmployee(event)}>
             <div className={styles.csvActions}>
               <label>Employee name<input required minLength={2} maxLength={100} autoComplete="name" value={newEmployee.name} onChange={(event) => setNewEmployee((current) => ({ ...current, name: event.target.value }))} /></label>
               <label>Work email<input required type="email" maxLength={254} autoComplete="email" value={newEmployee.email} onChange={(event) => setNewEmployee((current) => ({ ...current, email: event.target.value }))} /></label>
               <label>Initial password<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newEmployee.password} onChange={(event) => setNewEmployee((current) => ({ ...current, password: event.target.value }))} /></label>
-              <label>Role<select value={newEmployee.role} onChange={(event) => setNewEmployee((current) => ({ ...current, role: event.target.value as Exclude<Role, 'owner'> }))}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              <label>Role<select value={newEmployee.role} onChange={(event) => setNewEmployee((current) => ({ ...current, role: event.target.value }))}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
               <button className="button button-primary" type="submit" disabled={creatingEmployee}>{creatingEmployee ? 'Creating account…' : 'Create employee account'}</button>
             </div>
             <p>The plan’s seat limit applies. Employee module access starts empty; assign permitted modules from the Members list.</p>
@@ -426,10 +428,6 @@ export default function MembersManager() {
           <div className={styles.csvImport}><LeadCsvImport compact onImported={(count) => setNotice(`${count} leads were imported into this workspace.`)} /></div>
         </section>
 
-        <section className={styles.panel}>
-          <div className={styles.panelHeading}><div><h2>Workspace join code</h2><p>Share this code with employees you have added. They can enter it with their sign-in credentials to open this workspace.</p></div></div>
-          <p className={styles.joinCode}>{joinCode || 'Loading workspace code…'}</p>
-        </section>
         <section className={styles.panel}>
           <div className={styles.panelHeading}><div><h2>Join requests</h2><p>{requests.length} waiting for workspace admin approval.</p></div></div>
           {requests.length === 0 ? <p className={styles.empty}>No pending requests.</p> : <ul className={styles.invitationList}>{requests.map((joinRequest) => <li key={joinRequest.userId}><div><strong>{joinRequest.name}</strong><span>{joinRequest.email} · Requested {new Date(joinRequest.requestedAt).toLocaleDateString()}</span></div><div className={styles.actions}><button type="button" disabled={busy} onClick={() => void reviewRequest(joinRequest, 'approve')}>Approve</button><button type="button" className={styles.danger} disabled={busy} onClick={() => void reviewRequest(joinRequest, 'decline')}>Decline</button></div></li>)}</ul>}

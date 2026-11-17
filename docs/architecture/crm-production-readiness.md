@@ -33,7 +33,7 @@ Scores estimate how much of the described capability is implemented in this repo
 | Platform administration | 82% | Platform control panel supports workspace, plan, access, signup, and activation-request administration. Paid-plan activation is manual. |
 | Platform users and organizations | 84% | Workspace owners/members, status, module access, and cross-workspace summaries are managed through protected platform endpoints. |
 | Invitations and join requests | 80% | Join-code requests, approval/decline, and in-app notification flows exist. Delivery and invitation lifecycle coverage remain limited. |
-| Subscription plans and billing | 60% | Plans, trials, countdowns, and manual renewal requests are persisted. Pre-expiry requests are available during the final 10 days, and approval extends from the existing expiry. Online checkout/payment collection and reconciliation are not connected. |
+| Subscription plans and billing | 70% | PayU hosted checkout creates server-priced orders, validates callback hashes, confirms successful payments with `verify_payment`, updates tenant entitlements transactionally, and supports authenticated status rechecks. S2S webhook inbox/reconciliation, live end-to-end evidence, refunds, and payment operations are not confirmed. |
 | Deployment, monitoring, and recovery | 50% | Local Docker/PostgreSQL and a health endpoint are documented. Production deployment, centralized structured monitoring, backup/restore, and recovery procedures are not confirmed. |
 | Vendor management | 84% | Tenant-scoped vendor directory with CRUD, search/filter, status/category, owner limits, archive, migration, and tests. Vendor accounts-payable bills and vendor payment tracking are not included. |
 | Customer billing and invoicing | 82% | Customer invoices, quotations, products, manual payment records, receipts, settings, dashboard, decimal-safe calculations, migrations, and tests are present. Online payment gateway integration is not connected. |
@@ -63,7 +63,7 @@ Manifest versions differ from the supplied HRM PDF: the root manifest declares N
 | Tenant isolation | API verifies active membership for the selected organization; service queries and related-record checks are scoped. Test failures currently reduce confidence in member and guard behavior. |
 | Rate limiting | PostgreSQL-backed, route-specific limits cover login, signup, verification, join requests, and activation requests; this is not a general API-wide limit. |
 | Email | The outbox does not send CRM contact messages. Password reset by email is unavailable. Project docs disagree on whether signup OTP delivery is currently enabled, so verify the active runtime configuration. |
-| Billing | Trial and plan changes are persisted, but no online payment is collected or verified. |
+| Billing | PayU Hosted Checkout and API verification are implemented. A durable S2S webhook inbox/worker is not configured; pending payments may require an authenticated workspace status recheck. Live end-to-end payment evidence is not available in this repository. |
 | Security headers | HSTS/CSP and other response-header configuration were not found in the inspected API bootstrap. Review frontend hosting headers too. |
 | Logging and monitoring | Audit records cover selected changes, but production log aggregation, alerting, retention, and service-level monitoring are not confirmed. |
 | Backups and recovery | No production backup/restore evidence was supplied in the repository context. |
@@ -84,7 +84,7 @@ These are local test/build results, not a production load test, penetration test
 1. Verify tenant isolation and workspace/module permissions in staging, including cross-tenant record references and production proxy/cookie behavior.
 2. Confirm signup OTP/SMTP behavior from active code and environment configuration; complete password-reset delivery and decide whether CRM email sending is in scope.
 3. Add and verify production security headers, API-wide/sensitive-route throttling as appropriate, structured logs, alerts, and backup/restore procedures.
-4. Connect payment processing only when required, with verified provider webhooks and reconciliation; until then describe activation as manual.
+4. Configure and test PayU in sandbox, then add a durable verified webhook inbox/worker and reconciliation before relying on unattended recovery. Do not test live credentials without an explicitly approved real transaction.
 5. Add vendor accounts-payable bills and vendor payment tracking only if that is part of the intended scope; customer invoices are currently separate.
 6. Verify production configuration, migrations, secrets, proxy trust, health checks, and rollback/recovery in a staging environment before calling the CRM production-ready.
 

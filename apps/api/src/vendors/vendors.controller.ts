@@ -26,12 +26,16 @@ export class VendorsController {
   async summary(@Req() request: HttpRequest) {
     const organizationId = this.organizationId(request);
     const where = { organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) };
-    const [total, active, pending, onHold] = await Promise.all([
-      this.prisma.vendor.count({ where }),
-      this.prisma.vendor.count({ where: { ...where, status: "ACTIVE" } }),
-      this.prisma.vendor.count({ where: { ...where, status: "PENDING" } }),
-      this.prisma.vendor.count({ where: { ...where, status: "ON_HOLD" } }),
-    ]);
+    const counts = await this.prisma.vendor.groupBy({
+      by: ["status"],
+      where,
+      _count: { _all: true },
+    });
+    const countByStatus = new Map(counts.map(({ status, _count }) => [status, _count._all]));
+    const active = countByStatus.get("ACTIVE") ?? 0;
+    const pending = countByStatus.get("PENDING") ?? 0;
+    const onHold = countByStatus.get("ON_HOLD") ?? 0;
+    const total = active + pending + onHold;
     return { data: { total, active, pending, onHold } };
   }
 

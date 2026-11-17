@@ -44,27 +44,6 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         const message = payload?.error?.message ?? payload?.message ?? 'We could not sign you in. Check your details and try again.';
         throw new Error(Array.isArray(message) ? message.join(', ') : message);
       }
-      if (!isSignup && typeof values.joinCode === 'string' && values.joinCode.trim()) {
-        sessionStorage.setItem('myr.user', JSON.stringify(payload.user));
-        if (payload.organization) sessionStorage.setItem('myr.organization', JSON.stringify(payload.organization));
-        const joinResponse = await crmApiFetch('/organizations/join-requests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ joinCode: values.joinCode.trim() }),
-        });
-        const joinPayload = await joinResponse.json();
-        if (!joinResponse.ok) {
-          const message = joinPayload?.error?.message ?? 'Could not request access to that workspace.';
-          throw new Error(Array.isArray(message) ? message.join(', ') : message);
-        }
-        if (joinPayload?.data?.status === 'active' && joinPayload?.data?.organization) {
-          sessionStorage.setItem('myr.organization', JSON.stringify(joinPayload.data.organization));
-          window.location.assign('/');
-          return;
-        }
-        window.location.assign('/join-workspace');
-        return;
-      }
       if (isSignup) {
         if (verifyingSignup) {
           setSignupComplete(true);
@@ -128,7 +107,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
             <label htmlFor="auth-name">Your name</label><input id="auth-name" name="name" type="text" autoComplete="name" placeholder="Maya Chen" required minLength={2} />
             {signupType === 'workspace'
               ? <><label htmlFor="auth-org">Workspace name</label><input id="auth-org" name="organizationName" type="text" placeholder="Studio North" required minLength={2} /></>
-              : <p className="auth-subtitle">After creating your account, sign in and enter the join code from your workspace admin.</p>}
+              : <p className="auth-subtitle">Ask your workspace admin to create your employee account. Then sign in with the work email and password they provide.</p>}
           </>}
           {isSignup
             ? pendingOtpEmail
@@ -142,7 +121,6 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
               </>
             : <>
               <label htmlFor="auth-email">Work email</label><input id="auth-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
-              <label htmlFor="auth-join-code">Workspace code <span>(optional)</span></label><input id="auth-join-code" name="joinCode" type="text" autoComplete="off" placeholder="Enter the code from your workspace admin" />
             </>}
           {(!isSignup || (!pendingOtpEmail && !signupComplete)) && <>
             <div className="auth-password-label"><label htmlFor="auth-password">Password</label></div>
@@ -157,7 +135,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         {!isSignup && <p className="auth-switch"><Link href="/forgot-password">Forgot password?</Link></p>}
         {isSignup
           ? <p className="auth-switch">Already have an account? <Link href="/sign-in">Sign in</Link></p>
-          : <p className="auth-switch">Need to join a workspace? Ask its admin to create your CRM account and share the workspace code. Enter that code above when you sign in.</p>}
+          : <p className="auth-switch">Use the work email and password provided by your workspace admin. You will only see workspaces where your account has active membership.</p>}
         <p className="auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
       </div><span className="auth-copyright">© 2026 Myr CRM · Secure workspace access</span></section>
     </main>

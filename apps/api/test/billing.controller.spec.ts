@@ -142,6 +142,46 @@ describe("BillingController", () => {
     }
   });
 
+  it("allows an active workspace to purchase a different plan through PayU", async () => {
+    const membership = makeMembership("ACTIVE");
+    membership.organization.subscriptionPlan = "starter";
+    Object.assign(membership, { user: { name: "Maya Chen", email: "maya@example.com" } });
+    let payment: Record<string, unknown> | undefined;
+    const controller = new BillingController({
+      membership: { findFirst: async () => membership },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly" }) },
+      subscriptionPayment: { create: async ({ data }: { data: Record<string, unknown> }) => { payment = data; } },
+    } as never, {} as never, {
+      isConfigured: () => true,
+      createCheckout: () => ({ checkoutUrl: "https://secure.payu.in/_payment", fields: { key: "live-key", hash: "signed" } }),
+    } as never);
+
+    await controller.createCheckout({ userId: "user-a", headers: { "x-organization-id": "org-a" } } as never,
+      { planCode: "growth", purchaseType: "plan", phone: "+919876543210" } as never);
+
+    assert.equal(payment?.paymentType, "PLAN");
+    assert.equal(payment?.planCode, "growth");
+    assert.equal(payment?.amount, "2499.00");
+  });
+
+  it("rechecks a pending payment only in the authenticated owner's workspace", async () => {
+    let verifiedTransaction = "";
+    const controller = new BillingController({
+      membership: { findFirst: async () => makeMembership("ACTIVE") },
+      subscriptionPayment: { findFirst: async ({ where }: { where: { organizationId: string; transactionId: string } }) => {
+        assert.equal(where.organizationId, "org-a");
+        return { id: "payment-a", organizationId: "org-a", requestedByUserId: "user-a", planCode: "growth", paymentType: "PLAN", transactionId: where.transactionId, amount: "2499.00", status: "PENDING", failureReason: null, renewalBaseEndsAt: null };
+      } },
+    } as never, {} as never, {
+      verifyPayment: async (transactionId: string) => { verifiedTransaction = transactionId; return { status: "pending", transactionId: null, amount: null, payuId: null, bankReference: null }; },
+    } as never);
+
+    const result = await controller.paymentStatus({ userId: "user-a", headers: { "x-organization-id": "org-a" } } as never, "0123456789abcdef01234567");
+    assert.equal(verifiedTransaction, "0123456789abcdef01234567");
+    assert.equal(result.data.status, "pending");
+    assert.equal(result.data.planCode, "growth");
+  });
+
   it("creates an activation request for an expired workspace", async () => {
     let requestData: Record<string, unknown> | undefined;
     const requestedAt = new Date();
@@ -166,6 +206,32 @@ describe("BillingController", () => {
     assert.equal(result.data.planCode, "growth");
     assert.equal(result.data.requestType, "activation");
     assert.equal(result.data.requestedAt, requestedAt.toISOString());
+  });
+
+  it("allows a paused workspace to request renewal more than ten days after expiry", async () => {
+    let requestData: Record<string, unknown> | undefined;
+    const requestedAt = new Date();
+    const membership = makeMembership("PAUSED");
+    membership.organization.subscriptionEndsAt = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+    const controller = new BillingController({
+      membership: { findFirst: async () => membership },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth" }) },
+      subscriptionActivationRequest: {
+        findFirst: async () => null,
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          requestData = data;
+          return { id: "request-paused", planCode: "growth", requestType: "ACTIVATION", createdAt: requestedAt };
+        },
+      },
+    } as never);
+
+    const result = await controller.requestActivation(
+      { userId: "user-a", headers: { "x-organization-id": "org-a" } } as never,
+      { planCode: "growth" },
+    );
+
+    assert.equal(requestData?.organizationId, "org-a");
+    assert.equal(result.data.requestType, "activation");
   });
 
   it("allows an owner to request renewal during the final ten days", async () => {

@@ -4,7 +4,10 @@ import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { LeadsController } from "../src/leads/leads.controller.js";
 
 const createController = (prisma: unknown) =>
-  new LeadsController(prisma as never, { runForLead: async () => {} } as never);
+  new LeadsController({
+    organization: { findUnique: async () => ({ timezone: "UTC" }) },
+    ...(prisma as Record<string, unknown>),
+  } as never, { runForLead: async () => {} } as never);
 
 describe("LeadsController", () => {
   it("scopes paginated and filtered reads to the verified organization", async () => {

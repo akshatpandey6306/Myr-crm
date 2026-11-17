@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
 import { downloadCsv } from '../../lib/csv';
@@ -733,8 +734,12 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           : undefined;
         throw new Error(apiError?.message ?? 'Could not review this subscription request.');
       }
-      setAccessMessage(
-        subscriptionRequest.requestType === 'trial'
+      const result = typeof payload === 'object' && payload !== null && 'data' in payload
+        ? (payload as { data?: { alreadyActive?: boolean } }).data
+        : undefined;
+      setAccessMessage(result?.alreadyActive
+        ? `Cleared the pending request for ${subscriptionRequest.organization.name}; this workspace is already active on ${subscriptionRequest.planCode}.`
+        : subscriptionRequest.requestType === 'trial'
           ? `Trial request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'approved; the two-day trial has started' : 'declined'}.`
           : `Plan request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'manually activated' : 'declined'}. No payment was collected or verified.`,
       );
@@ -769,8 +774,10 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
         const body = typeof payload === 'object' && payload !== null && 'error' in payload ? (payload as { error?: { message?: string } }).error : undefined;
         throw new Error(body?.message ?? 'Could not create workspace.');
       }
-      const data = typeof payload === 'object' && payload !== null && 'data' in payload ? (payload as { data?: { name?: string; owner?: { email?: string } } }).data : undefined;
-      setOnboardingMessage(`Created ${data?.name ?? 'workspace'} for ${data?.owner?.email ?? onboarding.ownerEmail}.`);
+      const data = typeof payload === 'object' && payload !== null && 'data' in payload ? (payload as { data?: { name?: string; welcomeEmailSent?: boolean; owner?: { email?: string } } }).data : undefined;
+      setOnboardingMessage(data?.welcomeEmailSent
+        ? `Created ${data.name ?? 'workspace'} for ${data.owner?.email ?? onboarding.ownerEmail}. Welcome email with sign-in link and credentials sent.`
+        : `Created ${data?.name ?? 'workspace'} for ${data?.owner?.email ?? onboarding.ownerEmail}, but the welcome email could not be sent. Check SMTP settings.`);
       setOnboarding({
         organizationName: '',
         ownerName: '',
@@ -1638,6 +1645,9 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                         <small className="control-panel-revenue-summary">
                           {organization.dealCount} deals · {organization.currency} {organization.wonRevenue.toLocaleString()} won · {organization.currency} {organization.openPipelineValue.toLocaleString()} open
                         </small>
+                        <button className="control-panel-action control-panel-module-toggle" type="button" aria-controls={`workspace-modules-${organization.id}`} aria-expanded={Boolean(expandedModules[organization.id])} disabled={busyOrganizationId === organization.id} onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: !current[organization.id] }))}>
+                          {expandedModules[organization.id] ? 'Close module access' : `Choose workspace modules (${organization.enabledModules.length})`}
+                        </button>
                       </td>
                       <td>{organization.owner ? <div className="control-panel-owner"><strong>{organization.owner.name}</strong><span>{organization.owner.email}</span></div> : '—'}</td>
                       <td>
@@ -1712,9 +1722,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                                   : `Activate ${currentPlanName}`}
                           </button>
                           {(organization.subscription.status === 'trial' || (organization.subscription.status === 'expired' && organization.subscription.provider === 'partner')) && <button suppressHydrationWarning className="control-panel-action" type="button" disabled={busyOrganizationId === organization.id || !subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode && plan.isActive)} onClick={() => requestSubscriptionStatus(organization, 'trial')}>Extend 48 hours</button>}
-                          <button className="control-panel-action control-panel-module-toggle" type="button" aria-controls={`workspace-modules-${organization.id}`} aria-expanded={Boolean(expandedModules[organization.id])} disabled={busyOrganizationId === organization.id} onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: !current[organization.id] }))}>
-                            {expandedModules[organization.id] ? 'Close modules' : `Edit modules (${organization.enabledModules.length})`}
-                          </button>
                           {hasActiveSubscription
                             ? <>
   <button suppressHydrationWarning className="control-panel-action danger" type="button" disabled={busyOrganizationId === organization.id} onClick={() => requestSubscriptionStatus(organization, 'expired')}>Expire now</button>
@@ -1765,16 +1772,19 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                          </td>
                        </tr>
                      )}
-                     {expandedModules[organization.id] && (
-                       <tr id={`workspace-modules-${organization.id}`} className="control-panel-members-row control-panel-module-access-row">
-                         <td colSpan={8}>
+                     {expandedModules[organization.id] && typeof document !== 'undefined' && createPortal(
+                       <div id={`workspace-modules-${organization.id}`} className="control-panel-module-dialog-overlay" role="presentation" onKeyDown={(event) => { if (event.key === 'Escape') setExpandedModules((current) => ({ ...current, [organization.id]: false })); }} onMouseDown={(event) => { if (event.target === event.currentTarget) setExpandedModules((current) => ({ ...current, [organization.id]: false })); }}>
+                           <div className="control-panel-module-dialog" role="dialog" aria-modal="true" aria-label={`Module access for ${organization.name}`}>
                            <div className="control-panel-module-editor">
-                             <div>
+                             <div className="control-panel-module-editor-heading">
+                               <div>
                                <strong>Enabled CRM modules</strong>
                                <p>
                                  Changes take effect immediately for this tenant’s users and API access.
                                  {organization.subscription.status === 'trial' && ' Trial workspaces can be granted extra modules here.'}
                                </p>
+                               </div>
+                               <button className="control-panel-module-editor-close" type="button" aria-label="Close module access" onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: false }))}>×</button>
                              </div>
                              <div className="control-panel-module-options">
                                {crmModules.map(([module, label]) => {
@@ -1800,8 +1810,9 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                                {busyOrganizationId === organization.id ? 'Saving…' : 'Save module access'}
                              </button>
                            </div>
-                         </td>
-                       </tr>
+                           </div>
+                       </div>,
+                       document.body,
                      )}
 
                      </Fragment>

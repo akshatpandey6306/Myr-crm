@@ -256,6 +256,7 @@ describe("MembersController", () => {
     };
     const controller = new MembersController({
       organization: { findFirst: async () => ({ id: organizationId, name: "Acme" }) },
+      membership: { findUnique: async () => null },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     } as never);
 
@@ -284,7 +285,7 @@ describe("MembersController", () => {
     let notificationQuery: Record<string, unknown> | undefined;
     const transaction = {
       organization: { findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }) },
-      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
+      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 2 }) },
       membership: {
         count: async () => 1,
         updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
@@ -317,11 +318,11 @@ describe("MembersController", () => {
     assert.equal(result.data.role, "admin");
   });
 
-  it("enforces the two-total-member trial limit before approving a join request", async () => {
+  it("enforces the plan member limit before approving a join request", async () => {
     let updated = false;
     const transaction = {
       organization: { findUnique: async () => ({ subscriptionStatus: "TRIAL", subscriptionEndsAt: new Date(Date.now() + 60_000), subscriptionPlan: "growth" }) },
-      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
+      subscriptionPlan: { findUnique: async () => ({ employeeLimit: 2 }) },
       membership: {
         count: async () => 2,
         updateMany: async () => { updated = true; return { count: 1 }; },

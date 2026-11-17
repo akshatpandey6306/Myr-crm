@@ -195,15 +195,20 @@ for the current service map, ownership, local workflow, and remaining migration.
   Leads, Roles, and Users sections; lead choices and workspace roles are
   documented as fixed until their customization APIs are implemented.
 - New workspaces start pending and are directed to `/subscription` after sign-in.
-  Owners/Admins can start one free two-day trial immediately, without platform
-  approval; platform admins can monitor trial status in the control panel.
-  A 10-to-1 day expiry countdown is shown. Owners/Admins can request renewal in
-  the final 10 days or after expiry. Access stays active until its expiry; after
-  that, CRM content is blurred and inert behind the renewal plan overlay, while
-  workspace data is retained. Platform admins manually verify payment and
-  approve renewal; pre-expiry approval extends from the current expiry date.
-  Online checkout is not connected, so the app does not collect or verify
-  payment.
+  Owners/Admins start the two-day trial through PayU by paying ₹49. The browser
+  posts a server-priced, server-hashed checkout form to PayU Hosted Checkout.
+  PayU returns to the API callback, which validates the reverse hash, matches
+  the saved order and amount, then confirms status with PayU's `verify_payment`
+  API before activating a trial or paid plan. The subscription page displays
+  the verified result and selected plan; pending results can be rechecked from
+  the API using the authenticated workspace context. A different plan can be
+  purchased immediately by an active subscriber; the new plan starts after
+  payment verification at its full configured price (no proration). Renewal is
+  available during the final 10 days; it extends from the existing expiry.
+  Partner-billed workspaces continue through their partner's checkout. Expired
+  workspaces remain blocked while their data is retained.
+  The full sequence and production limits are in
+  [`docs/billing/payu-subscription-flow.md`](docs/billing/payu-subscription-flow.md).
 - The approved interim role matrix now governs organization member management,
   settings, audit access, and CRM record permissions. The Activities & Tasks
   module uses the adopted role and soft-archive contract.
@@ -216,6 +221,17 @@ for the current service map, ownership, local workflow, and remaining migration.
 
 Update this section whenever implementation changes are made. Include what
 changed, checks actually run, and any important remaining limitation.
+
+- 2026-11-17: Reworked the PayU subscription return flow so verified outcomes
+  return to `/subscription` with a transaction reference, show a clear result,
+  refresh the active plan after success, and support authenticated,
+  workspace-scoped PayU status rechecks when a result is pending. Active
+  workspaces can buy a different plan through the same verified checkout; the
+  replacement starts immediately after confirmation at full plan price.
+  Checks: API/web typechecks passed, 35 web tests passed, and all 15 focused
+  PayU/billing API tests passed. The full API suite had 213 passes and 3
+  failures in MembersController join-request test mocks. No live or sandbox
+  transaction was run in this change.
 
 - 2026-11-15: Integrated tenant-scoped Vendor Management and Billing &
   Invoicing from the Akshat codespace branch into the active project. Added

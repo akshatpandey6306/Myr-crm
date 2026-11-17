@@ -180,9 +180,10 @@ export class PayUService {
     const key = process.env.PAYU_MERCHANT_KEY?.trim();
     const salt = process.env.PAYU_MERCHANT_SALT?.trim();
     if (!key || !salt) throw this.notConfigured();
-    const mode = (process.env.PAYU_MODE ?? process.env.PAYU_ENV ?? "test").trim().toLowerCase();
+    const configuredMode = (process.env.PAYU_MODE ?? process.env.PAYU_ENV ?? "test").trim().toLowerCase();
+    const mode = configuredMode === "production" ? "live" : configuredMode;
     if (mode !== "test" && mode !== "live") {
-      throw new ServiceUnavailableException({ code: "payu_mode_invalid", message: "PAYU_MODE must be test or live" });
+      throw new ServiceUnavailableException({ code: "payu_mode_invalid", message: "PAYU_MODE must be test, live, or production" });
     }
     return {
       key,
@@ -195,7 +196,7 @@ export class PayUService {
   private notConfigured() {
     return new ServiceUnavailableException({
       code: "payu_not_configured",
-      message: "PayU checkout is unavailable until test merchant credentials and PAYU_CALLBACK_URL are configured on the API",
+      message: "PayU checkout is unavailable until merchant credentials and PAYU_CALLBACK_URL are configured on the API",
     });
   }
 }
