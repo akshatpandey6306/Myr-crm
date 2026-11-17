@@ -31,7 +31,7 @@ async function bootstrap() {
     { path: "internal/v1/provisioning/:requestId", method: RequestMethod.GET },
     { path: "internal/v1/provisioning/:requestId/activation-email/retry", method: RequestMethod.POST },
   ] });
-  await app.listen(Number(process.env.PORT ?? 4000), process.env.API_HOST?.trim() || "0.0.0.0");
+  await app.listen(Number(process.env.API_PORT ?? process.env.PORT ?? 4000), process.env.API_HOST?.trim() || "0.0.0.0");
 }
 
 void bootstrap();

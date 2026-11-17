@@ -2,12 +2,19 @@ import { spawn } from 'node:child_process';
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const children = [
-  { name: 'API', args: ['run', 'api:dev'] },
-  { name: 'Web', args: ['run', 'dev:web'] },
-].map(({ name, args }) => {
+  { name: 'API', args: ['run', 'api:dev'], env: { API_PORT: process.env.API_PORT || '4000' } },
+  {
+    name: 'Web',
+    args: ['run', 'dev:web'],
+    env: {
+      PORT: process.env.WEB_PORT || '3000',
+      API_PROXY_URL: process.env.API_PROXY_URL || 'http://127.0.0.1:4000/api/v1',
+    },
+  },
+].map(({ name, args, env }) => {
   const child = spawn(npmCommand, args, {
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, ...env },
     shell: process.platform === 'win32',
   });
 

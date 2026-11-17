@@ -1,75 +1,102 @@
-# Render deployment
+# Deploy Myr CRM to Render with Supabase
 
-Render account/service creation and secret entry must be completed by an
-authorized project owner. Use the repository root as the root directory for
-each service.
+This deployment runs the Next.js web app and NestJS API inside one Render web
+service. Supabase hosts PostgreSQL separately; no Render PostgreSQL service is
+needed. The API listens only on the service's loopback interface, and Render
+exposes the Next.js server on its assigned `PORT`.
 
-## PostgreSQL
+## 1. Prepare Supabase
 
-Create a Render PostgreSQL database and use its **internal** connection string
-as `DATABASE_URL` on the API service. Keep the database in the same Render
-region as the API.
+In the Supabase project dashboard, open **Connect** and copy the Session Pooler
+connection string (port `5432`) for server-based Prisma deployments. Replace
+its password placeholder with the database password. Keep the connection string
+private. The local `.env` in this checkout currently points to `localhost`, so
+do not bulk-import it as the Render database setting. Supabase documents the
+Session Pooler as the IPv4-compatible option when direct connections are not
+available; the Transaction Pooler is intended for serverless/short-lived
+connections. [Supabase Prisma guide](https://supabase.com/docs/guides/database/prisma)
 
-## API web service
+## 2. Create one Render web service
 
-- Build command: `npm ci && npm run db:generate --workspace @myr-crm/api && npm run api:build`
-- Start command: `npm run start --workspace @myr-crm/api`
-- Pre-deploy command: `npm run db:deploy --workspace @myr-crm/api`
-- Set `NODE_ENV=production`, `DATABASE_URL`, `WEB_ORIGIN`,
-  `PLATFORM_ADMIN_EMAIL`, and `PARTNER_SECRET_ENCRYPTION_KEY`.
-- Generate `PARTNER_SECRET_ENCRYPTION_KEY` as 32 random bytes encoded as 64
-  hexadecimal characters. Keep it stable and backed up; rotating it requires
-  re-encrypting stored partner webhook secrets and provisioning credentials.
-- Set `PLATFORM_ADMIN_EMAIL` to the email address of the one existing active
-  account that should manage the platform. Production does not create the local
-  seeded demo-admin account. Do not configure multiple platform administrators.
-- Set `WEB_ORIGIN` to the exact public origin of the Render web service.
-- For PayU sandbox, set the sandbox `PAYU_MERCHANT_KEY` and
-  `PAYU_MERCHANT_SALT`, set `PAYU_MODE=test`, and set
-  `PAYU_CALLBACK_URL=https://myr-crm-web.onrender.com/api/v1/billing/payu/return`.
-  This public web URL routes the callback through the web service's API rewrite.
-  The checkout redirects the browser to PayU Hosted Checkout. The API validates
-  PayU's callback hash and order fields, then calls PayU `verify_payment`; only
-  a matching captured transaction activates or changes the workspace plan.
-  After returning to `/subscription`, an Owner/Admin can recheck a pending
-  transaction through the authenticated, organization-scoped payment-status
-  endpoint. Never activate a plan from the browser redirect alone.
-- For live PayU payments, replace both credentials with the live merchant key
-  and salt, set `PAYU_MODE=live`, and keep
-  `PAYU_CALLBACK_URL=https://myr-crm-web.onrender.com/api/v1/billing/payu/return`.
-  Confirm the web service's `/api/v1` rewrite points to the deployed API and
-  that the API service's `WEB_ORIGIN` is `https://myr-crm-web.onrender.com`.
-  Remove `PAYU_TEST_TRIAL_AMOUNT` for live operation. Keep the salt only in the
-  API service. Do not use live credentials with `PAYU_MODE=test` or vice versa.
-- For local development, use
-  `PAYU_CALLBACK_URL=http://localhost:4000/api/v1/billing/payu/return` and
-  `PAYU_MODE=test`. `PAYU_TEST_TRIAL_AMOUNT=1.00` is an optional sandbox-only
-  override; remove it before switching to live credentials and `PAYU_MODE=live`.
-The API listens on Render's `PORT`. Do not run `npm run db:seed` against a
-production database.
+Connect the GitHub repository and select branch `mergetest`.
 
-Email delivery is disabled for now. Deploy only the API and web services; no
-SMTP credentials, delivery token, or separate email service are required.
+- Root directory: repository root
+- Runtime: Node
+- Build command:
+  ```sh
+  npm ci && npm run db:generate --workspace @myr-crm/api && npm run api:build && npm run build
+  ```
+- Start command:
+  ```sh
+  npm run start
+  ```
+- Health check path: `/api/v1/health`
 
-## Web service
+The API and web app must be built in the same service. Do not use `next start`
+directly: it only starts the web process. The production `npm start` wrapper
+starts the API on port `4000`, waits until it is listening, then starts Next.js
+on Render's assigned `PORT`. Render sends public HTTP traffic to that `PORT` and
+supports additional private ports within a web service. [Render web services](https://render.com/docs/web-services)
 
-- Build command: `npm ci && npm run build`
-- Start command: `npm run start`
-- Set `API_PROXY_URL` to the API service URL followed by `/api/v1` (prefer the
-  internal service URL when both services are in the same Render region).
+If your Render plan offers a pre-deploy command, set:
 
-The browser uses the same-origin `/api/v1` rewrite, so leave
-`NEXT_PUBLIC_API_URL` unset unless intentionally changing that behavior.
+```sh
+npm run db:deploy --workspace @myr-crm/api
+```
 
-## Before accepting customers
+Render runs the pre-deploy command before swapping in the new service version;
+the feature is available on paid web services. On plans without it, run the
+migration once from the Render Shell before the first release, then before each
+schema-changing release. [Render deploy commands](https://render.com/docs/deploys)
 
-1. Confirm the pre-deploy migration succeeds and the API health endpoint returns
+## 3. Configure Render environment variables
+
+Add these in **Render → service → Environment**. Do not commit them or put
+server secrets in `NEXT_PUBLIC_*` variables.
+
+```text
+NODE_ENV=production
+NODE_VERSION=22.16.0
+DATABASE_URL=<Supabase Session Pooler connection string on port 5432>
+API_PORT=4000
+API_PROXY_URL=http://127.0.0.1:4000/api/v1
+WEB_ORIGIN=https://<your-render-service>.onrender.com
+PLATFORM_ADMIN_EMAIL=<existing active platform administrator email>
+PARTNER_SECRET_ENCRYPTION_KEY=<64 hexadecimal characters>
+```
+
+For production PayU, add the rotated **live** credentials:
+
+```text
+PAYU_MODE=live
+PAYU_MERCHANT_KEY=<live merchant key>
+PAYU_MERCHANT_SALT=<live merchant salt>
+PAYU_CALLBACK_URL=https://<your-render-service>.onrender.com/api/v1/billing/payu/return
+```
+
+Use your actual Render URL in both `WEB_ORIGIN` and `PAYU_CALLBACK_URL`. The
+callback arrives at Next.js and its `/api/v1` rewrite forwards it to the local
+NestJS API. `API_PROXY_URL` must be set during the build so the Next.js rewrite
+targets the API in this same service. Leave `NEXT_PUBLIC_API_URL` unset. Remove
+`PAYU_TEST_TRIAL_AMOUNT` from production. Never use live credentials in sandbox
+mode or expose the salt in browser code.
+
+Keep `PARTNER_SECRET_ENCRYPTION_KEY` stable after deployment. Generate it as 32
+random bytes encoded as 64 hex characters; rotating it requires re-encrypting
+stored partner secrets. Set SMTP variables too if this deployment should send
+account onboarding and password-reset emails.
+
+## 4. Deploy and check
+
+1. Save the environment and deploy the service.
+2. Review the build and deploy logs. Confirm `db:deploy` completed successfully.
+3. Open `https://<your-render-service>.onrender.com/api/v1/health`; expect
    `{"status":"ok"}`.
-2. Verify workspace signup approval, teammate join requests, login, and
-   workspace subscription gating using test accounts.
-3. Complete a PayU sandbox checkout and verify that the callback returns to the
-   subscription page and that the API confirms the transaction before enabling
-   a plan. PayU's `verify_payment` request and callback hash verification run on
-   the API; never move the merchant salt into browser settings.
-4. Have Developer 2 review the interim organization-role policy and the
-   remaining cross-module permissions.
+4. Sign in, check the workspace modules, and open Subscription.
+5. For an eligible workspace, run the authorized ₹49 live trial checkout. It is
+   a real charge. Confirm PayU returns to Subscription and the plan changes only
+   after server-side `verify_payment` succeeds.
+
+If a payment returns as pending, use the payment status recheck on Subscription.
+Do not manually mark it successful. The API and web server both need to remain
+up for callbacks and browser requests to work.

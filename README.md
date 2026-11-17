@@ -406,12 +406,13 @@ in provisioning status and can be retried by the trusted central backend.
 
 ## Next session
 
-- Preview web/API servers are running at `http://localhost:3000` and port
-  `4000`; PostgreSQL and local seed data remain available.
+- Start both local processes with `npm run dev` (web on port `3000`, API on
+  port `4000`). The local `.env` database setting currently points to
+  `localhost`; use the Supabase connection string in Render's environment for
+  deployment.
 - The same-origin API proxy was verified for login and the Reports,
   Notifications, Audit Logs, and Settings endpoints. Sign in with the
   local-only credentials in `DEMO-CREDENTIALS.local.md`.
-- Before deploying this approval flow, apply the database migration and update
-  Render's API start command to `npm run start --workspace @myr-crm/api`.
-  Deploy only the API and web services; no email service or SMTP setup is
-  needed.
+- Deploy the web and API together in one Render web service using
+  [`docs/deployment/render.md`](docs/deployment/render.md). Apply Prisma
+  migrations before deployment. Do not put production secrets in Git.
