@@ -24,7 +24,7 @@ Connect the GitHub repository and select branch `mergetest`.
 - Runtime: Node
 - Build command:
   ```sh
-  npm ci && npm run db:generate --workspace @myr-crm/api && npm run api:build && npm run build
+  npm ci --include=dev && npm run db:generate --workspace @myr-crm/api && npm run api:build && npm run build
   ```
 - Start command:
   ```sh
