@@ -8,7 +8,7 @@ type CreateWorkspaceOptions = {
   slug?: string | null;
   timezone?: string;
   subscriptionPlan?: string | null;
-  subscriptionStatus?: "PENDING" | "TRIAL" | "ACTIVE" | "EXPIRED" | "CANCELLED";
+  subscriptionStatus?: "PENDING" | "ACTIVE" | "EXPIRED" | "CANCELLED";
   subscriptionStartedAt?: Date | null;
   subscriptionEndsAt?: Date | null;
   billingProvider?: string | null;

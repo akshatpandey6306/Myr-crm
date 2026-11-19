@@ -14,6 +14,14 @@ const demoEmailKeys = ["email-01", "email-02", "email-03"] as const;
 const demoNotificationKeys = ["notification-01", "notification-02", "notification-03"] as const;
 const demoAuditKeys = ["audit-01", "audit-02", "audit-03", "audit-04", "audit-05"] as const;
 const demoMemberKeys = ["member-jordan", "member-sasha", "member-noah"] as const;
+const demoVendorKeys = ["vendor-01", "vendor-02", "vendor-03"] as const;
+const demoBillingProductKeys = ["billing-product-01", "billing-product-02", "billing-product-03"] as const;
+const demoInvoiceKeys = ["invoice-01", "invoice-02", "invoice-03"] as const;
+const demoInvoiceItemKeys = ["invoice-item-01", "invoice-item-02", "invoice-item-03", "invoice-item-04"] as const;
+const demoQuotationKeys = ["quotation-01"] as const;
+const demoQuotationItemKeys = ["quotation-item-01", "quotation-item-02"] as const;
+const demoPaymentKeys = ["billing-payment-01"] as const;
+const demoReceiptKeys = ["billing-receipt-01"] as const;
 const demoPipelineKey = "pipeline";
 const demoStageKeys = ["stage-discovery", "stage-qualified", "stage-proposal", "stage-won"] as const;
 
@@ -25,6 +33,18 @@ const demoCompanies = [
   { name: "Kinfield Group", industry: "Healthcare", website: "https://kinfield.example", phone: "+1 415 555 0164" },
   { name: "Atlas Works", industry: "Professional Services", website: "https://atlas.example", phone: "+1 415 555 0176" },
   { name: "Juniper Market", industry: "Retail", website: "https://juniper.example", phone: "+1 415 555 0195" },
+] as const;
+
+const demoVendors = [
+  { name: "Northstar Office Supply", category: "Office Supplies", contactPerson: "Avery Brooks", email: "vendors@northstar.example", phone: "+1 415 555 0201", status: "ACTIVE" as const, rating: 4.8, reviewCount: 12 },
+  { name: "Forma Cloud Services", category: "Technology", contactPerson: "Morgan Ellis", email: "accounts@forma.example", phone: "+1 415 555 0202", status: "PENDING" as const, rating: 4.2, reviewCount: 7 },
+  { name: "Greenway Print Studio", category: "Marketing", contactPerson: "Casey Patel", email: "hello@greenway.example", phone: "+1 415 555 0203", status: "ON_HOLD" as const, rating: 3.9, reviewCount: 4 },
+] as const;
+
+const demoBillingProducts = [
+  { name: "CRM Onboarding Package", category: "Services", unit: "package", sellingPrice: "1200.0000", purchasePrice: null, taxRate: "0.0000", description: "Sample one-time onboarding service." },
+  { name: "Monthly Support Plan", category: "Services", unit: "month", sellingPrice: "450.0000", purchasePrice: null, taxRate: "0.0000", description: "Sample monthly customer support plan." },
+  { name: "Team Training Session", category: "Services", unit: "session", sellingPrice: "600.0000", purchasePrice: null, taxRate: "0.0000", description: "Sample guided team training session." },
 ] as const;
 
 const demoContacts = [
@@ -39,22 +59,22 @@ const demoContacts = [
 ] as const;
 
 const demoLeads = [
-  { name: "Taylor Kim", company: "Northstar Labs", source: "WEBSITE" as const, status: "QUALIFIED" as const },
-  { name: "Casey Patel", company: "Forma Studio", source: "REFERRAL" as const, status: "CONTACTED" as const },
-  { name: "Morgan Ellis", company: "Greenway Co.", source: "LINKEDIN" as const, status: "NEW" as const },
-  { name: "Jamie Chen", company: "Kinfield Group", source: "WEBSITE" as const, status: "CONTACTED" as const },
-  { name: "Avery Brooks", company: "Atlas Works", source: "REFERRAL" as const, status: "QUALIFIED" as const },
-  { name: "Drew Wallace", company: "Juniper Market", source: "LINKEDIN" as const, status: "NEW" as const },
-  { name: "Robin Shah", company: "Northstar Labs", source: "OTHER" as const, status: "DISQUALIFIED" as const },
-  { name: "Cameron Diaz", company: "Forma Studio", source: "WEBSITE" as const, status: "NEW" as const },
-  { name: "Aria Bennett", company: "Meridian Health", source: "REFERRAL" as const, status: "CONTACTED" as const },
-  { name: "Dev Malhotra", company: "Cloudline Systems", source: "LINKEDIN" as const, status: "QUALIFIED" as const },
-  { name: "Noah Williams", company: "Brightpath Learning", source: "WEBSITE" as const, status: "NEW" as const },
-  { name: "Mira Kapoor", company: "Evergreen Retail", source: "OTHER" as const, status: "CONTACTED" as const },
-  { name: "Ethan Brooks", company: "Summit Logistics", source: "REFERRAL" as const, status: "QUALIFIED" as const },
-  { name: "Zara Iyer", company: "Nova Financial", source: "LINKEDIN" as const, status: "NEW" as const },
-  { name: "Leo Martin", company: "Cedar & Stone", source: "WEBSITE" as const, status: "DISQUALIFIED" as const },
-  { name: "Anaya Shah", company: "Bluepeak Energy", source: "OTHER" as const, status: "CONTACTED" as const },
+  { name: "Taylor Kim", company: "Northstar Labs", source: "WEBSITE" as const, status: "qualified" },
+  { name: "Casey Patel", company: "Forma Studio", source: "REFERRAL" as const, status: "contacted" },
+  { name: "Morgan Ellis", company: "Greenway Co.", source: "LINKEDIN" as const, status: "new" },
+  { name: "Jamie Chen", company: "Kinfield Group", source: "WEBSITE" as const, status: "contacted" },
+  { name: "Avery Brooks", company: "Atlas Works", source: "REFERRAL" as const, status: "qualified" },
+  { name: "Drew Wallace", company: "Juniper Market", source: "LINKEDIN" as const, status: "new" },
+  { name: "Robin Shah", company: "Northstar Labs", source: "OTHER" as const, status: "disqualified" },
+  { name: "Cameron Diaz", company: "Forma Studio", source: "WEBSITE" as const, status: "new" },
+  { name: "Aria Bennett", company: "Meridian Health", source: "REFERRAL" as const, status: "contacted" },
+  { name: "Dev Malhotra", company: "Cloudline Systems", source: "LINKEDIN" as const, status: "qualified" },
+  { name: "Noah Williams", company: "Brightpath Learning", source: "WEBSITE" as const, status: "new" },
+  { name: "Mira Kapoor", company: "Evergreen Retail", source: "OTHER" as const, status: "contacted" },
+  { name: "Ethan Brooks", company: "Summit Logistics", source: "REFERRAL" as const, status: "qualified" },
+  { name: "Zara Iyer", company: "Nova Financial", source: "LINKEDIN" as const, status: "new" },
+  { name: "Leo Martin", company: "Cedar & Stone", source: "WEBSITE" as const, status: "disqualified" },
+  { name: "Anaya Shah", company: "Bluepeak Energy", source: "OTHER" as const, status: "contacted" },
 ] as const;
 
 const demoTeam = [
@@ -86,6 +106,11 @@ function dateOffset(days: number, hour = 10) {
   return date;
 }
 
+function dateOnlyOffset(days: number) {
+  const date = new Date();
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
+}
+
 @Injectable()
 export class DemoDataService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -98,18 +123,26 @@ export class DemoDataService {
   async ensureWorkspaceSamples(organizationId: string, userId: string) {
     const marker = await this.prisma.organizationDemoData.findUnique({ where: { organizationId } });
     if (marker?.clearedAt) return;
-    if (marker?.loadedAt) return;
+    if (marker?.loadedAt) {
+      const sampleInvoices = await this.prisma.billingInvoice.count({
+        where: { organizationId, id: { in: ids(organizationId, demoInvoiceKeys) } },
+      });
+      if (sampleInvoices === 0) await this.load(organizationId, userId);
+      return;
+    }
 
-    const [leads, contacts, companies, deals, activities, vendors, invoices] = await Promise.all([
+    const [leads, contacts, companies, deals, activities, vendors, products, invoices, quotations] = await Promise.all([
       this.prisma.lead.count({ where: { organizationId } }),
       this.prisma.contact.count({ where: { organizationId } }),
       this.prisma.company.count({ where: { organizationId } }),
       this.prisma.deal.count({ where: { organizationId } }),
       this.prisma.activity.count({ where: { organizationId } }),
       this.prisma.vendor.count({ where: { organizationId } }),
+      this.prisma.billingProduct.count({ where: { organizationId } }),
       this.prisma.billingInvoice.count({ where: { organizationId } }),
+      this.prisma.billingQuotation.count({ where: { organizationId } }),
     ]);
-    if (leads + contacts + companies + deals + activities + vendors + invoices > 0) return;
+    if (leads + contacts + companies + deals + activities + vendors + products + invoices + quotations > 0) return;
     await this.load(organizationId, userId);
   }
 
@@ -121,8 +154,21 @@ export class DemoDataService {
     const activityIds = ids(organizationId, demoActivityKeys);
     const automationIds = ids(organizationId, demoAutomationKeys);
     const memberIds = ids(organizationId, demoMemberKeys);
+    const vendorIds = ids(organizationId, demoVendorKeys);
+    const billingProductIds = ids(organizationId, demoBillingProductKeys);
+    const invoiceIds = ids(organizationId, demoInvoiceKeys);
+    const invoiceItemIds = ids(organizationId, demoInvoiceItemKeys);
+    const quotationIds = ids(organizationId, demoQuotationKeys);
+    const quotationItemIds = ids(organizationId, demoQuotationItemKeys);
+    const paymentIds = ids(organizationId, demoPaymentKeys);
+    const receiptIds = ids(organizationId, demoReceiptKeys);
     const pipelineId = demoId(organizationId, demoPipelineKey);
     const stageIds = ids(organizationId, demoStageKeys);
+    const numberSuffix = createHash("sha256").update(organizationId).digest("hex").slice(0, 8).toUpperCase();
+    const invoiceNumbers = [1, 2].map((number) => `DEMO-${numberSuffix}-INV-${String(number).padStart(3, "0")}`);
+    const quotationNumber = `DEMO-${numberSuffix}-QTN-001`;
+    const paymentNumber = `DEMO-${numberSuffix}-PAY-001`;
+    const receiptNumber = `DEMO-${numberSuffix}-REC-001`;
     const now = new Date();
 
     await this.prisma.$transaction(async (tx) => {
@@ -178,6 +224,212 @@ export class DemoDataService {
           ownerUserId: userId,
           createdByUserId: userId,
         })),
+      });
+      await tx.vendor.createMany({
+        skipDuplicates: true,
+        data: demoVendors.map((vendor, index) => ({
+          ...vendor,
+          id: vendorIds[index]!,
+          organizationId,
+          ownerUserId: userId,
+          createdByUserId: userId,
+        })),
+      });
+
+      const organizationSettings = await tx.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { currency: true },
+      });
+      const billingSettings = await tx.billingSettings.upsert({
+        where: { organizationId },
+        update: {},
+        create: { organizationId, currency: organizationSettings?.currency.trim() || "USD" },
+      });
+      const currency = billingSettings.currency.trim();
+      await tx.billingProduct.createMany({
+        skipDuplicates: true,
+        data: demoBillingProducts.map((product, index) => ({
+          ...product,
+          id: billingProductIds[index]!,
+          organizationId,
+          sku: `DEMO-${numberSuffix}-SKU-${String(index + 1).padStart(3, "0")}`,
+          isActive: true,
+          createdByUserId: userId,
+        })),
+      });
+
+      await tx.billingInvoice.createMany({
+        skipDuplicates: true,
+        data: [
+          {
+            id: invoiceIds[0]!,
+            organizationId,
+            invoiceNumber: invoiceNumbers[0]!,
+            customerType: "CONTACT" as const,
+            contactId: ids(organizationId, demoContactKeys)[0]!,
+            companyId: null,
+            customerName: demoContacts[0]!.name,
+            customerEmail: demoContacts[0]!.email,
+            customerPhone: demoContacts[0]!.phone,
+            invoiceDate: dateOnlyOffset(-5),
+            dueDate: dateOnlyOffset(25),
+            currency,
+            status: "ISSUED" as const,
+            paymentStatus: "PARTIALLY_PAID" as const,
+            subtotal: "1200.0000",
+            discountAmount: "0.0000",
+            discountType: "FIXED" as const,
+            discountValue: "0.0000",
+            taxAmount: "0.0000",
+            additionalCharges: "0.0000",
+            shippingAmount: "0.0000",
+            roundOff: "0.0000",
+            grandTotal: "1200.0000",
+            amountPaid: "400.0000",
+            balanceDue: "800.0000",
+            issuedAt: dateOffset(-5),
+            createdByUserId: userId,
+            ownerUserId: userId,
+            notes: "Sample invoice for workspace preview.",
+          },
+          {
+            id: invoiceIds[1]!,
+            organizationId,
+            invoiceNumber: invoiceNumbers[1]!,
+            customerType: "CONTACT" as const,
+            contactId: ids(organizationId, demoContactKeys)[1]!,
+            companyId: null,
+            customerName: demoContacts[1]!.name,
+            customerEmail: demoContacts[1]!.email,
+            customerPhone: demoContacts[1]!.phone,
+            invoiceDate: dateOnlyOffset(-2),
+            dueDate: dateOnlyOffset(28),
+            currency,
+            status: "ISSUED" as const,
+            paymentStatus: "UNPAID" as const,
+            subtotal: "1500.0000",
+            discountAmount: "0.0000",
+            discountType: "FIXED" as const,
+            discountValue: "0.0000",
+            taxAmount: "0.0000",
+            additionalCharges: "0.0000",
+            shippingAmount: "0.0000",
+            roundOff: "0.0000",
+            grandTotal: "1500.0000",
+            amountPaid: "0.0000",
+            balanceDue: "1500.0000",
+            issuedAt: dateOffset(-2),
+            createdByUserId: userId,
+            ownerUserId: userId,
+            notes: "Sample unpaid invoice for workspace preview.",
+          },
+          {
+            id: invoiceIds[2]!,
+            organizationId,
+            invoiceNumber: null,
+            customerType: "CONTACT" as const,
+            contactId: ids(organizationId, demoContactKeys)[2]!,
+            companyId: null,
+            customerName: demoContacts[2]!.name,
+            customerEmail: demoContacts[2]!.email,
+            customerPhone: demoContacts[2]!.phone,
+            invoiceDate: dateOnlyOffset(0),
+            dueDate: dateOnlyOffset(30),
+            currency,
+            status: "DRAFT" as const,
+            paymentStatus: "UNPAID" as const,
+            subtotal: "600.0000",
+            discountAmount: "0.0000",
+            discountType: "FIXED" as const,
+            discountValue: "0.0000",
+            taxAmount: "0.0000",
+            additionalCharges: "0.0000",
+            shippingAmount: "0.0000",
+            roundOff: "0.0000",
+            grandTotal: "600.0000",
+            amountPaid: "0.0000",
+            balanceDue: "600.0000",
+            createdByUserId: userId,
+            ownerUserId: userId,
+            notes: "Sample draft invoice for workspace preview.",
+          },
+        ],
+      });
+      await tx.billingInvoiceItem.createMany({
+        skipDuplicates: true,
+        data: [
+          { id: invoiceItemIds[0]!, organizationId, invoiceId: invoiceIds[0]!, productId: billingProductIds[0]!, itemName: demoBillingProducts[0]!.name, description: demoBillingProducts[0]!.description, sku: `DEMO-${numberSuffix}-SKU-001`, hsnSacCode: null, quantity: "1.0000", unit: demoBillingProducts[0]!.unit, unitPrice: "1200.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "1200.0000", position: 0 },
+          { id: invoiceItemIds[1]!, organizationId, invoiceId: invoiceIds[1]!, productId: billingProductIds[1]!, itemName: demoBillingProducts[1]!.name, description: demoBillingProducts[1]!.description, sku: `DEMO-${numberSuffix}-SKU-002`, hsnSacCode: null, quantity: "2.0000", unit: demoBillingProducts[1]!.unit, unitPrice: "450.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "900.0000", position: 0 },
+          { id: invoiceItemIds[2]!, organizationId, invoiceId: invoiceIds[1]!, productId: billingProductIds[2]!, itemName: demoBillingProducts[2]!.name, description: demoBillingProducts[2]!.description, sku: `DEMO-${numberSuffix}-SKU-003`, hsnSacCode: null, quantity: "1.0000", unit: demoBillingProducts[2]!.unit, unitPrice: "600.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "600.0000", position: 1 },
+          { id: invoiceItemIds[3]!, organizationId, invoiceId: invoiceIds[2]!, productId: billingProductIds[2]!, itemName: demoBillingProducts[2]!.name, description: demoBillingProducts[2]!.description, sku: `DEMO-${numberSuffix}-SKU-003`, hsnSacCode: null, quantity: "1.0000", unit: demoBillingProducts[2]!.unit, unitPrice: "600.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "600.0000", position: 0 },
+        ],
+      });
+
+      await tx.billingQuotation.createMany({
+        skipDuplicates: true,
+        data: [{
+          id: quotationIds[0]!,
+          organizationId,
+          quotationNumber,
+          customerType: "CONTACT",
+          contactId: ids(organizationId, demoContactKeys)[1]!,
+          companyId: null,
+          customerName: demoContacts[1]!.name,
+          customerEmail: demoContacts[1]!.email,
+          customerPhone: demoContacts[1]!.phone,
+          validUntil: dateOnlyOffset(14),
+          currency,
+          status: "SENT",
+          subtotal: "2400.0000",
+          discountAmount: "0.0000",
+          discountType: "FIXED",
+          discountValue: "0.0000",
+          taxAmount: "0.0000",
+          grandTotal: "2400.0000",
+          notes: "Sample quotation for workspace preview.",
+          terms: "This sample quotation is for demonstration only.",
+          createdByUserId: userId,
+        }],
+      });
+      await tx.billingQuotationItem.createMany({
+        skipDuplicates: true,
+        data: [
+          { id: quotationItemIds[0]!, organizationId, quotationId: quotationIds[0]!, productId: billingProductIds[1]!, itemName: demoBillingProducts[1]!.name, description: demoBillingProducts[1]!.description, sku: `DEMO-${numberSuffix}-SKU-002`, hsnSacCode: null, quantity: "4.0000", unit: demoBillingProducts[1]!.unit, unitPrice: "450.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "1800.0000", position: 0 },
+          { id: quotationItemIds[1]!, organizationId, quotationId: quotationIds[0]!, productId: billingProductIds[2]!, itemName: demoBillingProducts[2]!.name, description: demoBillingProducts[2]!.description, sku: `DEMO-${numberSuffix}-SKU-003`, hsnSacCode: null, quantity: "1.0000", unit: demoBillingProducts[2]!.unit, unitPrice: "600.0000", discountAmount: "0.0000", discountType: "FIXED" as const, discountValue: "0.0000", invoiceDiscountAllocation: "0.0000", taxRate: "0.0000", taxAmount: "0.0000", lineTotal: "600.0000", position: 1 },
+        ],
+      });
+
+      const paymentDate = dateOffset(-2);
+      await tx.billingPayment.createMany({
+        skipDuplicates: true,
+        data: [{
+          id: paymentIds[0]!,
+          organizationId,
+          invoiceId: invoiceIds[0]!,
+          paymentNumber,
+          amount: "400.0000",
+          paymentDate,
+          method: "BANK_TRANSFER",
+          transactionReference: `DEMO-${numberSuffix}-PAYMENT`,
+          createdByUserId: userId,
+        }],
+      });
+      await tx.billingReceipt.createMany({
+        skipDuplicates: true,
+        data: [{
+          id: receiptIds[0]!,
+          organizationId,
+          paymentId: paymentIds[0]!,
+          receiptNumber,
+          customerName: demoContacts[0]!.name,
+          invoiceNumber: invoiceNumbers[0]!,
+          amount: "400.0000",
+          paymentDate,
+          paymentMethod: "BANK_TRANSFER",
+          transactionReference: `DEMO-${numberSuffix}-PAYMENT`,
+          previousBalance: "1200.0000",
+          remainingBalance: "800.0000",
+        }],
       });
       await tx.lead.createMany({
         skipDuplicates: true,
@@ -344,9 +596,40 @@ export class DemoDataService {
     const activityIds = ids(organizationId, demoActivityKeys);
     const automationIds = ids(organizationId, demoAutomationKeys);
     const memberIds = ids(organizationId, demoMemberKeys);
+    const vendorIds = ids(organizationId, demoVendorKeys);
+    const billingProductIds = ids(organizationId, demoBillingProductKeys);
+    const invoiceIds = ids(organizationId, demoInvoiceKeys);
+    const quotationIds = ids(organizationId, demoQuotationKeys);
     const pipelineId = demoId(organizationId, demoPipelineKey);
 
     await this.prisma.$transaction(async (tx) => {
+      const linkedPayments = await tx.billingPayment.findMany({
+        where: { organizationId, invoiceId: { in: invoiceIds } },
+        select: { id: true },
+      });
+      const linkedPaymentIds = linkedPayments.map(({ id }) => id);
+      await tx.billingInvoiceItem.updateMany({
+        where: { organizationId, productId: { in: billingProductIds }, invoiceId: { notIn: invoiceIds } },
+        data: { productId: null },
+      });
+      await tx.billingQuotationItem.updateMany({
+        where: { organizationId, productId: { in: billingProductIds }, quotationId: { notIn: quotationIds } },
+        data: { productId: null },
+      });
+      await tx.billingReceipt.deleteMany({ where: { organizationId, paymentId: { in: linkedPaymentIds } } });
+      await tx.billingAuditEvent.deleteMany({
+        where: { organizationId, resourceId: { in: [...invoiceIds, ...quotationIds, ...linkedPaymentIds] } },
+      });
+      await tx.billingPayment.deleteMany({ where: { organizationId, invoiceId: { in: invoiceIds } } });
+      await tx.billingInvoice.deleteMany({ where: { organizationId, id: { in: invoiceIds } } });
+      await tx.billingQuotation.updateMany({
+        where: { organizationId, id: { in: quotationIds }, convertedInvoiceId: { not: null } },
+        data: { convertedInvoiceId: null },
+      });
+      await tx.billingQuotation.deleteMany({ where: { organizationId, id: { in: quotationIds } } });
+      await tx.billingProduct.deleteMany({ where: { organizationId, id: { in: billingProductIds } } });
+      await tx.vendor.deleteMany({ where: { organizationId, id: { in: vendorIds } } });
+
       await tx.notification.deleteMany({ where: { organizationId, id: { in: ids(organizationId, demoNotificationKeys) } } });
       await tx.auditLog.deleteMany({ where: { organizationId, id: { in: ids(organizationId, demoAuditKeys) } } });
       await tx.emailMessage.deleteMany({ where: { organizationId, id: { in: ids(organizationId, demoEmailKeys) } } });
@@ -373,7 +656,7 @@ export class DemoDataService {
   }
 
   private async counts(organizationId: string) {
-    const [leads, contacts, companies, deals, activities, automations, emails, team, pipeline, auditLogs, notifications] = await Promise.all([
+    const [leads, contacts, companies, deals, activities, automations, emails, team, pipeline, auditLogs, notifications, vendors, billingProducts, invoices, quotations, payments, receipts] = await Promise.all([
       this.prisma.lead.count({ where: { organizationId, id: { in: ids(organizationId, demoLeadKeys) } } }),
       this.prisma.contact.count({ where: { organizationId, id: { in: ids(organizationId, demoContactKeys) } } }),
       this.prisma.company.count({ where: { organizationId, id: { in: ids(organizationId, demoCompanyKeys) } } }),
@@ -385,8 +668,14 @@ export class DemoDataService {
       this.prisma.pipeline.count({ where: { organizationId, id: demoId(organizationId, demoPipelineKey) } }),
       this.prisma.auditLog.count({ where: { organizationId, id: { in: ids(organizationId, demoAuditKeys) } } }),
       this.prisma.notification.count({ where: { organizationId, id: { in: ids(organizationId, demoNotificationKeys) } } }),
+      this.prisma.vendor.count({ where: { organizationId, id: { in: ids(organizationId, demoVendorKeys) } } }),
+      this.prisma.billingProduct.count({ where: { organizationId, id: { in: ids(organizationId, demoBillingProductKeys) } } }),
+      this.prisma.billingInvoice.count({ where: { organizationId, id: { in: ids(organizationId, demoInvoiceKeys) } } }),
+      this.prisma.billingQuotation.count({ where: { organizationId, id: { in: ids(organizationId, demoQuotationKeys) } } }),
+      this.prisma.billingPayment.count({ where: { organizationId, id: { in: ids(organizationId, demoPaymentKeys) } } }),
+      this.prisma.billingReceipt.count({ where: { organizationId, id: { in: ids(organizationId, demoReceiptKeys) } } }),
     ]);
-    return { leads, contacts, companies, deals, activities, automations, emails, team, pipelines: pipeline, auditLogs, notifications };
+    return { leads, contacts, companies, deals, activities, automations, emails, team, pipelines: pipeline, auditLogs, notifications, vendors, billingProducts, invoices, quotations, payments, receipts };
   }
 
 }

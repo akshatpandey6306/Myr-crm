@@ -17,6 +17,7 @@ const settingsSections = [
   { label: 'Users', href: '/settings/users' },
   { label: 'Security & devices', href: '/settings/security' },
   { label: 'Workspace control', href: '/settings/workspace' },
+  { label: 'Plan & payments', href: '/settings/billing' },
   { label: 'Subscription', href: '/subscription' },
 ];
 
@@ -70,7 +71,7 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
     };
   }, [roleRefresh]);
 
-  const teamSettingsPath = pathname === '/settings/users' || pathname === '/settings/roles' || pathname === '/settings/workspace';
+  const teamSettingsPath = pathname === '/settings/users' || pathname === '/settings/roles' || pathname === '/settings/workspace' || pathname === '/settings/billing';
   useEffect(() => {
     if (!roleLoading && !roleError && !canManageTeam && teamSettingsPath) router.replace('/settings');
   }, [canManageTeam, roleError, roleLoading, router, teamSettingsPath]);
@@ -88,7 +89,7 @@ export default function SettingsLayout({ children }: Readonly<{ children: React.
               <Link className="settings-back-to-crm" href="/">Back to CRM</Link>
             </div>
             <nav aria-label="Settings sections">
-              {settingsSections.filter((section) => (section.href !== '/subscription' || canManageTeam) && (canManageTeam || !['/settings/users', '/settings/roles', '/settings/workspace'].includes(section.href))).map((section) => (
+              {settingsSections.filter((section) => (section.href !== '/subscription' || canManageTeam) && (canManageTeam || !['/settings/users', '/settings/roles', '/settings/workspace', '/settings/billing'].includes(section.href))).map((section) => (
                 <Link key={section.href} href={section.href}>{section.label}</Link>
               ))}
             </nav>

@@ -98,9 +98,8 @@ export default function Home() {
     <main className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-brand-row">
-          <Link className="brand" href="/" aria-label="Myr CRM home">
-            <span className="brand-mark">m</span>
-            <span>myr<span className="brand-light">crm</span></span>
+          <Link className="brand" href="/" aria-label="LeadPilot home">
+            <img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" />
           </Link>
           <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span></button>
         </div>
@@ -133,7 +132,7 @@ export default function Home() {
         </div>
       </aside>
 
-      <section className="main-panel" id="overview">
+      <section className="main-panel workspace-overview" id="overview">
         <header className="topbar">
           <MobileNavigation active="Overview" enabledModules={enabledModules ?? undefined} />
           <div className="breadcrumbs">
@@ -171,7 +170,7 @@ export default function Home() {
           <DashboardLivePanels />
 
           <footer className="page-footer">
-            <span>MYR CRM <i /> Workspace overview</span>
+            <span>LEADPILOT <i /> Workspace overview</span>
             <span>Live workspace data</span>
           </footer>
         </div>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
-import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { MembersController } from "../src/organizations/members.controller.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -19,7 +20,7 @@ function request(role: "owner" | "admin" | "sales_manager" | "sales_rep" = "owne
 }
 
 describe("MembersController", () => {
-  it("lists active members only within the selected organization", async () => {
+  it("lists active members and pending invitations only within the selected organization", async () => {
     let args: Record<string, unknown> | undefined;
     const controller = new MembersController({
       membership: {
@@ -28,6 +29,7 @@ describe("MembersController", () => {
           return [{
             userId: "member-a",
             role: "SALES_REP",
+            status: "ACTIVE",
             enabledModules: ["leads", "contacts", "companies", "deals", "activities"],
             createdAt: new Date("2026-10-30T12:00:00.000Z"),
             user: { name: "Riley", email: "riley@example.com", emailVerifiedAt: null },
@@ -37,10 +39,78 @@ describe("MembersController", () => {
     } as never);
 
     const result = await controller.listMembers(request());
-    assert.deepEqual(args?.where, { organizationId, status: "ACTIVE", userId: { not: userId }, user: { status: "ACTIVE" } });
+    assert.deepEqual(args?.where, {
+      organizationId,
+      status: { in: ["ACTIVE", "PENDING"] },
+      userId: { not: userId },
+      user: { status: { in: ["ACTIVE", "PENDING"] } },
+    });
     assert.equal(result.data[0].role, "sales_rep");
+    assert.equal(result.data[0].status, "active");
     assert.deepEqual(result.data[0].enabledModules, ["leads", "contacts", "companies", "deals", "activities"]);
     assert.equal(result.data[0].emailVerified, false);
+  });
+
+  it("creates a pending employee and emails a one-time password setup link", async () => {
+    let userData: Record<string, unknown> | undefined;
+    let membershipData: Record<string, unknown> | undefined;
+    let tokenData: Record<string, unknown> | undefined;
+    let sentToken = "";
+    let recipient = "";
+    const transaction = {
+      organization: { findUnique: async () => ({ subscriptionPlan: null }) },
+      membership: { count: async () => 1 },
+      user: {
+        findUnique: async () => null,
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          userData = data;
+          membershipData = (data.memberships as { create: Record<string, unknown> }).create;
+          return { id: "employee-a", email: "riley@example.com", name: "Riley Jones" };
+        },
+      },
+      auditLog: { create: async () => undefined },
+      emailToken: {
+        updateMany: async () => ({ count: 0 }),
+        create: async ({ data }: { data: Record<string, unknown> }) => { tokenData = data; },
+      },
+    };
+    const prisma = {
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    };
+    const email = {
+      isConfigured: () => true,
+      sendAccountActivation: async (token: string, to: string) => { sentToken = token; recipient = to; },
+    };
+
+    const result = await new MembersController(prisma as never, email as never).createMember(request("admin"), {
+      name: "Riley Jones",
+      email: "RILEY@Example.com",
+      role: "sales_rep",
+    });
+
+    assert.equal(result.data.userId, "employee-a");
+    assert.equal(result.data.status, "pending");
+    assert.equal(result.data.emailVerified, false);
+    assert.equal(userData?.status, "PENDING");
+    assert.equal(typeof userData?.passwordHash, "string");
+    assert.equal(membershipData?.status, "PENDING");
+    assert.equal(tokenData?.purpose, "ACCOUNT_ACTIVATION");
+    assert.equal(tokenData?.tokenHash, createHash("sha256").update(sentToken).digest("hex"));
+    assert.notEqual(tokenData?.tokenHash, sentToken);
+    assert.equal(recipient, "riley@example.com");
+  });
+
+  it("does not create employee accounts when invitation email is unavailable", async () => {
+    let transactionStarted = false;
+    const controller = new MembersController({
+      $transaction: async () => { transactionStarted = true; },
+    } as never, { isConfigured: () => false } as never);
+
+    await assert.rejects(
+      controller.createMember(request("admin"), { name: "Riley Jones", email: "riley@example.com" }),
+      ServiceUnavailableException,
+    );
+    assert.equal(transactionStarted, false);
   });
 
   it("denies member administration to sales managers", async () => {
@@ -70,6 +140,8 @@ describe("MembersController", () => {
         findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }),
       },
       subscriptionPlan: { findUnique: async () => ({ employeeLimit: 2 }) },
+      organizationSubscriptionPlanOverride: { findUnique: async () => null },
+      additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
       user: { findMany: async () => [] },
       membership: { count: async () => 1 },
     } as never);
@@ -95,6 +167,8 @@ describe("MembersController", () => {
           findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }),
         },
         subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
+        organizationSubscriptionPlanOverride: { findUnique: async () => null },
+        additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
         membership: { count: async () => 1 },
         user: {
           findMany: async () => [],
@@ -214,6 +288,8 @@ describe("MembersController", () => {
           findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }),
         },
         subscriptionPlan: { findUnique: async () => ({ employeeLimit: 10 }) },
+        organizationSubscriptionPlanOverride: { findUnique: async () => null },
+        additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
         membership: { count: async () => 0 },
         user: {
           findMany: async () => [],
@@ -246,8 +322,14 @@ describe("MembersController", () => {
     let membershipData: Record<string, unknown> | undefined;
     let notificationData: Record<string, unknown>[] | undefined;
     const transaction = {
+      organization: { findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: null }) },
+      subscriptionPlan: { findUnique: async () => null },
+      organizationSubscriptionPlanOverride: { findUnique: async () => null },
+      additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
       membership: {
         findUnique: async () => null,
+        findFirst: async () => null,
+        count: async () => 0,
         upsert: async (args: Record<string, unknown>) => { membershipData = args; return {}; },
         findMany: async () => [{ userId: "admin-a" }],
       },
@@ -256,7 +338,7 @@ describe("MembersController", () => {
     };
     const controller = new MembersController({
       organization: { findFirst: async () => ({ id: organizationId, name: "Acme" }) },
-      membership: { findUnique: async () => null },
+      membership: { findUnique: async () => null, findFirst: async () => null },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     } as never);
 
@@ -286,8 +368,11 @@ describe("MembersController", () => {
     const transaction = {
       organization: { findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }) },
       subscriptionPlan: { findUnique: async () => ({ employeeLimit: 2 }) },
+      organizationSubscriptionPlanOverride: { findUnique: async () => null },
+      additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
       membership: {
         count: async () => 1,
+        findFirst: async () => null,
         updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
       },
     };
@@ -323,8 +408,11 @@ describe("MembersController", () => {
     const transaction = {
       organization: { findUnique: async () => ({ subscriptionStatus: "TRIAL", subscriptionEndsAt: new Date(Date.now() + 60_000), subscriptionPlan: "growth" }) },
       subscriptionPlan: { findUnique: async () => ({ employeeLimit: 2 }) },
+      organizationSubscriptionPlanOverride: { findUnique: async () => null },
+      additionalSeatPurchase: { aggregate: async () => ({ _sum: { quantity: 0 } }) },
       membership: {
-        count: async () => 2,
+        count: async () => 3,
+        findFirst: async () => null,
         updateMany: async () => { updated = true; return { count: 1 }; },
       },
     };

@@ -57,8 +57,7 @@ export default function MobileNavigation({ active, enabledModules }: { active: s
     <div className="mobile-nav-layer" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
       <nav className="mobile-nav-drawer" id="mobile-module-menu" aria-label="Main navigation">
         <div className="mobile-nav-heading">
-          <span className="brand-mark">m</span>
-          <span className="mobile-nav-brand">myr<span>crm</span></span>
+          <img className="mobile-nav-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" />
           <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}>×</button>
         </div>
         <p className="mobile-nav-workspace">STUDIO NORTH <span>·</span> WORKSPACE</p>
@@ -83,7 +82,7 @@ export default function MobileNavigation({ active, enabledModules }: { active: s
             <button type="button" onClick={() => void signOut()}>Sign out</button>
           </div>
         ) : (
-          <div className="mobile-nav-footer">MYR CRM <span>·</span> Workspace preview</div>
+          <div className="mobile-nav-footer">LEADPILOT <span>·</span> Workspace preview</div>
         )}
       </nav>
     </div>,

@@ -79,4 +79,15 @@ describe('VendorsManager', () => {
     expect(await screen.findByText('Bluebird Logistics')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Northstar Supply')).not.toBeInTheDocument());
   });
+
+  it('refreshes vendor records when sample data changes', async () => {
+    render(<VendorsManager />);
+    expect(await screen.findByText('Northstar Supply')).toBeInTheDocument();
+
+    activeVendor = { ...vendor, id: 'vendor-demo', name: 'Forma Cloud Services', category: 'Technology' };
+    window.dispatchEvent(new Event('myr:demo-data-changed'));
+
+    expect(await screen.findByText('Forma Cloud Services')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Northstar Supply')).not.toBeInTheDocument());
+  });
 });

@@ -3,7 +3,7 @@ import CrmShell from "../components/CrmShell";
 import "./activities.css";
 
 export const metadata: Metadata = {
-  title: "Activities & Tasks | Myr CRM",
+  title: "Activities & Tasks | LeadPilot",
   description: "Manage CRM activities and tasks in one place.",
 };
 

@@ -7,7 +7,7 @@ type LeadEvent = {
   leadId: string;
   leadName: string;
   leadOwnerUserId: string;
-  status: "NEW" | "CONTACTED" | "QUALIFIED" | "DISQUALIFIED";
+  status: string;
   event: "lead_created" | "lead_status_changed";
 };
 
@@ -20,7 +20,7 @@ export class AutomationsService {
       where: { organizationId: event.organizationId, trigger, enabled: true, archivedAt: null },
     });
     const matchingRules = rules.filter((rule) =>
-      rule.trigger !== "LEAD_STATUS_CHANGED" || rule.triggerStatus === event.status,
+      rule.trigger !== "LEAD_STATUS_CHANGED" || rule.triggerStatus?.toLowerCase() === event.status.toLowerCase(),
     );
     if (matchingRules.length === 0) return generatedActivityIds;
 

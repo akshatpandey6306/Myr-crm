@@ -2,3 +2,4 @@ export function effectiveSubscriptionStatus(status: string, endsAt: Date | null,
   if ((status === "TRIAL" || status === "ACTIVE") && (!endsAt || endsAt <= now)) return "expired";
   return status.toLowerCase();
 }
+22222333333

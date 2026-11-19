@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360" role="img" aria-labelledby="title">
+  <title id="title">LeadPilot by Advance Solution</title>
+  <rect width="1080" height="360" fill="#fff"/>
+  <rect x="18" y="24" width="312" height="312" rx="28" fill="#fff"/>
+  <g fill="#17177f" stroke="#17177f" stroke-width="22" stroke-linejoin="miter" transform="scale(.28889)">
+    <path d="M203 141 541 475 477 541 203 266z"/>
+    <path d="M541 475 877 136v411c0 89-36 145-89 177l-89-88c57-23 87-57 87-94V360L541 608l-64-67z"/>
+    <path d="M203 377 294 468v477h-91z"/>
+    <path d="m294 468 344 477h125L384 565z"/>
+    <path d="m642 701 68-71 165 184v131z"/>
+  </g>
+  <g fill="#17177f" font-family="Arial, Helvetica, sans-serif" font-weight="800" letter-spacing="-5">
+    <text x="310" y="123" font-size="112">ADVANCE</text>
+    <text x="310" y="272" font-size="112">SOLUTION</text>
+  </g>
+</svg>

@@ -107,6 +107,59 @@
   font-weight: 600;
 }
 
+.settings-billing-page { display: grid; gap: 18px; }
+.settings-billing-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-billing-heading h2 { margin: 3px 0 5px; color: #302b49; font-size: clamp(21px, 2.5vw, 28px); }
+.settings-billing-heading p:last-child { margin: 0; color: #817b96; font-size: 12px; line-height: 1.5; }
+.settings-billing-current { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 16px; }
+.settings-billing-current h3 { margin: 4px 0 0; color: #302b49; font-size: 18px; }
+.settings-billing-current > p { grid-column: 1; margin: 0; color: #716c82; font-size: 12px; }
+.settings-billing-current > p b { color: #264b3e; }
+.settings-billing-current > .button { grid-column: 2; grid-row: 1 / span 2; }
+.settings-payment-receipt-actions { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
+.settings-payment-receipt-actions .button { min-height: 36px; }
+.leadpilot-receipt-backdrop { position: fixed; z-index: 4500; inset: 0; display: grid; place-items: center; overflow-y: auto; background: rgb(20 20 43 / 58%); padding: 20px; backdrop-filter: blur(9px); }
+.leadpilot-receipt-dialog { display: grid; width: min(720px, 100%); max-height: min(90vh, 900px); gap: 20px; overflow-y: auto; border: 1px solid #e1e2ef; border-radius: 20px; background: #fff; padding: clamp(18px, 4vw, 32px); box-shadow: 0 28px 90px rgb(16 18 55 / 30%); }
+.leadpilot-receipt-dialog > header,
+.leadpilot-receipt-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.leadpilot-receipt-dialog > .leadpilot-receipt-topbar { min-height: 68px; }
+.leadpilot-receipt-brand { display: grid !important; justify-items: start; gap: 5px !important; }
+.leadpilot-receipt-dialog > header .leadpilot-receipt-brand img { display: block; width: min(270px, 62vw) !important; height: auto !important; max-height: 64px; flex: 0 1 auto; object-fit: contain; }
+.leadpilot-receipt-dialog > header .leadpilot-receipt-brand span { margin-left: 4px; color: #777a91; font-size: 12px; }
+.leadpilot-receipt-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #ececf3; padding-bottom: 16px; }
+.leadpilot-receipt-heading h2 { margin: 4px 0 0; color: #1b1b73; font-size: clamp(19px, 4vw, 25px); overflow-wrap: anywhere; }
+.leadpilot-receipt-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.leadpilot-receipt-meta > div,
+.leadpilot-receipt-reference { display: grid; min-width: 0; gap: 5px; }
+.leadpilot-receipt-meta span,
+.leadpilot-receipt-reference span { color: #777a91; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.leadpilot-receipt-meta strong { color: #292b44; font-size: 12px; overflow-wrap: anywhere; }
+.leadpilot-receipt-meta small { color: #777a91; font-size: 10px; overflow-wrap: anywhere; }
+.leadpilot-receipt-line { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px solid #e9eaf1; border-bottom: 1px solid #e9eaf1; padding: 16px 0; }
+.leadpilot-receipt-line > div { display: grid; gap: 5px; }
+.leadpilot-receipt-line strong { color: #292b44; font-size: 13px; }
+.leadpilot-receipt-line span { color: #777a91; font-size: 11px; }
+.leadpilot-receipt-total { display: flex; justify-content: flex-end; align-items: center; gap: 22px; color: #777a91; font-size: 13px; }
+.leadpilot-receipt-total strong { color: #17176f; font-size: 20px; }
+.leadpilot-receipt-reference { gap: 7px; border-radius: 12px; background: #f7f7fb; padding: 14px; }
+.leadpilot-receipt-reference code { color: #34364d; font-size: 11px; overflow-wrap: anywhere; }
+.leadpilot-receipt-note { margin: 0; color: #777a91; font-size: 11px; line-height: 1.6; }
+.leadpilot-receipt-dialog > footer { justify-content: flex-end; border-top: 1px solid #ececf3; padding-top: 15px; }
+@media (max-width: 560px) {
+  .settings-billing-heading { align-items: flex-start; }
+  .settings-billing-current { grid-template-columns: minmax(0, 1fr); }
+  .settings-billing-current > p,
+  .settings-billing-current > .button { grid-column: 1; grid-row: auto; }
+  .settings-billing-current > .button { width: 100%; }
+  .leadpilot-receipt-backdrop { align-items: end; padding: 8px; }
+  .leadpilot-receipt-dialog { max-height: 92dvh; border-radius: 18px 18px 10px 10px; }
+  .leadpilot-receipt-dialog > .leadpilot-receipt-topbar { min-height: 56px; }
+  .leadpilot-receipt-dialog > header .leadpilot-receipt-brand img { width: min(220px, 58vw) !important; max-height: 52px; }
+  .leadpilot-receipt-meta { grid-template-columns: 1fr 1fr; }
+  .leadpilot-receipt-dialog > footer { display: grid; grid-template-columns: 1fr 1fr; }
+  .leadpilot-receipt-dialog > footer .button { width: 100%; }
+}
+
 .settings-route-card ul {
   display: grid;
   gap: 8px;

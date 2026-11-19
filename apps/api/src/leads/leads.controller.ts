@@ -5,21 +5,17 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { assignedOwnerFilter, requireRecordArchive, requireRecordWrite } from "../auth/record-permissions.js";
 import { AutomationsService } from "../automations/automations.service.js";
 
-const sources = ["website", "referral", "linkedin", "other"] as const;
-const statuses = ["new", "contacted", "qualified", "disqualified"] as const;
+const sources = ["website", "facebook", "instagram", "meta_ads", "google", "referral", "linkedin", "other"] as const;
 const sortFields = ["createdAt", "name", "company"] as const;
 const sortOrders = ["asc", "desc"] as const;
 const assignmentScopes = ["selected", "all"] as const;
 const assignmentManagers = new Set(["owner", "admin"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type LeadSourceValue = (typeof sources)[number];
-type LeadStatusValue = (typeof statuses)[number];
-type DbLeadSource = "WEBSITE" | "REFERRAL" | "LINKEDIN" | "OTHER";
-type DbLeadStatus = "NEW" | "CONTACTED" | "QUALIFIED" | "DISQUALIFIED";
-type LeadImportRow = { row: number; name: string; company: string; source: LeadSourceValue; status: LeadStatusValue; errors: string[] };
+type DbLeadSource = "WEBSITE" | "FACEBOOK" | "INSTAGRAM" | "META_ADS" | "GOOGLE" | "REFERRAL" | "LINKEDIN" | "OTHER";
+type LeadImportRow = { row: number; name: string; company: string; source: LeadSourceValue; status: string; errors: string[] };
 type LeadAssignment = { leadId: string; ownerUserId: string };
-const sourceToDatabase: Record<LeadSourceValue, DbLeadSource> = { website: "WEBSITE", referral: "REFERRAL", linkedin: "LINKEDIN", other: "OTHER" };
-const statusToDatabase: Record<LeadStatusValue, DbLeadStatus> = { new: "NEW", contacted: "CONTACTED", qualified: "QUALIFIED", disqualified: "DISQUALIFIED" };
+const sourceToDatabase: Record<LeadSourceValue, DbLeadSource> = { website: "WEBSITE", facebook: "FACEBOOK", instagram: "INSTAGRAM", meta_ads: "META_ADS", google: "GOOGLE", referral: "REFERRAL", linkedin: "LINKEDIN", other: "OTHER" };
 
 @Controller("leads")
 export class LeadsController {
@@ -46,8 +42,8 @@ export class LeadsController {
   ) {
     const organizationId = this.organizationId(request);
     if (source && !sources.includes(source as LeadSourceValue)) throw this.invalid("source");
-    const selectedStatuses = statusesValue ? statusesValue.split(",").filter(Boolean) : status ? [status] : [];
-    if (selectedStatuses.some((value) => !statuses.includes(value as LeadStatusValue))) throw this.invalid("Invalid status filter");
+    const selectedStatuses = (statusesValue ? statusesValue.split(",").filter(Boolean) : status ? [status] : [])
+      .map((value) => this.normalizeLeadStatus(value));
     const followUp = followUpValue ?? "any";
     if (!["any", "today", "tomorrow", "overdue", "scheduled"].includes(followUp)) throw this.invalid("Invalid follow-up filter");
     const selectedAssignees = assigneesValue ? [...new Set(assigneesValue.split(",").filter(Boolean))] : [];
@@ -74,7 +70,7 @@ export class LeadsController {
       archivedAt: null,
       ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}),
       ...(source ? { source: sourceToDatabase[source as LeadSourceValue] } : {}),
-      ...(selectedStatuses.length ? { status: { in: selectedStatuses.map((value) => statusToDatabase[value as LeadStatusValue]) } } : {}),
+      ...(selectedStatuses.length ? { status: { in: selectedStatuses } } : {}),
       AND: [
         ...(selectedAssignees.length ? [{ ownerUserId: { in: selectedAssignees } }] : []),
         ...(Object.keys(followUpWhere).length ? [followUpWhere] : []),
@@ -142,8 +138,8 @@ export class LeadsController {
   ) {
     const organizationId = this.organizationId(request);
     if (source && !sources.includes(source as LeadSourceValue)) throw this.invalid("Invalid source filter");
-    const selectedStatuses = statusesValue ? statusesValue.split(",").filter(Boolean) : status ? [status] : [];
-    if (selectedStatuses.some((value) => !statuses.includes(value as LeadStatusValue))) throw this.invalid("Invalid status filter");
+    const selectedStatuses = (statusesValue ? statusesValue.split(",").filter(Boolean) : status ? [status] : [])
+      .map((value) => this.normalizeLeadStatus(value));
     const followUp = followUpValue ?? "any";
     if (!["any", "today", "tomorrow", "overdue", "scheduled"].includes(followUp)) throw this.invalid("Invalid follow-up filter");
     const selectedAssignees = assigneesValue ? [...new Set(assigneesValue.split(",").filter(Boolean))] : [];
@@ -171,7 +167,7 @@ export class LeadsController {
       archivedAt: null,
       ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}),
       ...(source ? { source: sourceToDatabase[source as LeadSourceValue] } : {}),
-      ...(selectedStatuses.length ? { status: { in: selectedStatuses.map((value) => statusToDatabase[value as LeadStatusValue]) } } : {}),
+      ...(selectedStatuses.length ? { status: { in: selectedStatuses } } : {}),
       AND: [
         ...(selectedAssignees.length ? [{ ownerUserId: { in: selectedAssignees } }] : []),
         ...(Object.keys(followUpWhere).length ? [followUpWhere] : []),
@@ -257,7 +253,7 @@ export class LeadsController {
               name: row.name,
               company: row.company,
               source: sourceToDatabase[row.source],
-              status: statusToDatabase[row.status],
+              status: row.status,
               ownerUserId,
               createdByUserId: userId,
             },
@@ -269,7 +265,7 @@ export class LeadsController {
             leadId: lead.id,
             leadName: lead.name,
             leadOwnerUserId: lead.ownerUserId,
-            status: lead.status,
+            status: this.normalizeLeadStatus(lead.status),
             event: "lead_created",
           })) ?? []));
           results.push(lead);
@@ -292,8 +288,8 @@ export class LeadsController {
     const { organizationId, userId } = this.context(request);
     const name = this.requiredText(body?.name, "name", 120);
     const company = this.requiredText(body?.company, "company", 160);
-    const source = this.enumValue(body?.source, sources, "source");
-    const status = this.enumValue(body?.status ?? "new", statuses, "status");
+    const source = this.resolveLeadSource(body);
+    const status = this.normalizeLeadStatus(body?.status ?? "new");
     const result = await this.prisma.$transaction(async (tx) => {
       const ownerUserId = await this.nextLeadOwner(tx, organizationId, userId);
       const createdLead = await tx.lead.create({
@@ -302,7 +298,7 @@ export class LeadsController {
           name,
           company,
           source: sourceToDatabase[source],
-          status: statusToDatabase[status],
+          status,
           ownerUserId,
           createdByUserId: userId,
         },
@@ -314,7 +310,7 @@ export class LeadsController {
         leadId: createdLead.id,
         leadName: createdLead.name,
         leadOwnerUserId: createdLead.ownerUserId,
-        status: createdLead.status,
+        status: this.normalizeLeadStatus(createdLead.status),
         event: "lead_created",
       });
       return { lead: createdLead, generatedActivityIds: generatedActivityIds ?? [] };
@@ -337,7 +333,7 @@ export class LeadsController {
           where: {
             organizationId,
             status: "ACTIVE",
-            role: { not: "READ_ONLY" },
+            role: { notIn: ["OWNER", "READ_ONLY"] },
             user: { status: "ACTIVE" },
           },
           select: { userId: true, user: { select: { name: true } } },
@@ -535,11 +531,11 @@ export class LeadsController {
   async update(@Req() request: HttpRequest, @Param("id") id: string, @Body() body: Record<string, unknown>) {
     requireRecordWrite(request);
     const { organizationId, userId } = this.context(request);
-    const patch: { name?: string; company?: string; source?: DbLeadSource; status?: DbLeadStatus; phone?: string | null; email?: string | null; state?: string | null; city?: string | null; address?: string | null; staffCount?: number | null; productRequirement?: string | null; demoType?: string | null; demoAt?: Date | null; remarks?: string | null; followUpAt?: Date | null } = {};
+    const patch: { name?: string; company?: string; source?: DbLeadSource; status?: string; phone?: string | null; email?: string | null; state?: string | null; city?: string | null; address?: string | null; staffCount?: number | null; productRequirement?: string | null; demoType?: string | null; demoAt?: Date | null; remarks?: string | null; followUpAt?: Date | null } = {};
     if ("name" in (body ?? {})) patch.name = this.requiredText(body.name, "name", 120);
     if ("company" in (body ?? {})) patch.company = this.requiredText(body.company, "company", 160);
     if ("source" in (body ?? {})) patch.source = sourceToDatabase[this.enumValue(body.source, sources, "source")];
-    if ("status" in (body ?? {})) patch.status = statusToDatabase[this.enumValue(body.status, statuses, "status")];
+    if ("status" in (body ?? {})) patch.status = this.normalizeLeadStatus(body.status);
     for (const field of ["phone", "email", "state", "city", "address", "productRequirement", "demoType", "remarks"] as const) {
       if (field in (body ?? {})) patch[field] = this.optionalText(body[field], field, field === "address" || field === "productRequirement" || field === "remarks" ? 4000 : 254);
     }
@@ -566,7 +562,7 @@ export class LeadsController {
           leadId: updatedLead.id,
           leadName: updatedLead.name,
           leadOwnerUserId: updatedLead.ownerUserId,
-          status: updatedLead.status,
+          status: this.normalizeLeadStatus(updatedLead.status),
           event: "lead_status_changed",
         });
         return { lead: updatedLead, generatedActivityIds: generatedActivityIds ?? [] };
@@ -625,7 +621,7 @@ export class LeadsController {
         organizationId,
         userId: { in: settings.leadAutoAssignUserIds },
         status: "ACTIVE",
-        role: { not: "READ_ONLY" },
+        role: { notIn: ["OWNER", "READ_ONLY"] },
         user: { status: "ACTIVE" },
       },
       select: { userId: true },
@@ -654,19 +650,28 @@ export class LeadsController {
       const row = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
       const name = typeof row.name === "string" ? row.name.trim() : "";
       const company = typeof row.company === "string" ? row.company.trim() : "";
-      const sourceValue = typeof row.source === "string" && row.source.trim() ? row.source.trim().toLowerCase() : "website";
-      const statusValue = typeof row.status === "string" && row.status.trim() ? row.status.trim().toLowerCase() : "new";
+      const sourceInput = typeof row.source === "string" && row.source.trim() ? row.source.trim().toLowerCase() : "website";
+      const normalizedSource = sourceInput.replace(/[\s-]+/g, "_");
+      const sourceValue = sources.includes(normalizedSource as LeadSourceValue)
+        ? normalizedSource as LeadSourceValue
+        : this.sourceFromAttribution(sourceInput);
+      const rawStatus = typeof row.status === "string" && row.status.trim() ? row.status : "new";
+      let statusValue = "new";
       const errors: string[] = [];
       if (!name || name.length > 120) errors.push("Name is required and must be at most 120 characters.");
       if (!company || company.length > 160) errors.push("Company is required and must be at most 160 characters.");
-      if (!sources.includes(sourceValue as LeadSourceValue)) errors.push("Source must be website, referral, linkedin, or other.");
-      if (!statuses.includes(statusValue as LeadStatusValue)) errors.push("Status must be new, contacted, qualified, or disqualified.");
+      if (!sourceValue) errors.push("Source must be Facebook, Instagram, Meta Ads, Google, LinkedIn, referral, website, or other.");
+      try {
+        statusValue = this.normalizeLeadStatus(rawStatus);
+      } catch {
+        errors.push("Status is required and must be at most 48 characters.");
+      }
       return {
         row: index + 2,
         name,
         company,
-        source: sources.includes(sourceValue as LeadSourceValue) ? sourceValue as LeadSourceValue : "website",
-        status: statuses.includes(statusValue as LeadStatusValue) ? statusValue as LeadStatusValue : "new",
+        source: sourceValue ?? "website",
+        status: statusValue,
         errors,
       };
     });
@@ -741,7 +746,7 @@ export class LeadsController {
     return { ok: true };
   }
 
-  private present(lead: { id: string; name: string; company: string; source: string; status: string; createdAt: Date; updatedAt: Date; ownerUserId: string; phone?: string | null; email?: string | null; state?: string | null; city?: string | null; address?: string | null; staffCount?: number | null; productRequirement?: string | null; demoType?: string | null; demoAt?: Date | null; remarks?: string | null; followUpAt?: Date | null; owner: { user: { name: string } }; calls?: { id: string; callStatus: string; durationSeconds: number | null; customerResponse: string | null; nextAction: string | null; followUpAt: Date | null; calledAt: Date; logger: { user: { name: string } } }[] }) {
+  private present(lead: { id: string; name: string; company: string; source: string; status: string; createdAt: Date; updatedAt: Date; ownerUserId: string; phone?: string | null; email?: string | null; state?: string | null; city?: string | null; address?: string | null; staffCount?: number | null; productRequirement?: string | null; demoType?: string | null; demoAt?: Date | null; remarks?: string | null; followUpAt?: Date | null; owner: { role: string; user: { name: string } }; calls?: { id: string; callStatus: string; durationSeconds: number | null; customerResponse: string | null; nextAction: string | null; followUpAt: Date | null; calledAt: Date; logger: { user: { name: string } } }[] }) {
     return {
       id: lead.id,
       name: lead.name,
@@ -749,6 +754,7 @@ export class LeadsController {
       source: lead.source.toLowerCase(),
       status: lead.status.toLowerCase(),
       owner: lead.owner.user.name,
+      ownerRole: lead.owner.role.toLowerCase(),
       ownerUserId: lead.ownerUserId,
       phone: lead.phone ?? "",
       email: lead.email ?? "",
@@ -822,7 +828,7 @@ export class LeadsController {
         organizationId,
         userId: { in: userIds },
         status: "ACTIVE",
-        role: { not: "READ_ONLY" },
+        role: { notIn: ["OWNER", "READ_ONLY"] },
         user: { status: "ACTIVE" },
       },
       select: { userId: true },
@@ -842,6 +848,38 @@ export class LeadsController {
   private enumValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
     if (typeof value !== "string" || !allowed.includes(value as T)) throw this.invalid(`Invalid ${field} value`);
     return value as T;
+  }
+
+  private resolveLeadSource(body: Record<string, unknown>): LeadSourceValue {
+    const explicit = body.source;
+    if (explicit !== undefined && explicit !== null && explicit !== "") {
+      if (typeof explicit !== "string") throw this.invalid("Invalid source");
+      const normalized = explicit.trim().toLowerCase().replace(/[\s-]+/g, "_");
+      if (sources.includes(normalized as LeadSourceValue)) return normalized as LeadSourceValue;
+      const inferred = this.sourceFromAttribution(explicit);
+      if (inferred) return inferred;
+      throw this.invalid("Source must be Facebook, Instagram, Meta Ads, Google, LinkedIn, referral, website, or other");
+    }
+    const utmSource = [body.utmSource, body.utm_source].find((value): value is string => typeof value === "string") ?? "";
+    const utmMedium = typeof body.utmMedium === "string" ? body.utmMedium : typeof body.utm_medium === "string" ? body.utm_medium : "";
+    if (/paid|cpc|ppc|paid_social/i.test(utmMedium) && /facebook|instagram|meta|(^|\W)fb($|\W)|(^|\W)ig($|\W)/i.test(utmSource)) return "meta_ads";
+    const attribution = [utmSource, body.referrer, body.referrerUrl]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+    return this.sourceFromAttribution(attribution) ?? "website";
+  }
+
+  private sourceFromAttribution(value: string): LeadSourceValue | undefined {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return undefined;
+    if (/meta([ _-]?ads)?|facebook[ _-]?ads|instagram[ _-]?ads/.test(normalized)) return "meta_ads";
+    if (/facebook|(^|\W)fb($|\W)|fbclid|l\.facebook\.com/.test(normalized)) return "facebook";
+    if (/instagram|(^|\W)ig($|\W)|instagram\.com/.test(normalized)) return "instagram";
+    if (/google|gclid|googleads|google\.com/.test(normalized)) return "google";
+    if (/linkedin|lnkd\.in/.test(normalized)) return "linkedin";
+    if (/referral|referred/.test(normalized)) return "referral";
+    if (/website|web_site/.test(normalized)) return "website";
+    return undefined;
   }
 
   private pagination(pageValue?: string, pageSizeValue?: string) {
@@ -877,6 +915,15 @@ export class LeadsController {
 
   private invalid(message: string) {
     return new BadRequestException({ code: "validation_error", message });
+  }
+
+  private normalizeLeadStatus(value: unknown) {
+    if (typeof value !== "string") throw this.invalid("Status must be text no longer than 48 characters");
+    const normalized = value.trim().replace(/\s+/g, " ").toLowerCase();
+    if (!normalized || normalized.length > 48 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+      throw this.invalid("Status must be text no longer than 48 characters");
+    }
+    return normalized;
   }
 
   private prismaCode(error: unknown) {

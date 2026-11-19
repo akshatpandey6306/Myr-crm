@@ -92,14 +92,23 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
     }
   }
 
+  function BrandLockup({ mobile = false }: { mobile?: boolean }) {
+    return (
+      <Link className={`auth-logo-lockup${mobile ? ' auth-logo-lockup-mobile' : ''}`} href="/" aria-label="LeadPilot by Advance Solution home">
+        <img className="auth-logo-mark" src="/advance-solution-logo.svg" alt="" />
+        <span className="auth-logo-copy"><strong>LeadPilot</strong><small>by Advance Solution</small></span>
+      </Link>
+    );
+  }
+
   return (
     <main className="auth-page">
       <section className="auth-story">
-        <Link className="brand auth-brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+        <BrandLockup />
         <div className="auth-story-copy"><span className="auth-eyebrow">YOUR CUSTOMER RELATIONSHIPS, IN SYNC</span><h1>Make every<br />connection count.</h1><p>Bring your pipeline, people, and next steps together in one calm workspace.</p><div className="auth-story-visual" aria-hidden="true"><span className="auth-orbit auth-orbit-one" /><span className="auth-orbit auth-orbit-two" /><span className="auth-orbit auth-orbit-three" /><span className="auth-visual-card"><i /><i /><i /></span></div></div>
-        <span className="auth-story-foot">MYR CRM <i /> Built for teams that care.</span>
+        <span className="auth-story-foot">LEADPILOT <i /> Built for teams that care.</span>
       </section>
-      <section className="auth-main"><div className="auth-card"><div className="auth-mobile-brand"><Link className="brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link></div><span className="auth-step">{isSignup ? 'GET STARTED' : 'WELCOME BACK'}</span><h2>{isSignup ? 'Create an account' : 'Sign in to Myr'}</h2><p className="auth-subtitle">{isSignup ? 'Create a workspace or request access to your team.' : 'Pick up where you left off with your team.'}</p>
+      <section className="auth-main"><div className="auth-card"><div className="auth-mobile-brand"><BrandLockup mobile /></div><span className="auth-step">{isSignup ? 'GET STARTED' : 'WELCOME BACK'}</span><h2>{isSignup ? 'Create an account' : 'Sign in to LeadPilot'}</h2><p className="auth-subtitle">{isSignup ? 'Create a workspace or request access to your team.' : 'Pick up where you left off with your team.'}</p>
         <form className="auth-form" method="post" onSubmit={submit}>
           {hydrated ? <>
           {isSignup && !pendingOtpEmail && !signupComplete && <>
@@ -137,7 +146,7 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
           ? <p className="auth-switch">Already have an account? <Link href="/sign-in">Sign in</Link></p>
           : <p className="auth-switch">Use the work email and password provided by your workspace admin. You will only see workspaces where your account has active membership.</p>}
         <p className="auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
-      </div><span className="auth-copyright">© 2026 Myr CRM · Secure workspace access</span></section>
+      </div><span className="auth-copyright">© 2026 LeadPilot · Secure workspace access</span></section>
     </main>
   );
 }

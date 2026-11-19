@@ -74,7 +74,7 @@ export default function JoinWorkspacePage() {
     <main className="auth-page auth-security-page">
       <section className="auth-main">
         <div className="auth-card">
-          <Link className="brand auth-brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+          <Link className="brand auth-brand" href="/"><img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" /></Link>
           <span className="auth-step">WORKSPACE ACCESS</span>
           <h2>Join a workspace</h2>
           <p className="auth-subtitle">Enter the join code shared by your workspace admin. Your request will appear in their Team &amp; access page.</p>

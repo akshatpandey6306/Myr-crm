@@ -25,6 +25,12 @@ type BillingCustomer = {
   company?: string | null;
   type: 'contact' | 'company';
 };
+type InvoicePrefill = {
+  customerName: string;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  billingAddress: string | null;
+};
 type BillingProduct = {
   id: string;
   name: string;
@@ -231,9 +237,9 @@ function printInvoice(invoice: BillingInvoice, settings: BillingSettings | null)
     <td>${money(item.discountAmount, currency, settings?.currencyPrecision ?? 2)}</td>
     <td>${printValue(item.taxRate)}%</td>
     <td>${money(item.lineTotal, currency, settings?.currencyPrecision ?? 2)}</td></tr>`).join('') ?? '';
-  const document = `<!doctype html><html><head><title>${printValue(invoice.invoiceNumber ?? 'Draft invoice')}</title>
+  const documentHtml = `<!doctype html><html><head><title>${printValue(invoice.invoiceNumber ?? 'Draft invoice')}</title>
   <style>body{font:14px Arial,sans-serif;color:#20213c;margin:40px auto;max-width:820px}header,.foot{display:flex;justify-content:space-between;gap:24px}h1{font-size:30px;margin:6px 0}h2{font-size:16px;margin:28px 0 8px}p{line-height:1.55}.muted{color:#777991}table{width:100%;border-collapse:collapse;margin:24px 0}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #e8e8f0}th{font-size:11px;color:#686b80}small{display:block;color:#777991;margin-top:3px}.totals{margin-left:auto;width:300px}.totals div{display:flex;justify-content:space-between;padding:6px}.grand{border-top:1px solid #ddd;padding-top:12px!important;font-weight:700;font-size:17px}.notes{white-space:pre-wrap}@media print{body{margin:0 auto}}</style></head><body>
-  <header><div><strong>${printValue(settings?.businessName || 'Myr CRM')}</strong><p class="muted">${printValue(settings?.businessAddress ?? '')}<br>${printValue(settings?.businessEmail ?? '')}</p></div>
+  <header><div><strong>${printValue(settings?.businessName || 'LeadPilot')}</strong><p class="muted">${printValue(settings?.businessAddress ?? '')}<br>${printValue(settings?.businessEmail ?? '')}</p></div>
   <div><h1>INVOICE</h1><strong>${printValue(invoice.invoiceNumber ?? 'Draft')}</strong><p class="muted">Issued ${dateLabel(invoice.invoiceDate)}<br>Due ${dateLabel(invoice.dueDate)}</p></div></header>
   <h2>Bill to</h2><strong>${printValue(invoice.customerName)}</strong><p class="muted">${printValue(invoice.customerEmail ?? '')}<br>${printValue(invoice.customerPhone ?? '')}</p>
   <table><thead><tr><th>ITEM</th><th>QUANTITY</th><th>UNIT PRICE</th><th>DISCOUNT</th><th>TAX</th><th>TOTAL</th></tr></thead><tbody>${rows}</tbody></table>
@@ -243,15 +249,27 @@ function printInvoice(invoice: BillingInvoice, settings: BillingSettings | null)
   <div><span>Payments received</span><strong>${money(invoice.amountPaid, currency, settings?.currencyPrecision ?? 2)}</strong></div>
   <div class="grand"><span>Balance due</span><strong>${money(invoice.balanceDue, currency, settings?.currencyPrecision ?? 2)}</strong></div></div>
   <div class="foot"><p class="notes">${printValue(settings?.defaultTerms ?? '')}</p><p class="muted">Thank you for your business.</p></div>
-  <script>window.onload=()=>window.print()</script></body></html>`;
-  const popup = window.open('', '_blank');
-  if (!popup) {
-    window.alert('Allow pop-ups to print or save this invoice as a PDF.');
-    return;
-  }
-  popup.opener = null;
-  popup.document.write(document);
-  popup.document.close();
+  </body></html>`;
+  const frame = window.document.createElement('iframe');
+  frame.title = `Print ${invoice.invoiceNumber ?? 'draft invoice'}`;
+  frame.style.position = 'fixed';
+  frame.style.left = '-10000px';
+  frame.style.width = '820px';
+  frame.style.height = '1160px';
+  frame.style.border = '0';
+  frame.onload = () => {
+    const printWindow = frame.contentWindow;
+    if (!printWindow) {
+      frame.remove();
+      window.alert('The invoice could not be prepared for printing. Please try again.');
+      return;
+    }
+    printWindow.addEventListener('afterprint', () => frame.remove(), { once: true });
+    printWindow.focus();
+    printWindow.print();
+  };
+  frame.srcdoc = documentHtml;
+  window.document.body.append(frame);
 }
 
 function LineItemsEditor({
@@ -285,26 +303,61 @@ function LineItemsEditor({
 }
 
 function DocumentDialog({
-  kind, contacts, companies, products, settings, close, saved,
+  kind, contacts, companies, products, settings, prefill, close, saved,
 }: {
   kind: 'invoice' | 'quotation';
   contacts: BillingCustomer[];
   companies: BillingCustomer[];
   products: BillingProduct[];
   settings: BillingSettings | null;
+  prefill?: InvoicePrefill | null;
   close: () => void;
   saved: (message: string) => void;
 }) {
-  const [customerType, setCustomerType] = useState<CustomerType>('contact');
+  const [customerType, setCustomerType] = useState<CustomerType>(prefill ? 'custom' : 'contact');
   const [customerId, setCustomerId] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerResults, setCustomerResults] = useState<{ contacts: BillingCustomer[]; companies: BillingCustomer[] } | null>(null);
+  const [customerLookupError, setCustomerLookupError] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [discountType, setDiscountType] = useState<'FIXED' | 'PERCENTAGE'>('FIXED');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [savedDraftId, setSavedDraftId] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
-  const customers = customerType === 'contact' ? contacts : companies;
-  const selectedCustomer = customers.find((customer) => customer.id === customerId);
+  const customers = customerType === 'contact'
+    ? customerResults?.contacts ?? contacts
+    : customerResults?.companies ?? companies;
+  const selectedCustomer = [...contacts, ...companies, ...(customerResults?.contacts ?? []), ...(customerResults?.companies ?? [])]
+    .find((customer) => customer.id === customerId);
+  const customerOptions = selectedCustomer && !customers.some(({ id }) => id === selectedCustomer.id)
+    ? [...customers, selectedCustomer]
+    : customers;
+
+  useEffect(() => {
+    const search = customerSearch.trim();
+    if (!search) {
+      setCustomerResults(null);
+      setCustomerLookupError('');
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setCustomerLookupError('');
+      try {
+        const result = await request<{ contacts: BillingCustomer[]; companies: BillingCustomer[] }>(
+          `/customers?q=${encodeURIComponent(search)}`,
+          { signal: controller.signal },
+        );
+        if (!controller.signal.aborted) setCustomerResults(result.data);
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          setCustomerLookupError(cause instanceof Error ? cause.message : 'Could not search workspace customers.');
+        }
+      }
+    }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [customerSearch]);
 
   function changeLine(key: string, field: keyof LineDraft, value: string) {
     setLines((current) => current.map((line) => {
@@ -364,11 +417,11 @@ function DocumentDialog({
     setError('');
     try {
       if (kind === 'invoice' && savedDraftId) {
+        await request<BillingInvoice>(`/invoices/${savedDraftId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (issueNow) {
           await request<BillingInvoice>(`/invoices/${savedDraftId}/issue`, { method: 'POST' });
           saved('Invoice issued successfully.');
         } else {
-          await request<BillingInvoice>(`/invoices/${savedDraftId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           saved('Invoice draft updated.');
         }
         return;
@@ -400,13 +453,17 @@ function DocumentDialog({
       <header><div><span className="auth-step">{kind === 'invoice' ? 'BILLING / INVOICE' : 'BILLING / QUOTATION'}</span><h2 id="billing-document-title">{kind === 'invoice' ? 'Create invoice' : 'Create quotation'}</h2><p>Customer details and line items are saved to this workspace only.</p></div><button type="button" aria-label="Close dialog" disabled={busy} onClick={close}>×</button></header>
       <form ref={formRef} onSubmit={(event) => void submit(event)}>
         <div className="billing-form-grid">
-          <label>Customer type<select value={customerType} onChange={(event) => { setCustomerType(event.target.value as CustomerType); setCustomerId(''); }}><option value="contact">Existing contact</option><option value="company">Existing company</option><option value="custom">One-time customer</option></select></label>
+          <label>Customer type<select value={customerType} onChange={(event) => { setCustomerType(event.target.value as CustomerType); setCustomerId(''); setCustomerSearch(''); setCustomerResults(null); }}><option value="contact">Existing contact</option><option value="company">Existing company</option><option value="custom">One-time customer</option></select></label>
           {customerType !== 'custom'
-            ? <label>Customer<select value={customerId} onChange={(event) => setCustomerId(event.target.value)} required><option value="">Select a customer</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{customer.company ? ` · ${customer.company}` : ''}</option>)}</select></label>
-            : <label>Customer / business name<input name="customerName" required maxLength={160} placeholder="Customer name" /></label>}
-          {(customerType === 'custom' || customerType === 'company') && <label>Email<input name="customerEmail" type="email" maxLength={254} defaultValue={customerType === 'company' ? selectedCustomer?.email ?? '' : ''} placeholder="billing@company.com" /></label>}
-          {(customerType === 'custom' || customerType === 'company') && <label>Phone<input name="customerPhone" type="tel" maxLength={40} defaultValue={customerType === 'company' ? selectedCustomer?.phone ?? '' : ''} placeholder="Phone number" /></label>}
-          <label>Billing address<textarea name="billingAddress" rows={2} maxLength={2000} placeholder="Street, city, postal code" /></label>
+            ? <>
+              <label>Search customers<input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} maxLength={120} placeholder="Search name, email, phone, or company" /></label>
+              <label>Customer<select value={customerId} onChange={(event) => setCustomerId(event.target.value)} required><option value="">Select a customer</option>{customerOptions.map((customer) => <option key={`${customer.type}-${customer.id}`} value={customer.id}>{customer.name}{customer.company ? ` · ${customer.company}` : ''}</option>)}</select></label>
+              {customerLookupError && <p className="billing-inline-error" role="alert">{customerLookupError}</p>}
+            </>
+            : <label>Customer / business name<input name="customerName" required maxLength={160} defaultValue={prefill?.customerName ?? ''} placeholder="Customer name" /></label>}
+          {(customerType === 'custom' || customerType === 'company') && <label>Email<input name="customerEmail" type="email" maxLength={254} defaultValue={customerType === 'company' ? selectedCustomer?.email ?? '' : prefill?.customerEmail ?? ''} placeholder="billing@company.com" /></label>}
+          {(customerType === 'custom' || customerType === 'company') && <label>Phone<input name="customerPhone" type="tel" maxLength={40} defaultValue={customerType === 'company' ? selectedCustomer?.phone ?? '' : prefill?.customerPhone ?? ''} placeholder="Phone number" /></label>}
+          <label>Billing address<textarea name="billingAddress" rows={2} maxLength={2000} defaultValue={prefill?.billingAddress ?? ''} placeholder="Street, city, postal code" /></label>
           <label>Shipping address<textarea name="shippingAddress" rows={2} maxLength={2000} placeholder="Optional" /></label>
           <label>{kind === 'invoice' ? 'Invoice date' : 'Quotation date'}<input name="invoiceDate" type="date" defaultValue={today} required /></label>
           {kind === 'invoice'
@@ -679,10 +736,34 @@ export default function BillingManager() {
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [dialog, setDialog] = useState<'invoice' | 'quotation' | 'product' | null>(null);
+  const [invoicePrefill, setInvoicePrefill] = useState<InvoicePrefill | null>(null);
   const [paymentInvoice, setPaymentInvoice] = useState<BillingInvoice | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<BillingInvoice | null>(null);
   const [showReceipts, setShowReceipts] = useState(false);
   const [productQuery, setProductQuery] = useState('');
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('newInvoice') !== '1') return;
+    window.history.replaceState(window.history.state, '', window.location.pathname);
+    try {
+      const raw = sessionStorage.getItem('myr.billing.invoicePrefill');
+      sessionStorage.removeItem('myr.billing.invoicePrefill');
+      if (!raw) throw new Error('Lead details were not available to start this invoice.');
+      const value: unknown = JSON.parse(raw);
+      if (!isRecord(value) || typeof value.customerName !== 'string' || !value.customerName.trim()) {
+        throw new Error('Lead details were invalid. Reopen the lead and try again.');
+      }
+      setInvoicePrefill({
+        customerName: value.customerName.trim(),
+        customerEmail: typeof value.customerEmail === 'string' ? value.customerEmail : null,
+        customerPhone: typeof value.customerPhone === 'string' ? value.customerPhone : null,
+        billingAddress: typeof value.billingAddress === 'string' ? value.billingAddress : null,
+      });
+      setDialog('invoice');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not load lead details for the invoice.');
+    }
+  }, []);
 
   useEffect(() => {
     const clearWorkspaceData = () => {
@@ -691,8 +772,13 @@ export default function BillingManager() {
       setInvoicePage(1); setQuotePage(1); setNotice(''); setError(''); setLoading(true);
       setRefresh((value) => value + 1);
     };
+    const refreshDemoData = () => setRefresh((value) => value + 1);
     window.addEventListener('myr:organization-changed', clearWorkspaceData);
-    return () => window.removeEventListener('myr:organization-changed', clearWorkspaceData);
+    window.addEventListener('myr:demo-data-changed', refreshDemoData);
+    return () => {
+      window.removeEventListener('myr:organization-changed', clearWorkspaceData);
+      window.removeEventListener('myr:demo-data-changed', refreshDemoData);
+    };
   }, []);
 
   useEffect(() => {
@@ -756,9 +842,19 @@ export default function BillingManager() {
   ], [dashboard]);
 
   function saved(message: string) {
-    setDialog(null); setPaymentInvoice(null); setSelectedInvoice(null);
+    setDialog(null); setInvoicePrefill(null); setPaymentInvoice(null); setSelectedInvoice(null);
     setNotice(message);
     setRefresh((value) => value + 1);
+  }
+
+  function openInvoiceDialog() {
+    setInvoicePrefill(null);
+    setDialog('invoice');
+  }
+
+  function closeDocumentDialog() {
+    setDialog(null);
+    setInvoicePrefill(null);
   }
 
   async function issueInvoice(invoice: BillingInvoice) {
@@ -808,7 +904,7 @@ export default function BillingManager() {
   return <section className="billing-feature">
     <header className="billing-page-heading">
       <div><p className="date-label">WORKSPACE / FINANCE</p><h1>Billing &amp; Invoicing</h1><p className="welcome-copy">Create invoices, track collections, and keep every customer balance in sync.</p></div>
-      <div className="billing-heading-actions"><button className="button button-secondary" type="button" onClick={() => setDialog('quotation')}>＋ New quotation</button><button className="button button-primary" type="button" onClick={() => setDialog('invoice')}>＋ Create invoice</button></div>
+      <div className="billing-heading-actions"><button className="button button-secondary" type="button" onClick={() => setDialog('quotation')}>＋ New quotation</button><button className="button button-primary" type="button" onClick={openInvoiceDialog}>＋ Create invoice</button></div>
     </header>
     <nav className="billing-tabs" aria-label="Billing sections">
       {tabs.map((item) => <button key={item.id} type="button" className={tab === item.id ? 'active' : ''} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { setTab(item.id); setQuery(''); }}>{item.icon}<span>{item.label}</span></button>)}
@@ -835,13 +931,13 @@ export default function BillingManager() {
         </section>
       </div>
       <section className="panel billing-recent-panel"><div className="billing-section-heading"><div><span className="auth-step">RECENT ACTIVITY</span><h2>Latest invoices</h2></div><button className="billing-text-link" type="button" onClick={() => setTab('invoices')}>View all →</button></div>
-        {dashboard.recentInvoices.length ? <div className="table-scroll"><table className="billing-table"><thead><tr><th>INVOICE</th><th>CUSTOMER</th><th>ISSUED</th><th>STATUS</th><th>TOTAL</th></tr></thead><tbody>{dashboard.recentInvoices.map((invoice) => <tr key={invoice.id} onClick={() => setSelectedInvoice(invoice)}><td><strong>{invoice.invoiceNumber ?? 'Draft'}</strong></td><td>{invoice.customerName}</td><td>{dateLabel(invoice.invoiceDate)}</td><td><span className={`billing-status-badge billing-status-${invoice.isOverdue ? 'overdue' : invoice.paymentStatus}`}>{invoice.isOverdue ? 'Overdue' : invoice.paymentStatus.replace('_', ' ')}</span></td><td>{money(invoice.grandTotal, invoice.currency, settings?.currencyPrecision)}</td></tr>)}</tbody></table></div> : <div className="billing-empty"><span>▤</span><strong>No invoices yet</strong><p>Create your first invoice to see financial activity here.</p><button className="button button-primary" type="button" onClick={() => setDialog('invoice')}>Create invoice</button></div>}
+        {dashboard.recentInvoices.length ? <div className="table-scroll"><table className="billing-table"><thead><tr><th>INVOICE</th><th>CUSTOMER</th><th>ISSUED</th><th>STATUS</th><th>TOTAL</th></tr></thead><tbody>{dashboard.recentInvoices.map((invoice) => <tr key={invoice.id} onClick={() => setSelectedInvoice(invoice)}><td><strong>{invoice.invoiceNumber ?? 'Draft'}</strong></td><td>{invoice.customerName}</td><td>{dateLabel(invoice.invoiceDate)}</td><td><span className={`billing-status-badge billing-status-${invoice.isOverdue ? 'overdue' : invoice.paymentStatus}`}>{invoice.isOverdue ? 'Overdue' : invoice.paymentStatus.replace('_', ' ')}</span></td><td>{money(invoice.grandTotal, invoice.currency, settings?.currencyPrecision)}</td></tr>)}</tbody></table></div> : <div className="billing-empty"><span>▤</span><strong>No invoices yet</strong><p>Create your first invoice to see financial activity here.</p><button className="button button-primary" type="button" onClick={openInvoiceDialog}>Create invoice</button></div>}
       </section>
     </div>}
 
     {tab === 'invoices' && <section className="panel billing-list-panel">
       <div className="billing-list-toolbar"><div><span className="auth-step">WORKSPACE RECORDS</span><h2>Invoices <small>{invoiceTotal}</small></h2></div><div className="billing-list-filters"><label className="module-search"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => { setQuery(event.target.value); setInvoicePage(1); }} placeholder="Search invoice or customer…" aria-label="Search invoices" /></label><select aria-label="Filter invoices" value={invoiceStatus} onChange={(event) => { setInvoiceStatus(event.target.value); setInvoicePage(1); }}><option value="ALL">All invoices</option><option value="DRAFT">Draft</option><option value="ISSUED">Issued</option><option value="PAID">Paid</option><option value="PARTIALLY_PAID">Partially paid</option><option value="UNPAID">Unpaid</option><option value="OVERDUE">Overdue</option><option value="CANCELLED">Cancelled</option></select></div></div>
-      {invoices.length ? <div className="table-scroll"><table className="billing-table"><thead><tr><th>INVOICE</th><th>CUSTOMER</th><th>DATE / DUE</th><th>TOTAL</th><th>PAID</th><th>BALANCE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id}><td><button className="billing-record-link" type="button" onClick={() => setSelectedInvoice(invoice)}>{invoice.invoiceNumber ?? 'Draft'}</button></td><td>{invoice.customerName}</td><td>{dateLabel(invoice.invoiceDate)}<small>Due {dateLabel(invoice.dueDate)}</small></td><td>{money(invoice.grandTotal, invoice.currency, settings?.currencyPrecision)}</td><td>{money(invoice.amountPaid, invoice.currency, settings?.currencyPrecision)}</td><td>{money(invoice.balanceDue, invoice.currency, settings?.currencyPrecision)}</td><td><span className={`billing-status-badge billing-status-${invoice.isOverdue ? 'overdue' : invoice.status === 'cancelled' ? 'cancelled' : invoice.paymentStatus}`}>{invoice.isOverdue ? 'Overdue' : invoice.status === 'draft' ? 'Draft' : invoice.paymentStatus.replace('_', ' ')}</span></td><td><div className="billing-row-actions"><button type="button" onClick={() => setSelectedInvoice(invoice)}>View</button>{invoice.status === 'draft' && <button type="button" onClick={() => void issueInvoice(invoice)}>Issue</button>}{invoice.status === 'issued' && Number(invoice.balanceDue) > 0 && <button type="button" onClick={() => setPaymentInvoice(invoice)}>Payment</button>}</div></td></tr>)}</tbody></table></div> : !loading && <div className="billing-empty"><span>▤</span><strong>{query ? 'No matching invoices' : 'No invoices in this view'}</strong><p>Try changing the status filter or create an invoice.</p>{!query && <button className="button button-primary" type="button" onClick={() => setDialog('invoice')}>Create invoice</button>}</div>}
+      {invoices.length ? <div className="table-scroll"><table className="billing-table"><thead><tr><th>INVOICE</th><th>CUSTOMER</th><th>DATE / DUE</th><th>TOTAL</th><th>PAID</th><th>BALANCE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id}><td><button className="billing-record-link" type="button" onClick={() => setSelectedInvoice(invoice)}>{invoice.invoiceNumber ?? 'Draft'}</button></td><td>{invoice.customerName}</td><td>{dateLabel(invoice.invoiceDate)}<small>Due {dateLabel(invoice.dueDate)}</small></td><td>{money(invoice.grandTotal, invoice.currency, settings?.currencyPrecision)}</td><td>{money(invoice.amountPaid, invoice.currency, settings?.currencyPrecision)}</td><td>{money(invoice.balanceDue, invoice.currency, settings?.currencyPrecision)}</td><td><span className={`billing-status-badge billing-status-${invoice.isOverdue ? 'overdue' : invoice.status === 'cancelled' ? 'cancelled' : invoice.paymentStatus}`}>{invoice.isOverdue ? 'Overdue' : invoice.status === 'draft' ? 'Draft' : invoice.paymentStatus.replace('_', ' ')}</span></td><td><div className="billing-row-actions"><button type="button" onClick={() => setSelectedInvoice(invoice)}>View</button>{invoice.status === 'draft' && <button type="button" onClick={() => void issueInvoice(invoice)}>Issue</button>}{invoice.status === 'issued' && Number(invoice.balanceDue) > 0 && <button type="button" onClick={() => setPaymentInvoice(invoice)}>Payment</button>}</div></td></tr>)}</tbody></table></div> : !loading && <div className="billing-empty"><span>▤</span><strong>{query ? 'No matching invoices' : 'No invoices in this view'}</strong><p>Try changing the status filter or create an invoice.</p>{!query && <button className="button button-primary" type="button" onClick={openInvoiceDialog}>Create invoice</button>}</div>}
       <div className="module-table-footer"><span>Showing {invoices.length} of {invoiceTotal} invoices</span><div className="table-pagination"><button type="button" disabled={invoicePage <= 1 || loading} onClick={() => setInvoicePage((page) => page - 1)}>Previous</button><span>Page {invoicePage} of {Math.max(1, invoicePages)}</span><button type="button" disabled={invoicePage >= invoicePages || loading} onClick={() => setInvoicePage((page) => page + 1)}>Next</button></div></div>
     </section>}
 
@@ -869,7 +965,8 @@ export default function BillingManager() {
       companies={companies}
       products={products}
       settings={settings}
-      close={() => setDialog(null)}
+      prefill={dialog === 'invoice' ? invoicePrefill : null}
+      close={closeDocumentDialog}
       saved={saved}
     /> : null}
     {dialog === 'product' && <ProductDialog close={() => setDialog(null)} saved={() => saved('Product saved to this workspace.')} />}

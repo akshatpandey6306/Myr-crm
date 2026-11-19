@@ -26,6 +26,7 @@ import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 import { DemoDataService } from "../demo-data/demo-data.controller.js";
 import { TenantProvisioningService } from "../provisioning/tenant-provisioning.service.js";
 import { AuthEmailService } from "../auth/email.service.js";
+import { billingPeriodEnd } from "../billing/billing-period.js";
 
 const MODULES = ["leads", "contacts", "companies", "deals", "activities", "vendors", "billing-invoicing", "team", "automation", "email", "reports", "audit-logs", "settings"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -36,10 +37,11 @@ type PlanDraft = {
   name: string;
   price: number;
   currency: string;
-  billingInterval: "monthly" | "yearly";
-  trialDays: number;
+  billingInterval: number;
   features: string[];
   employeeLimit: number | null;
+  additionalSeatsEnabled: boolean;
+  additionalSeatPrice: number;
   maxDevicesPerUser: number;
   deviceRestrictionEnabled: boolean;
   usageLimits: Record<string, number>;
@@ -75,10 +77,11 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
   const name = typeof body.name === "string" ? body.name.trim() : current?.name ?? "";
   const price = body.price === undefined ? current?.price : body.price;
   const currency = typeof body.currency === "string" ? body.currency.trim().toUpperCase() : current?.currency ?? "INR";
-  const billingInterval = body.billingInterval ?? current?.billingInterval ?? "monthly";
-  const trialDays = body.trialDays ?? current?.trialDays ?? 0;
+  const billingInterval = body.billingInterval === undefined ? current?.billingInterval ?? 30 : Number(body.billingInterval);
   const features = body.features ?? current?.features ?? [];
   const employeeLimit = body.employeeLimit === undefined ? current?.employeeLimit ?? null : body.employeeLimit;
+  const additionalSeatsEnabled = body.additionalSeatsEnabled === undefined ? current?.additionalSeatsEnabled ?? false : body.additionalSeatsEnabled;
+  const additionalSeatPrice = body.additionalSeatPrice === undefined ? current?.additionalSeatPrice ?? 0 : body.additionalSeatPrice;
   const maxDevicesPerUser = body.maxDevicesPerUser === undefined ? current?.maxDevicesPerUser ?? 1 : body.maxDevicesPerUser;
   const deviceRestrictionEnabled = body.deviceRestrictionEnabled === undefined ? current?.deviceRestrictionEnabled ?? true : body.deviceRestrictionEnabled;
   const usageLimits = body.usageLimits ?? current?.usageLimits ?? {};
@@ -93,17 +96,19 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
     throw new BadRequestException({ code: "validation_error", message: "Plan price must be a non-negative whole number" });
   }
   if (!/^[A-Z]{3}$/.test(currency)) throw new BadRequestException({ code: "validation_error", message: "Currency must be a three-letter code" });
-  if (billingInterval !== "monthly" && billingInterval !== "yearly") {
-    throw new BadRequestException({ code: "validation_error", message: "Billing interval must be monthly or yearly" });
-  }
-  if (!Number.isInteger(trialDays) || (trialDays as number) < 0 || (trialDays as number) > 365) {
-    throw new BadRequestException({ code: "validation_error", message: "Trial duration must be between 0 and 365 days" });
+  if (additionalSeatsEnabled && currency !== "INR") throw new BadRequestException({ code: "validation_error", message: "Paid additional seats currently require INR pricing through PayU" });
+  if (!Number.isSafeInteger(billingInterval) || billingInterval < 1 || billingInterval > 3650) {
+    throw new BadRequestException({ code: "validation_error", message: "Plan duration must be a whole number from 1 to 3650 days" });
   }
   if (!Array.isArray(features) || features.length > 30 || features.some((feature) => typeof feature !== "string" || feature.trim().length > 160)) {
     throw new BadRequestException({ code: "validation_error", message: "Plan features must be a list of at most 30 short text values" });
   }
   if (employeeLimit !== null && (!Number.isInteger(employeeLimit) || (employeeLimit as number) < 1 || (employeeLimit as number) > 100_000)) {
     throw new BadRequestException({ code: "validation_error", message: "Employee limit must be a positive whole number or unlimited" });
+  }
+  if (typeof additionalSeatsEnabled !== "boolean") throw new BadRequestException({ code: "validation_error", message: "Additional seat availability must be true or false" });
+  if (!Number.isSafeInteger(additionalSeatPrice) || (additionalSeatPrice as number) < 0 || (additionalSeatPrice as number) > 100_000_000 || (additionalSeatsEnabled && (additionalSeatPrice as number) <= 0)) {
+    throw new BadRequestException({ code: "validation_error", message: "Set a positive whole-number additional seat price when seat purchases are enabled" });
   }
   if (!Number.isInteger(maxDevicesPerUser) || (maxDevicesPerUser as number) < 1 || (maxDevicesPerUser as number) > 100) {
     throw new BadRequestException({ code: "validation_error", message: "Device limit must be between 1 and 100" });
@@ -125,9 +130,10 @@ function parsePlanDraft(body: unknown, current?: PlanDraft): PlanDraft {
     price: price as number,
     currency,
     billingInterval,
-    trialDays: trialDays as number,
     features: (features as string[]).map((feature) => feature.trim()).filter(Boolean),
     employeeLimit: employeeLimit as number | null,
+    additionalSeatsEnabled,
+    additionalSeatPrice: additionalSeatPrice as number,
     maxDevicesPerUser: maxDevicesPerUser as number,
     deviceRestrictionEnabled,
     usageLimits: usageLimits as Record<string, number>,
@@ -147,15 +153,8 @@ function parseAuditReason(value: unknown) {
   return reason;
 }
 
-function intervalEnd(from: Date, interval: "monthly" | "yearly") {
-  const end = new Date(from);
-  const day = end.getUTCDate();
-  const targetMonth = end.getUTCMonth() + (interval === "yearly" ? 12 : 1);
-  end.setUTCDate(1);
-  end.setUTCMonth(targetMonth);
-  const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
-  end.setUTCDate(Math.min(day, lastDay));
-  return end;
+function intervalEnd(from: Date, interval: number) {
+  return billingPeriodEnd(from, interval)!;
 }
 
 @SkipOrganizationContext()
@@ -321,7 +320,7 @@ export class ControlPanelController {
   @Get("subscription-activation-requests")
   async listSubscriptionActivationRequests() {
     const requests = await this.prisma.subscriptionActivationRequest.findMany({
-      where: { status: "PENDING" },
+      where: { status: "PENDING", requestType: "ACTIVATION" },
       select: {
         id: true,
         planCode: true,
@@ -335,10 +334,9 @@ export class ControlPanelController {
     const now = new Date();
     const actionableRequests = requests.filter((request) => {
       const status = effectiveSubscriptionStatus(request.organization.subscriptionStatus, request.organization.subscriptionEndsAt);
-      if (request.requestType === "TRIAL") return status === "pending";
       if (["expired", "cancelled"].includes(status)) return true;
       const endsAt = request.organization.subscriptionEndsAt;
-      return ["active", "trial"].includes(status) && endsAt !== null && endsAt > now && endsAt.getTime() <= now.getTime() + 10 * DAY_MS;
+      return status === "active" && endsAt !== null && endsAt > now && endsAt.getTime() <= now.getTime() + 10 * DAY_MS;
     });
     return {
       data: actionableRequests.map((request) => ({
@@ -397,25 +395,9 @@ export class ControlPanelController {
         if (!plan) throw new ConflictException({ code: "plan_unavailable", message: "The requested plan is no longer available" });
 
         const now = new Date();
-        if (subscriptionRequest.requestType === "TRIAL") {
-          if (currentOrganization.subscriptionStatus !== "PENDING") {
-            throw new ConflictException({ code: "subscription_exists", message: "This workspace is no longer awaiting trial approval" });
-          }
-          await transaction.organization.update({
-            where: { id: subscriptionRequest.organizationId },
-            data: {
-              subscriptionPlan: plan.code,
-              subscriptionStatus: "TRIAL",
-              subscriptionStartedAt: now,
-              subscriptionEndsAt: new Date(now.getTime() + 2 * DAY_MS),
-              billingProvider: "trial",
-              enabledModules: plan.modules,
-            },
-          });
-        } else {
           const currentStatus = effectiveSubscriptionStatus(currentOrganization.subscriptionStatus, currentOrganization.subscriptionEndsAt);
           const currentEnd = currentOrganization.subscriptionEndsAt;
-          const renewalWindowOpen = ["active", "trial"].includes(currentStatus) &&
+          const renewalWindowOpen = currentStatus === "active" &&
             currentEnd !== null && currentEnd > now &&
             currentEnd.getTime() <= now.getTime() + 10 * DAY_MS;
           alreadyActive = currentStatus === "active" && currentOrganization.subscriptionPlan === plan.code && !renewalWindowOpen;
@@ -436,7 +418,6 @@ export class ControlPanelController {
               },
             });
           }
-        }
       }
 
       const updated = await transaction.subscriptionActivationRequest.updateMany({
@@ -453,13 +434,6 @@ export class ControlPanelController {
       reason,
       paymentProvider: "not_integrated",
     });
-    if (approved && subscriptionRequest.requestType === "TRIAL") {
-      try {
-        await this.demoData.load(subscriptionRequest.organizationId, subscriptionRequest.requestedById);
-      } catch (error) {
-        this.logger.error("The trial was approved, but sample workspace data could not be loaded", error instanceof Error ? error.stack : undefined);
-      }
-    }
     return { data: { id: requestId, decision: body.decision, requestType: subscriptionRequest.requestType.toLowerCase(), alreadyActive } };
   }
 
@@ -573,9 +547,10 @@ export class ControlPanelController {
       price: existing.price,
       currency: existing.currency.trim(),
       billingInterval: existing.billingInterval as PlanDraft["billingInterval"],
-      trialDays: existing.trialDays,
       features: existing.features,
       employeeLimit: existing.employeeLimit,
+      additionalSeatsEnabled: existing.additionalSeatsEnabled,
+      additionalSeatPrice: existing.additionalSeatPrice,
       maxDevicesPerUser: existing.maxDevicesPerUser,
       deviceRestrictionEnabled: existing.deviceRestrictionEnabled,
       usageLimits: existing.usageLimits as Record<string, number>,
@@ -602,9 +577,10 @@ export class ControlPanelController {
             price: plan.price,
             currency: plan.currency,
             billingInterval: plan.billingInterval,
-            trialDays: plan.trialDays,
             features: plan.features,
             employeeLimit: plan.employeeLimit,
+            additionalSeatsEnabled: plan.additionalSeatsEnabled,
+            additionalSeatPrice: plan.additionalSeatPrice,
             maxDevicesPerUser: plan.maxDevicesPerUser,
             deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
             usageLimits: plan.usageLimits,
@@ -616,9 +592,10 @@ export class ControlPanelController {
             price: plan.price,
             currency: plan.currency,
             billingInterval: plan.billingInterval,
-            trialDays: plan.trialDays,
             features: plan.features,
             employeeLimit: plan.employeeLimit,
+            additionalSeatsEnabled: plan.additionalSeatsEnabled,
+            additionalSeatPrice: plan.additionalSeatPrice,
             maxDevicesPerUser: plan.maxDevicesPerUser,
             deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
             usageLimits: plan.usageLimits,
@@ -649,9 +626,10 @@ export class ControlPanelController {
           price: plan.price,
           currency: plan.currency,
           billingInterval: plan.billingInterval,
-          trialDays: plan.trialDays,
           features: plan.features,
           employeeLimit: plan.employeeLimit,
+          additionalSeatsEnabled: plan.additionalSeatsEnabled,
+          additionalSeatPrice: plan.additionalSeatPrice,
           maxDevicesPerUser: plan.maxDevicesPerUser,
           deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
           usageLimits: plan.usageLimits,
@@ -666,9 +644,10 @@ export class ControlPanelController {
           price: plan.price,
           currency: plan.currency,
           billingInterval: plan.billingInterval,
-          trialDays: plan.trialDays,
           features: plan.features,
           employeeLimit: plan.employeeLimit,
+          additionalSeatsEnabled: plan.additionalSeatsEnabled,
+          additionalSeatPrice: plan.additionalSeatPrice,
           maxDevicesPerUser: plan.maxDevicesPerUser,
           deviceRestrictionEnabled: plan.deviceRestrictionEnabled,
           usageLimits: plan.usageLimits,
@@ -694,7 +673,7 @@ export class ControlPanelController {
 
   @Get("organizations")
   async listOrganizations() {
-    const [organizations, memberCounts, pendingJoinRequestCounts, dealTotals] = await Promise.all([
+    const [organizations, memberCounts, pendingJoinRequestCounts, dealTotals, seatRevenueTotals] = await Promise.all([
       this.prisma.organization.findMany({
         select: {
           id: true,
@@ -718,6 +697,9 @@ export class ControlPanelController {
             take: 1,
             select: { transactionId: true, paymentType: true, amount: true, currency: true, status: true, payuId: true, verifiedAt: true, createdAt: true },
           },
+          additionalSeatPurchases: {
+            select: { quantity: true, status: true, startsAt: true, endsAt: true, payment: { select: { status: true, amount: true } } },
+          },
         },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       }),
@@ -737,11 +719,17 @@ export class ControlPanelController {
         _count: { _all: true },
         _sum: { value: true },
       }),
+      this.prisma.subscriptionPayment.groupBy({
+        by: ["organizationId"],
+        where: { paymentType: { in: ["SEAT_ADDON", "RENEWAL"] }, status: "SUCCEEDED", seatAmount: { gt: 0 } },
+        _sum: { seatAmount: true },
+      }),
     ]);
     const countsByOrganization = new Map(memberCounts.map((entry) => [entry.organizationId, entry._count._all]));
     const pendingJoinRequestsByOrganization = new Map(
       pendingJoinRequestCounts.map((entry) => [entry.organizationId, entry._count._all]),
     );
+    const seatRevenueByOrganization = new Map(seatRevenueTotals.map((entry) => [entry.organizationId, Number(entry._sum.seatAmount ?? 0)]));
     const dealTotalsByOrganization = new Map<string, {
       count: number;
       openPipelineValue: number;
@@ -766,6 +754,8 @@ export class ControlPanelController {
         status: organization.status.toLowerCase(),
         memberCount: countsByOrganization.get(organization.id) ?? 0,
         pendingMemberRequestCount: pendingJoinRequestsByOrganization.get(organization.id) ?? 0,
+        additionalSeats: organization.additionalSeatPurchases.filter((purchase) => purchase.status === "ACTIVE" && purchase.startsAt <= new Date() && purchase.endsAt > new Date()).reduce((total, purchase) => total + purchase.quantity, 0),
+        additionalSeatRevenue: seatRevenueByOrganization.get(organization.id) ?? 0,
         dealCount: dealTotalsByOrganization.get(organization.id)?.count ?? 0,
         openPipelineValue: dealTotalsByOrganization.get(organization.id)?.openPipelineValue ?? 0,
         wonRevenue: dealTotalsByOrganization.get(organization.id)?.wonRevenue ?? 0,
@@ -850,11 +840,7 @@ export class ControlPanelController {
     const derived = scryptSync(ownerPassword, salt, 64);
     const passwordHash = `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
     const now = new Date();
-    const subscriptionEndsAt = plan
-      ? plan.trialDays > 0
-        ? new Date(now.getTime() + plan.trialDays * DAY_MS)
-        : intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"])
-      : null;
+    const subscriptionEndsAt = plan ? intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"]) : null;
     const { owner, createdOrganization } = await this.prisma.$transaction(async (tx) => {
       const owner = await tx.user.create({ data: { email: ownerEmail, name: ownerName, passwordHash } });
       const createdOrganization = await this.tenantProvisioning.createWorkspace(tx, {
@@ -862,7 +848,7 @@ export class ControlPanelController {
         name: organizationName,
         membershipStatus: "ACTIVE",
         subscriptionPlan: plan?.code ?? null,
-        subscriptionStatus: plan ? (plan.trialDays > 0 ? "TRIAL" : "ACTIVE") : "PENDING",
+        subscriptionStatus: plan ? "ACTIVE" : "PENDING",
         subscriptionStartedAt: plan ? now : null,
         subscriptionEndsAt,
         billingProvider: plan ? "manual" : null,
@@ -870,11 +856,11 @@ export class ControlPanelController {
       });
       return { owner, createdOrganization };
     });
-    if ((plan?.trialDays ?? 0) > 0) {
+    if (plan) {
       try {
         await this.demoData.load(createdOrganization.id, owner.id);
       } catch (error) {
-        this.logger.error("The trial workspace was created, but sample data could not be loaded", error instanceof Error ? error.stack : undefined);
+        this.logger.error("The workspace was created, but sample data could not be loaded", error instanceof Error ? error.stack : undefined);
       }
     }
     await this.recordAudit(request, "organization.create", "organization", createdOrganization.id, {
@@ -934,19 +920,19 @@ export class ControlPanelController {
   @Patch("organizations/:organizationId/subscription")
   async updateOrganizationSubscription(
     @Param("organizationId") organizationId: string,
-    @Body() body: { status?: unknown; planCode?: unknown; endsAt?: unknown; extend?: unknown; trialDays?: unknown; reason?: unknown },
+    @Body() body: { status?: unknown; planCode?: unknown; endsAt?: unknown; extend?: unknown; reason?: unknown },
     @Req() request: HttpRequest,
   ) {
     this.validateOrganizationId(organizationId);
-    if (body?.status !== "active" && body?.status !== "trial" && body?.status !== "expired" && body?.status !== "cancelled") {
-      throw new BadRequestException({ code: "validation_error", message: "Subscription status must be active, trial, expired, or cancelled" });
+    if (body?.status !== "active" && body?.status !== "expired" && body?.status !== "cancelled") {
+      throw new BadRequestException({ code: "validation_error", message: "Subscription status must be active, expired, or cancelled" });
     }
     const reason = parseAuditReason(body.reason);
     const planCode = typeof body.planCode === "string" ? body.planCode : undefined;
-    const basePlan = (body.status === "active" || body.status === "trial") && planCode
+    const basePlan = body.status === "active" && planCode
       ? await this.prisma.subscriptionPlan.findFirst({ where: { code: planCode, isActive: true } })
       : null;
-    if ((body.status === "active" || body.status === "trial") && planCode && !basePlan) {
+    if (body.status === "active" && planCode && !basePlan) {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid active plan before activating the subscription" });
     }
     if (body.planCode !== undefined && !planCode) {
@@ -960,30 +946,21 @@ export class ControlPanelController {
       select: { subscriptionPlan: true, subscriptionStartedAt: true, subscriptionEndsAt: true },
     });
     if (!current) throw new NotFoundException({ code: "not_found", message: "Organization not found" });
-    const override = (body.status === "active" || body.status === "trial") && planCode
+    const override = body.status === "active" && planCode
       ? await this.prisma.organizationSubscriptionPlanOverride?.findUnique?.({
           where: { organizationId_planCode: { organizationId, planCode } },
         }) ?? null
       : null;
     const plan = override ? { ...override, code: override.planCode } : basePlan;
-    if ((body.status === "active" || body.status === "trial") && (!basePlan || !plan || (override && !override.isActive))) {
+    if (body.status === "active" && (!basePlan || !plan || (override && !override.isActive))) {
       throw new BadRequestException({ code: "validation_error", message: "Choose a valid active plan before activating the subscription" });
     }
 
     const now = new Date();
     let endsAt: Date | undefined;
     let startsAt = now;
-    if (body.status === "trial") {
-      const trialDays = body.trialDays === undefined ? 2 : body.trialDays;
-      if (!Number.isInteger(trialDays) || (trialDays as number) < 1 || (trialDays as number) > 30) {
-        throw new BadRequestException({ code: "validation_error", message: "Trial extension must be between 1 and 30 days" });
-      }
-      const base = current.subscriptionEndsAt && current.subscriptionEndsAt > now ? current.subscriptionEndsAt : now;
-      startsAt = current.subscriptionStartedAt ?? now;
-      endsAt = new Date(base.getTime() + (trialDays as number) * DAY_MS);
-    }
     if (body.status === "active") {
-      const interval = plan!.billingInterval as PlanDraft["billingInterval"];
+      const interval = plan!.billingInterval;
       if (body.endsAt !== undefined) {
         const parsed = typeof body.endsAt === "string" ? new Date(body.endsAt) : new Date(Number.NaN);
         if (!Number.isFinite(parsed.getTime()) || parsed <= now) {
@@ -1004,10 +981,10 @@ export class ControlPanelController {
 
     const organization = await this.prisma.organization.update({
       where: { id: organizationId },
-      data: body.status === "active" || body.status === "trial"
+      data: body.status === "active"
         ? {
             subscriptionPlan: plan!.code,
-            subscriptionStatus: body.status === "trial" ? "TRIAL" : "ACTIVE",
+            subscriptionStatus: "ACTIVE",
             subscriptionStartedAt: startsAt,
             subscriptionEndsAt: endsAt,
             billingProvider: "manual",
@@ -1029,9 +1006,9 @@ export class ControlPanelController {
     }).catch((error: unknown) => this.throwIfNotFound(error, "Organization not found"));
     await this.prisma.subscriptionActivationRequest.updateMany({
       where: { organizationId, status: "PENDING" },
-      data: { status: body.status === "active" || body.status === "trial" ? "ACTIVATED" : "DECLINED" },
+      data: { status: body.status === "active" ? "ACTIVATED" : "DECLINED" },
     });
-    await this.recordAudit(request, body.status === "active" ? "subscription.activate" : body.status === "trial" ? "subscription.trial.extend" : body.status === "cancelled" ? "subscription.cancel" : "subscription.expire", "organization", organization.id, {
+    await this.recordAudit(request, body.status === "active" ? "subscription.activate" : body.status === "cancelled" ? "subscription.cancel" : "subscription.expire", "organization", organization.id, {
       before: { planCode: current.subscriptionPlan, endsAt: current.subscriptionEndsAt },
       after: { status: organization.subscriptionStatus.toLowerCase(), planCode: organization.subscriptionPlan, endsAt: organization.subscriptionEndsAt },
     }, reason);

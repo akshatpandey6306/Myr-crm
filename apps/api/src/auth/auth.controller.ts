@@ -456,8 +456,8 @@ export class AuthController {
       const consumed = await transaction.emailToken.updateMany({ where: { id: emailToken.id, consumedAt: null, expiresAt: { gt: now } }, data: { consumedAt: now } });
       if (consumed.count !== 1) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
       const user = await transaction.user.updateMany({ where: { id: emailToken.userId, status: "PENDING" }, data: { passwordHash: hashPassword(password), status: "ACTIVE", emailVerifiedAt: now } });
-      const membership = await transaction.membership.updateMany({ where: { userId: emailToken.userId, role: "OWNER", status: "PENDING" }, data: { status: "ACTIVE" } });
-      if (user.count !== 1 || membership.count !== 1) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
+      const membership = await transaction.membership.updateMany({ where: { userId: emailToken.userId, status: "PENDING" }, data: { status: "ACTIVE" } });
+      if (user.count !== 1 || membership.count < 1) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
       await transaction.emailToken.updateMany({ where: { userId: emailToken.userId, purpose: "ACCOUNT_ACTIVATION", consumedAt: null }, data: { consumedAt: now } });
     });
     return { message: "Your account is active. You can now sign in." };

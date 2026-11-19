@@ -5,6 +5,7 @@ import { Public, SkipOrganizationContext } from "../auth/public.decorator.js";
 import { hashPassword } from "../auth/password.js";
 import { AuthEmailService } from "../auth/email.service.js";
 import { TenantProvisioningService } from "./tenant-provisioning.service.js";
+import { billingPeriodEnd } from "../billing/billing-period.js";
 
 type ProvisionBody = {
   requestId?: unknown; orderId?: unknown; product?: unknown;
@@ -124,10 +125,9 @@ export class ProvisioningController {
     if (!supplied || a.length !== b.length || !timingSafeEqual(a, b)) throw new UnauthorizedException({ code: "service_auth_failed", message: "Service authentication failed" });
   }
   private text(value: unknown, max: number) { return typeof value === "string" && value.trim().length <= max ? value.trim() : ""; }
-  private intervalEnd(from: Date, rawInterval: string) {
-    const end = new Date(from); const months = rawInterval === "yearly" ? 12 : rawInterval === "monthly" ? 1 : 0;
-    if (!months) throw new BadRequestException({ code: "PLAN_NOT_FOUND", message: "Unsupported plan billing interval" });
-    const day = end.getUTCDate(); end.setUTCDate(1); end.setUTCMonth(end.getUTCMonth() + months);
-    end.setUTCDate(Math.min(day, new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate())); return end;
+  private intervalEnd(from: Date, rawInterval: number) {
+    const end = billingPeriodEnd(from, rawInterval);
+    if (!end) throw new BadRequestException({ code: "PLAN_NOT_FOUND", message: "Unsupported plan duration" });
+    return end;
   }
 }

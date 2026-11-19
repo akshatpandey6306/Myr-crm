@@ -67,7 +67,7 @@ export default function CrmShell({ active, children }: { active: string; childre
     <main className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-brand-row">
-          <Link className="brand" href="/" aria-label="Myr CRM home"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+          <Link className="brand" href="/" aria-label="LeadPilot by Advance Solution home"><img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" /><img className="brand-symbol-logo" src="/advance-solution-logo.svg" alt="" /></Link>
           <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}><span aria-hidden="true">{sidebarCollapsed ? '›' : '‹'}</span></button>
         </div>
         <WorkspaceSwitcher />

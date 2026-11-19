@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { BillingController } from "../src/billing/billing.controller.js";
 
 function makeMembership(status = "PENDING", role = "OWNER") {
@@ -20,16 +20,79 @@ function makeMembership(status = "PENDING", role = "OWNER") {
 }
 
 describe("BillingController", () => {
+  it("calculates a workspace seat add-on from server plan pricing and scopes its purchase ledger", async () => {
+    let checkoutData: Record<string, unknown> | undefined;
+    let paymentData: Record<string, unknown> | undefined;
+    let addonQuery: Record<string, unknown> | undefined;
+    const org = {
+      ...makeMembership("ACTIVE"),
+      organization: { ...makeMembership("ACTIVE").organization, subscriptionPlan: "growth", subscriptionEndsAt: new Date(Date.now() + 86_400_000) },
+      user: { name: "Workspace owner", email: "owner@example.test" },
+    };
+    const controller = new BillingController({
+      membership: { findFirst: async () => org },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: 30, additionalSeatsEnabled: true, additionalSeatPrice: 100 }) },
+      additionalSeatPurchase: { findMany: async (query: Record<string, unknown>) => { addonQuery = query; return []; } },
+      subscriptionPayment: { create: async ({ data }: { data: Record<string, unknown> }) => { paymentData = data; } },
+    } as never, {
+      isConfigured: () => true,
+      createCheckout: (input: Record<string, unknown>) => { checkoutData = input; return { checkoutUrl: "https://test.payu.in/_payment", fields: { key: "server-key" } }; },
+    } as never);
+
+    await controller.createCheckout({ userId: "owner-a", headers: { "x-organization-id": "org-a" } } as never,
+      { planCode: "growth", purchaseType: "seats", seatQuantity: 3, phone: "+919876543210", amount: "1" } as never);
+
+    assert.equal(paymentData?.organizationId, "org-a");
+    assert.equal(paymentData?.paymentType, "SEAT_ADDON");
+    assert.equal(paymentData?.seatQuantity, 3);
+    assert.equal(paymentData?.seatUnitPrice, 100);
+    assert.equal(paymentData?.seatAmount, "300.00");
+    assert.equal(paymentData?.amount, "300.00");
+    assert.equal(checkoutData?.amount, "300.00");
+    assert.deepEqual((addonQuery?.where as Record<string, unknown>).organizationId, "org-a");
+  });
+
+  it("grants additional seats only on a verified activation and is idempotent on payment replay", async () => {
+    let paymentStatus = "PENDING";
+    let purchaseCreates = 0;
+    let purchaseData: Record<string, unknown> | undefined;
+    const payment = { id: "pay-a", organizationId: "org-a", requestedByUserId: "owner-a", planCode: "growth", paymentType: "SEAT_ADDON", seatQuantity: 2, seatUnitPrice: 150, renewalBaseEndsAt: null, createdAt: new Date() };
+    const transaction = {
+      subscriptionPayment: {
+        findUnique: async () => ({ ...payment, status: paymentStatus, failureReason: null }),
+        update: async ({ data }: { data: Record<string, unknown> }) => { paymentStatus = data.status as string; },
+      },
+      organization: { findUnique: async () => ({ id: "org-a", status: "ACTIVE", subscriptionStatus: "ACTIVE", subscriptionPlan: "growth", subscriptionStartedAt: new Date(), subscriptionEndsAt: new Date(Date.now() + 15 * 86_400_000) }) },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: 30, modules: ["leads", "team"] }) },
+      additionalSeatPurchase: { create: async ({ data }: { data: Record<string, unknown> }) => { purchaseCreates += 1; purchaseData = data; } },
+      subscriptionActivationRequest: { updateMany: async () => ({ count: 0 }) },
+    };
+    const controller = new BillingController({ $transaction: async (work: (tx: typeof transaction) => Promise<unknown>) => work(transaction) } as never);
+    const activate = (controller as unknown as { activateVerifiedPayment: (paymentData: typeof payment, verification: { status: "success"; transactionId: string; amount: string; payuId: string; bankReference: string | null }) => Promise<{ result: string; activated: boolean }> }).activateVerifiedPayment.bind(controller);
+    const verification = { status: "success" as const, transactionId: "txn-a", amount: "300.00", payuId: "payu-a", bankReference: null };
+
+    const first = await activate(payment, verification);
+    const replay = await activate(payment, verification);
+
+    assert.deepEqual(first, { result: "success", activated: true });
+    assert.deepEqual(replay, { result: "success", activated: false });
+    assert.equal(purchaseCreates, 1);
+    assert.equal(purchaseData?.organizationId, "org-a");
+    assert.equal(purchaseData?.quantity, 2);
+    assert.equal(purchaseData?.unitPrice, 150);
+  });
+
   it("returns selected workspace details, plans, and subscription status", async () => {
     const controller = new BillingController({
-      membership: { findFirst: async () => makeMembership() },
       subscriptionPlan: { findMany: async () => [
-        { code: "starter", name: "Starter", price: 999, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 3, features: [] },
-        { code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 10, features: [] },
-        { code: "business", name: "Business", price: 4999, currency: "INR", billingInterval: "monthly", trialDays: 0, employeeLimit: 25, features: [] },
+        { code: "starter", name: "Starter", price: 999, currency: "INR", billingInterval: 30, employeeLimit: 3, features: [], modules: [], additionalSeatsEnabled: false, additionalSeatPrice: 0 },
+        { code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: 30, employeeLimit: 10, features: [], modules: [], additionalSeatsEnabled: false, additionalSeatPrice: 0 },
+        { code: "business", name: "Business", price: 4999, currency: "INR", billingInterval: 30, employeeLimit: 25, features: [], modules: [], additionalSeatsEnabled: false, additionalSeatPrice: 0 },
       ] },
+      additionalSeatPurchase: { findMany: async () => [] },
+      membership: { findFirst: async () => makeMembership(), count: async () => 1 },
       subscriptionActivationRequest: { findFirst: async () => null },
-    } as never);
+    } as never, { isConfigured: () => false } as never);
 
     const result = await controller.current({
       userId: "user-a",
@@ -46,13 +109,11 @@ describe("BillingController", () => {
   it("returns the activation request ID required by the subscription page", async () => {
     const requestedAt = new Date();
     const controller = new BillingController({
-      membership: { findFirst: async () => ({
-        ...makeMembership("EXPIRED"),
-        organization: { ...makeMembership("EXPIRED").organization, subscriptionEndsAt: new Date(Date.now() - 60_000) },
-      }) },
       subscriptionPlan: { findMany: async () => [] },
+      additionalSeatPurchase: { findMany: async () => [] },
+      membership: { findFirst: async () => ({ ...makeMembership("EXPIRED"), userId: "user-a" }), count: async () => 1 },
       subscriptionActivationRequest: { findFirst: async () => ({ id: "request-a", planCode: "growth", requestType: "TRIAL", createdAt: requestedAt }) },
-    } as never);
+    } as never, { isConfigured: () => false } as never);
 
     const result = await controller.current({ userId: "user-a", headers: { "x-organization-id": "org-a" } } as never);
 
@@ -64,76 +125,18 @@ describe("BillingController", () => {
     });
   });
 
-  it("does not grant any trial through the legacy unpaid endpoint", async () => {
-    const controller = new BillingController({} as never);
-    await assert.rejects(
-      controller.startTrial({ userId: "user-a", headers: {} } as never, { planCode: "growth" }),
-      ConflictException,
-    );
-  });
-
-  it("creates a PayU trial order for exactly INR 49 regardless of client amount", async () => {
-    let orderData: Record<string, unknown> | undefined;
-    let checkoutInput: Record<string, unknown> | undefined;
-    const membership = {
-      ...makeMembership(),
-      user: { name: "Maya Chen", email: "maya@example.com" },
-    };
-    const payu = {
-      isConfigured: () => true,
-      createCheckout: (input: Record<string, unknown>) => {
-        checkoutInput = input;
-        return { checkoutUrl: "https://test.payu.in/_payment", fields: { key: "test-key", hash: "signed" } };
-      },
-    };
-    const controller = new BillingController({
-      membership: { findFirst: async () => membership },
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly" }) },
-      subscriptionPayment: { create: async ({ data }: { data: Record<string, unknown> }) => { orderData = data; } },
-    } as never, {} as never, payu as never);
-
-    const result = await controller.createCheckout({
-      userId: "user-a",
-      orgId: "org-a",
-      organizationRole: "owner",
-      headers: { "x-organization-id": "org-a" },
-    } as never, { planCode: "growth", purchaseType: "trial", phone: "+919876543210", amount: "1.00" } as never);
-
-    assert.equal(orderData?.amount, "49.00");
-    assert.equal(orderData?.paymentType, "TRIAL");
-    assert.equal(orderData?.organizationId, "org-a");
-    assert.equal(checkoutInput?.amount, "49.00");
-    assert.equal(checkoutInput?.email, "maya@example.com");
-    assert.equal(result.data.checkoutUrl, "https://test.payu.in/_payment");
-  });
-
-  it("uses INR 1 for a sandbox trial only when the explicit test override is set", async () => {
+  it("rejects trial checkouts even when legacy sandbox trial overrides are set", async () => {
     const previousMode = process.env.PAYU_MODE;
     const previousTestAmount = process.env.PAYU_TEST_TRIAL_AMOUNT;
     process.env.PAYU_MODE = "test";
     process.env.PAYU_TEST_TRIAL_AMOUNT = "1.00";
-    let orderData: Record<string, unknown> | undefined;
-    let checkoutInput: Record<string, unknown> | undefined;
-    const controller = new BillingController({
-      membership: { findFirst: async () => ({
-        ...makeMembership(),
-        user: { name: "Maya Chen", email: "maya@example.com" },
-      }) },
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly" }) },
-      subscriptionPayment: { create: async ({ data }: { data: Record<string, unknown> }) => { orderData = data; } },
-    } as never, {} as never, {
-      isConfigured: () => true,
-      createCheckout: (input: Record<string, unknown>) => {
-        checkoutInput = input;
-        return { checkoutUrl: "https://test.payu.in/_payment", fields: { key: "test-key", hash: "signed" } };
-      },
-    } as never);
+    const controller = new BillingController({} as never, { isConfigured: () => true } as never);
 
     try {
-      await controller.createCheckout({ userId: "user-a", headers: { "x-organization-id": "org-a" } } as never,
-        { planCode: "growth", purchaseType: "trial", phone: "+919876543210", amount: "0.01" } as never);
-      assert.equal(orderData?.amount, "1.00");
-      assert.equal(checkoutInput?.amount, "1.00");
+      await assert.rejects(
+        controller.createCheckout({ userId: "user-a", headers: {} } as never, { planCode: "growth", purchaseType: "trial" } as never),
+        BadRequestException,
+      );
     } finally {
       if (previousMode === undefined) delete process.env.PAYU_MODE;
       else process.env.PAYU_MODE = previousMode;
@@ -151,7 +154,7 @@ describe("BillingController", () => {
       membership: { findFirst: async () => membership },
       subscriptionPlan: { findFirst: async () => ({ code: "growth", name: "Growth", price: 2499, currency: "INR", billingInterval: "monthly" }) },
       subscriptionPayment: { create: async ({ data }: { data: Record<string, unknown> }) => { payment = data; } },
-    } as never, {} as never, {
+    } as never, {
       isConfigured: () => true,
       createCheckout: () => ({ checkoutUrl: "https://secure.payu.in/_payment", fields: { key: "live-key", hash: "signed" } }),
     } as never);
@@ -172,7 +175,7 @@ describe("BillingController", () => {
         assert.equal(where.organizationId, "org-a");
         return { id: "payment-a", organizationId: "org-a", requestedByUserId: "user-a", planCode: "growth", paymentType: "PLAN", transactionId: where.transactionId, amount: "2499.00", status: "PENDING", failureReason: null, renewalBaseEndsAt: null };
       } },
-    } as never, {} as never, {
+    } as never, {
       verifyPayment: async (transactionId: string) => { verifiedTransaction = transactionId; return { status: "pending", transactionId: null, amount: null, payuId: null, bankReference: null }; },
     } as never);
 

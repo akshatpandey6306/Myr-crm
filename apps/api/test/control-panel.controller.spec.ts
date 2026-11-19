@@ -11,28 +11,18 @@ function createController(prisma: Record<string, unknown>, audit = { record: asy
     user: { findUnique: async () => ({ email: "admin@example.com" }) },
     subscriptionActivationRequest: { updateMany: async () => ({ count: 0 }), findMany: async () => [] },
     deal: { groupBy: async () => [], findMany: async () => [], count: async () => 0 },
+    subscriptionPayment: { groupBy: async () => [] },
     ...prisma,
   } as never, audit as never, { load: async () => ({}) } as never, authEmail as never);
 }
 
 describe("ControlPanelController", () => {
-  it("extends an existing trial from its current expiry and audits the change", async () => {
-    const startedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    let updateData: Record<string, unknown> | undefined;
-    const controller = createController({
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads"] }) },
-      organizationSubscriptionPlanOverride: { findUnique: async () => null },
-      organization: {
-        findUnique: async () => ({ subscriptionPlan: "growth", subscriptionStartedAt: startedAt, subscriptionEndsAt: expiresAt }),
-        update: async ({ data }: { data: Record<string, unknown> }) => { updateData = data; return { id: organizationId, subscriptionStatus: "TRIAL", subscriptionPlan: "growth", subscriptionStartedAt: data.subscriptionStartedAt, subscriptionEndsAt: data.subscriptionEndsAt, billingProvider: "manual" }; },
-      },
-    });
-
-    const result = await controller.updateOrganizationSubscription(organizationId, { status: "trial", planCode: "growth", trialDays: 2, reason: "Approved 48-hour extension" }, actorRequest);
-    assert.equal(result.data.status, "trial");
-    assert.equal((updateData?.subscriptionEndsAt as Date).getTime(), expiresAt.getTime() + 48 * 60 * 60 * 1000);
-    assert.deepEqual(updateData?.enabledModules, ["leads"]);
+  it("rejects the retired trial status in manual subscription management", async () => {
+    const controller = createController({});
+    await assert.rejects(
+      controller.updateOrganizationSubscription(organizationId, { status: "trial", planCode: "growth", reason: "Trial removed" }, actorRequest),
+      BadRequestException,
+    );
   });
 
   it("lists tenant owners, active member counts, subscriptions, and enabled modules", async () => {
@@ -45,13 +35,14 @@ describe("ControlPanelController", () => {
           status: "ACTIVE",
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           subscriptionPlan: "growth",
-          subscriptionStatus: "TRIAL",
+          subscriptionStatus: "ACTIVE",
           subscriptionStartedAt: new Date("2027-01-01T00:00:00.000Z"),
           subscriptionEndsAt: new Date("2027-01-15T00:00:00.000Z"),
           billingProvider: "manual",
           enabledModules: ["leads", "team"],
           settings: { currency: "INR" },
           memberships: [{ user: { name: "Maya Chen", email: "maya@example.com" } }],
+          additionalSeatPurchases: [],
         }],
       },
       membership: {
@@ -81,7 +72,7 @@ describe("ControlPanelController", () => {
     assert.deepEqual(pendingRequestQuery?.where, { status: "PENDING", user: { status: "ACTIVE" } });
     assert.deepEqual(result.data[0]?.enabledModules, ["leads", "team"]);
     assert.deepEqual(result.data[0]?.owner, { name: "Maya Chen", email: "maya@example.com" });
-    assert.equal(result.data[0]?.subscription.status, "trial");
+    assert.equal(result.data[0]?.subscription.status, "active");
   });
 
   it("exports filtered platform audit entries with sensitive metadata redacted", async () => {
@@ -135,9 +126,9 @@ describe("ControlPanelController", () => {
         findMany: async () => [{
           id: "request-a",
           planCode: "growth",
-          requestType: "TRIAL",
+          requestType: "ACTIVATION",
           createdAt: new Date("2026-11-05T12:00:00.000Z"),
-          organization: { id: organizationId, name: "Acme", subscriptionPlan: null, subscriptionStatus: "PENDING", subscriptionEndsAt: null },
+          organization: { id: organizationId, name: "Acme", subscriptionPlan: null, subscriptionStatus: "EXPIRED", subscriptionEndsAt: new Date(Date.now() - 60_000) },
           requestedBy: { name: "Maya Chen", email: "maya@example.com" },
         }],
       },
@@ -147,7 +138,7 @@ describe("ControlPanelController", () => {
 
     assert.equal(result.data[0]?.organization.name, "Acme");
     assert.equal(result.data[0]?.requestedBy.email, "maya@example.com");
-    assert.equal(result.data[0]?.requestType, "trial");
+    assert.equal(result.data[0]?.requestType, "activation");
     assert.equal(result.data[0]?.requestedAt, "2026-11-05T12:00:00.000Z");
   });
 
@@ -164,15 +155,15 @@ describe("ControlPanelController", () => {
     assert.deepEqual(result.data.map(({ id }) => id), ["renewal"]);
   });
 
-  it("starts a two-day limited trial only after platform approval", async () => {
+  it("activates an expired workspace only after platform approval", async () => {
     let organizationUpdate: Record<string, unknown> | undefined;
     let requestUpdate: Record<string, unknown> | undefined;
     const transaction = {
       organization: {
-        findUnique: async () => ({ subscriptionStatus: "PENDING", subscriptionEndsAt: null }),
+        findUnique: async () => ({ subscriptionStatus: "EXPIRED", subscriptionPlan: null, subscriptionEndsAt: null }),
         update: async (args: Record<string, unknown>) => { organizationUpdate = args; },
       },
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads", "email"] }) },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: 2, modules: ["leads", "email"] }) },
       subscriptionActivationRequest: {
         updateMany: async (args: Record<string, unknown>) => { requestUpdate = args; return { count: 1 }; },
       },
@@ -183,7 +174,7 @@ describe("ControlPanelController", () => {
           id: "request-a",
           organizationId,
           planCode: "growth",
-          requestType: "TRIAL",
+          requestType: "ACTIVATION",
         }),
       },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
@@ -195,8 +186,8 @@ describe("ControlPanelController", () => {
       actorRequest,
     );
     const updatedOrganization = organizationUpdate?.data as Record<string, unknown>;
-    assert.equal(updatedOrganization.subscriptionStatus, "TRIAL");
-    assert.equal(updatedOrganization.billingProvider, "trial");
+    assert.equal(updatedOrganization.subscriptionStatus, "ACTIVE");
+    assert.equal(updatedOrganization.billingProvider, "manual");
     assert.deepEqual(updatedOrganization.enabledModules, ["leads", "email"]);
     assert.equal(
       new Date(updatedOrganization.subscriptionEndsAt as Date).getTime() -
@@ -205,7 +196,7 @@ describe("ControlPanelController", () => {
     );
     assert.deepEqual(requestUpdate?.where, { id: "22222222-2222-4222-8222-222222222222", status: "PENDING" });
     assert.deepEqual(requestUpdate?.data, { status: "ACTIVATED" });
-    assert.equal(result.data.requestType, "trial");
+    assert.equal(result.data.requestType, "activation");
   });
 
   it("extends an approved renewal from the current expiry date", async () => {
@@ -216,7 +207,7 @@ describe("ControlPanelController", () => {
         findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: currentEnd }),
         update: async (args: Record<string, unknown>) => { organizationUpdate = args; },
       },
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads"] }) },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: 30, modules: ["leads"] }) },
       subscriptionActivationRequest: { updateMany: async () => ({ count: 1 }) },
     };
     const controller = createController({
@@ -497,16 +488,14 @@ describe("ControlPanelController", () => {
       name: "Team Yearly",
       price: 12000,
       currency: "INR",
-      billingInterval: "yearly",
-      trialDays: 14,
+      billingInterval: 365,
       features: ["Shared workspace"],
       employeeLimit: 20,
       usageLimits: { records: 10000 },
       isActive: true,
     }, actorRequest);
 
-    assert.equal((created as Record<string, unknown>).billingInterval, "yearly");
-    assert.equal((created as Record<string, unknown>).trialDays, 14);
+    assert.equal((created as Record<string, unknown>).billingInterval, 365);
     assert.equal(response.data.code, "team-yearly");
     assert.equal(auditAction, "plan.create");
   });
@@ -579,7 +568,7 @@ describe("ControlPanelController", () => {
     const currentEnd = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
     const controller = createController({
       subscriptionPlan: {
-        findFirst: async () => ({ code: "growth", billingInterval: "monthly", modules: ["leads", "deals"] }),
+        findFirst: async () => ({ code: "growth", billingInterval: 30, modules: ["leads", "deals"] }),
       },
       organization: {
         findUnique: async () => ({ subscriptionPlan: "growth", subscriptionStartedAt: now, subscriptionEndsAt: currentEnd }),
@@ -614,7 +603,7 @@ describe("ControlPanelController", () => {
     );
     const data = updateArgs?.data as Record<string, unknown>;
     const expectedEnd = new Date(currentEnd);
-    expectedEnd.setUTCMonth(expectedEnd.getUTCMonth() + 1);
+    expectedEnd.setUTCDate(expectedEnd.getUTCDate() + 30);
     assert.equal(result.data.status, "active");
     assert.equal(result.data.provider, "manual");
     assert.deepEqual(data.enabledModules, ["leads", "deals"]);
@@ -640,7 +629,7 @@ describe("ControlPanelController", () => {
 
   it("rejects expired end dates for manual activation", async () => {
     const controller = createController({
-      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: "monthly" }) },
+      subscriptionPlan: { findFirst: async () => ({ code: "growth", billingInterval: 30 }) },
       organization: { findUnique: async () => ({ subscriptionPlan: null, subscriptionStartedAt: null, subscriptionEndsAt: null }) },
     });
     await assert.rejects(

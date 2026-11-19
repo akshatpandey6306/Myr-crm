@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { crmApiFetch } from '../../../lib/api-client';
+import ContactCsvImport from './ContactCsvImport';
 
 type Contact = { id: string; name: string; email: string; phone: string | null; title: string | null; company: string | null; owner: string };
 type Draft = Pick<Contact, 'name' | 'email' | 'phone' | 'title' | 'company'>;
@@ -51,6 +52,7 @@ export default function ContactsManager() {
   const [notice, setNotice] = useState('');
   const [dialogContact, setDialogContact] = useState<Contact | null | undefined>(undefined);
   const [refresh, setRefresh] = useState(0);
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,9 +91,10 @@ export default function ContactsManager() {
   }
 
   return <section className="contacts-feature">
-    <div className="leads-page-heading"><div><p className="date-label">WORKSPACE / CONTACTS</p><h1>Contacts</h1><p className="welcome-copy">Keep customer relationships organized and easy to follow.</p></div><button className="button button-primary" type="button" onClick={() => setDialogContact(null)}><span aria-hidden="true">＋</span> Add contact</button></div>
+    <div className="leads-page-heading"><div><p className="date-label">WORKSPACE / CONTACTS</p><h1>Contacts</h1><p className="welcome-copy">Keep customer relationships organized and easy to follow.</p></div><div className="leads-header-actions"><button className="button button-secondary" type="button" aria-expanded={showImport} onClick={() => setShowImport((visible) => !visible)}>{showImport ? 'Close CSV import' : 'Import contacts'}</button><button className="button button-primary" type="button" onClick={() => setDialogContact(null)}><span aria-hidden="true">＋</span> Add contact</button></div></div>
     {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
     {error && <div className="leads-error" role="alert"><span>{error}</span>{error.toLowerCase().includes('token') || error.toLowerCase().includes('authenticated') ? <Link href="/sign-in">Sign in</Link> : <button type="button" onClick={() => setRefresh((value) => value + 1)}>Retry</button>}</div>}
+    {showImport && <section className="panel lead-csv-import-panel" aria-label="Contact CSV import"><div className="lead-assignment-heading"><div><strong>Import contacts from CSV</strong><p>Preview and fix every row before importing. Duplicate emails are not imported.</p></div></div><ContactCsvImport onImported={(count) => { setShowImport(false); setNotice(`${count} contacts were imported and are available when creating invoices.`); setRefresh((value) => value + 1); }} /></section>}
     <section className="leads-toolbar panel"><div className="leads-toolbar-copy"><strong>Contact directory</strong><span>{loading ? 'Updating contacts…' : `${pageInfo.total} ${pageInfo.total === 1 ? 'contact' : 'contacts'} total`}</span></div><div className="leads-filters"><label className="module-search"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search contacts…" aria-label="Search contacts" />{query && <button type="button" onClick={() => { setQuery(''); setPage(1); }} aria-label="Clear search">×</button>}</label><select aria-label="Sort contacts" value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}><option value="createdAt:desc">Newest first</option><option value="createdAt:asc">Oldest first</option><option value="name:asc">Name A–Z</option><option value="name:desc">Name Z–A</option><option value="email:asc">Email A–Z</option><option value="company:asc">Company A–Z</option></select></div></section>
     <section className="panel leads-table-panel"><div className="table-scroll"><table className="leads-table contacts-table"><thead><tr><th>CONTACT</th><th>COMPANY</th><th>EMAIL</th><th>PHONE</th><th>OWNER</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
       {loading && !contacts.length && Array.from({ length: 3 }, (_, index) => <tr className="lead-skeleton-row" key={`skeleton-${index}`}><td colSpan={6}><span /><span /><span /></td></tr>)}

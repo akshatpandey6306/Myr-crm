@@ -23,8 +23,8 @@ const headings: Record<Mode, { title: string; description: string; submit: strin
     submit: 'Continue',
   },
   activate: {
-    title: 'Activate your workspace account',
-    description: 'Choose a password to activate your CRM workspace access.',
+    title: 'Set up your LeadPilot account',
+    description: 'Choose a password to accept your invitation and activate workspace access.',
     submit: 'Activate account',
   },
 };
@@ -83,7 +83,7 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
     <main className="auth-page auth-security-page">
       <section className="auth-main">
         <div className="auth-card">
-          <Link className="brand auth-brand" href="/"><span className="brand-mark">m</span><span>myr<span className="brand-light">crm</span></span></Link>
+          <Link className="brand auth-brand" href="/"><img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" /></Link>
           <span className="auth-step">ACCOUNT SECURITY</span>
           <h2>{heading.title}</h2>
           <p className="auth-subtitle">{heading.description}</p>

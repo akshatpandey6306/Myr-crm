@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -8,17 +9,21 @@ import {
   Get,
   Inject,
   NotFoundException,
+  Optional,
   Param,
   Post,
   Patch,
   Req,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
 import { hashPassword } from "../auth/password.js";
+import { AuthEmailService } from "../auth/email.service.js";
 import { Prisma } from "../../generated/prisma/client.js";
+import { effectiveSubscriptionStatus } from "../billing/subscription-status.js";
 
 type EmployeeImportRow = {
   row: number;
@@ -27,7 +32,7 @@ type EmployeeImportRow = {
   password?: string;
   errors: string[];
 };
-type EmployeeImportDatabase = Pick<Prisma.TransactionClient, "organization" | "subscriptionPlan" | "membership" | "user">;
+type EmployeeImportDatabase = Pick<Prisma.TransactionClient, "organization" | "subscriptionPlan" | "organizationSubscriptionPlanOverride" | "additionalSeatPurchase" | "membership" | "user">;
 
 const administrators = new Set(["owner", "admin"]);
 const assignmentManagers = new Set(["owner", "admin", "sales_manager"]);
@@ -45,29 +50,39 @@ const roleProfiles = new Set(["ADMIN", "SALES_MANAGER", "SALES_REP", "READ_ONLY"
 const builtInRoleNames = new Set(["owner", "admin", "sales manager", "sales representative", "sales rep", "read only", "read-only user"]);
 @Controller("organizations")
 export class MembersController {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(AuthEmailService) private readonly email?: AuthEmailService,
+  ) {}
 
   @Get("members")
   async listMembers(@Req() request: HttpRequest) {
     const { organizationId, userId } = this.requireAdministrator(request);
     const memberships = await this.prisma.membership.findMany({
-      where: { organizationId, status: "ACTIVE", userId: { not: userId }, user: { status: "ACTIVE" } },
+      where: {
+        organizationId,
+        status: { in: ["ACTIVE", "PENDING"] },
+        userId: { not: userId },
+        user: { status: { in: ["ACTIVE", "PENDING"] } },
+      },
       select: {
         userId: true,
         role: true,
         customRole: { select: { id: true, name: true } },
         enabledModules: true,
         createdAt: true,
+        status: true,
         user: { select: { name: true, email: true, emailVerifiedAt: true } },
       },
       orderBy: [{ role: "asc" }, { createdAt: "asc" }],
     });
     return {
-      data: memberships.map(({ userId, role, customRole, enabledModules, createdAt, user }) => ({
+      data: memberships.map(({ userId, role, customRole, enabledModules, createdAt, status, user }) => ({
         userId,
         name: user.name,
         email: user.email,
         role: role.toLowerCase(),
+        status: status.toLowerCase(),
         customRoleId: customRole?.id ?? null,
         customRoleName: customRole?.name ?? null,
         enabledModules,
@@ -148,31 +163,25 @@ export class MembersController {
   @Post("members")
   async createMember(
     @Req() request: HttpRequest,
-    @Body() body: { name?: unknown; email?: unknown; password?: unknown; role?: unknown },
+    @Body() body: { name?: unknown; email?: unknown; role?: unknown },
   ) {
     const { organizationId, userId } = this.requireAdministrator(request);
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body?.password === "string" ? body.password : "";
     const requestedRole = typeof body?.role === "string" ? body.role : "sales_rep";
-    if (name.length < 2 || name.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || password.length < 8 || password.length > 128 || !requestedRole) {
-      throw new BadRequestException({ code: "validation_error", message: "Enter a name, valid email, password (8–128 characters), and supported employee role" });
+    if (name.length < 2 || name.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !requestedRole) {
+      throw new BadRequestException({ code: "validation_error", message: "Enter a name, valid email, and supported employee role" });
+    }
+    if (!this.email?.isConfigured()) {
+      throw new ServiceUnavailableException({ code: "smtp_not_configured", message: "Employee invitation email is unavailable until SMTP is configured." });
     }
 
+    const now = new Date();
+    const activationToken = randomBytes(32).toString("hex");
+
     try {
-      const member = await this.prisma.$transaction(async (transaction) => {
-        const organization = await transaction.organization.findUnique({
-          where: { id: organizationId },
-          select: { subscriptionPlan: true },
-        });
-        if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
-        const plan = organization.subscriptionPlan
-          ? await transaction.subscriptionPlan.findUnique({ where: { code: organization.subscriptionPlan }, select: { employeeLimit: true } })
-          : null;
-        const activeCount = await transaction.membership.count({ where: { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } } });
-        if (plan?.employeeLimit !== null && plan?.employeeLimit !== undefined && activeCount >= plan.employeeLimit) {
-          throw new ConflictException({ code: "member_limit_reached", message: "This workspace plan's team-member limit has been reached." });
-        }
+      const invitation = await this.prisma.$transaction(async (transaction) => {
+        const memberLimit = await this.getMemberLimit(organizationId, transaction);
         const customRole = assignableRoles[requestedRole] ? null : await transaction.workspaceRole.findFirst({
           where: { id: requestedRole, organizationId },
           select: { id: true, name: true, permissionProfile: true },
@@ -188,49 +197,89 @@ export class MembersController {
         if (existing) {
           const priorMembership = existing.memberships.find((membership) => membership.organizationId === organizationId);
           const belongsElsewhere = existing.memberships.some((membership) => membership.organizationId !== organizationId && ["ACTIVE", "PENDING"].includes(membership.status));
-          if (existing.status !== "ACTIVE" || belongsElsewhere || priorMembership?.status !== "REMOVED") {
+          const invitationResent = existing.status === "PENDING" && priorMembership?.status === "PENDING";
+          const reactivated = ["ACTIVE", "PENDING"].includes(existing.status) && priorMembership?.status === "REMOVED";
+          if (belongsElsewhere || (!invitationResent && !reactivated)) {
             throw new ConflictException({
               code: "email_in_use",
               message: belongsElsewhere
                 ? "This email already belongs to another workspace. Use a different email for this workspace."
-                : "An account already uses this email address. A removed employee can be re-added only to their original workspace.",
+                : "An account already uses this email address. An existing employee can only be re-invited to their original workspace.",
             });
           }
-          const reactivated = await transaction.user.update({
+          if (reactivated && memberLimit !== null) {
+            const activeCount = await transaction.membership.count({ where: { organizationId, status: { in: ["ACTIVE", "PENDING"] } } });
+            if (activeCount >= memberLimit) {
+              throw new ConflictException({ code: "member_limit_reached", message: "This workspace plan's team-member limit has been reached." });
+            }
+          }
+          const invitedUser = await transaction.user.update({
             where: { id: existing.id },
-            data: { name, passwordHash: hashPassword(password), emailVerifiedAt: new Date(), failedLoginAttempts: 0, lockedUntil: null },
+            data: {
+              name,
+              passwordHash: hashPassword(randomBytes(32).toString("hex")),
+              status: "PENDING",
+              emailVerifiedAt: null,
+              failedLoginAttempts: 0,
+              lockedUntil: null,
+            },
             select: { id: true, email: true, name: true },
           });
           await transaction.membership.update({
             where: { organizationId_userId: { organizationId, userId: existing.id } },
-            data: { role, customRoleId: customRole?.id ?? null, status: "ACTIVE", enabledModules: [] },
+            data: { role, customRoleId: customRole?.id ?? null, status: "PENDING", enabledModules: [] },
           });
           await transaction.session.updateMany({ where: { userId: existing.id, revokedAt: null }, data: { revokedAt: new Date() } });
-          await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "UPDATE", resourceType: "member", resourceId: existing.id } });
-          return { member: reactivated, role, customRole, reactivated: true };
+          await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "UPDATE", resourceType: "member_invitation", resourceId: existing.id } });
+          return { member: invitedUser, role, customRole, reactivated: Boolean(reactivated), invitationResent: Boolean(invitationResent) };
+        }
+        if (memberLimit !== null) {
+          const activeCount = await transaction.membership.count({ where: { organizationId, status: { in: ["ACTIVE", "PENDING"] } } });
+          if (activeCount >= memberLimit) {
+            throw new ConflictException({ code: "member_limit_reached", message: "This workspace plan's team-member limit has been reached." });
+          }
         }
         const created = await transaction.user.create({
           data: {
             email,
             name,
-            passwordHash: hashPassword(password),
-            emailVerifiedAt: new Date(),
-            memberships: { create: { organizationId, role, customRoleId: customRole?.id ?? null, status: "ACTIVE", enabledModules: [] } },
+            passwordHash: hashPassword(randomBytes(32).toString("hex")),
+            status: "PENDING",
+            memberships: { create: { organizationId, role, customRoleId: customRole?.id ?? null, status: "PENDING", enabledModules: [] } },
           },
           select: { id: true, email: true, name: true },
         });
-        await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "CREATE", resourceType: "member", resourceId: created.id } });
-        return { member: created, role, customRole, reactivated: false };
+        await transaction.auditLog.create({ data: { organizationId, actorUserId: userId, action: "CREATE", resourceType: "member_invitation", resourceId: created.id } });
+        return { member: created, role, customRole, reactivated: false, invitationResent: false };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      await this.prisma.$transaction(async (transaction) => {
+        await transaction.emailToken.updateMany({
+          where: { userId: invitation.member.id, purpose: "ACCOUNT_ACTIVATION", consumedAt: null },
+          data: { consumedAt: now },
+        });
+        await transaction.emailToken.create({
+          data: {
+            userId: invitation.member.id,
+            tokenHash: createHash("sha256").update(activationToken).digest("hex"),
+            purpose: "ACCOUNT_ACTIVATION",
+            expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+          },
+        });
+      });
+      await this.email.sendAccountActivation(activationToken, email);
       return { data: {
-        ...member.member,
-        role: member.role.toLowerCase(),
-        customRoleId: member.customRole?.id ?? null,
-        customRoleName: member.customRole?.name ?? null,
-        reactivated: member.reactivated,
+        userId: invitation.member.id,
+        email: invitation.member.email,
+        name: invitation.member.name,
+        role: invitation.role.toLowerCase(),
+        status: "pending",
+        customRoleId: invitation.customRole?.id ?? null,
+        customRoleName: invitation.customRole?.name ?? null,
+        reactivated: invitation.reactivated,
+        invitationResent: invitation.invitationResent,
         enabledModules: [],
-        emailVerified: true,
-        joinedAt: new Date().toISOString(),
+        emailVerified: false,
+        joinedAt: now.toISOString(),
       } };
     } catch (error) {
       if (this.prismaCode(error) === "P2002") throw new ConflictException({ code: "email_in_use", message: "An account already uses this email address." });
@@ -470,7 +519,7 @@ export class MembersController {
       throw new ForbiddenException({ code: "owner_transfer_required", message: "Transfer ownership before leaving this organization" });
     }
     const result = await this.prisma.membership.updateMany({
-      where: { organizationId, userId: targetUserId, status: "ACTIVE", role: { not: "OWNER" } },
+      where: { organizationId, userId: targetUserId, status: { in: ["ACTIVE", "PENDING"] }, role: { not: "OWNER" } },
       data: { status: "REMOVED" },
     });
     if (!result.count) {
@@ -537,7 +586,9 @@ export class MembersController {
       return { data: { organization, status: "active" } };
     }
 
-    const requestStatus = await this.prisma.$transaction(async (transaction) => {
+    let requestStatus: "active" | "pending";
+    try {
+      requestStatus = await this.prisma.$transaction(async (transaction) => {
       const membership = await transaction.membership.findUnique({
         where: { organizationId_userId: { organizationId: organization.id, userId: requesterId } },
         select: { status: true },
@@ -545,6 +596,11 @@ export class MembersController {
       if (membership?.status === "ACTIVE") return "active" as const;
       if (membership?.status === "PENDING") {
         throw new ConflictException({ code: "conflict", message: "Your request to join this workspace is already awaiting review" });
+      }
+      const memberLimit = await this.getMemberLimit(organization.id, transaction);
+      const existingMembers = await transaction.membership.count({ where: { organizationId: organization.id, status: { in: ["ACTIVE", "PENDING"] }, user: { status: "ACTIVE" } } });
+      if (memberLimit !== null && existingMembers >= memberLimit) {
+        throw new ConflictException({ code: "member_limit_reached", message: "This workspace has reached its available member capacity." });
       }
       await transaction.membership.upsert({
         where: { organizationId_userId: { organizationId: organization.id, userId: requesterId } },
@@ -573,7 +629,13 @@ export class MembersController {
         });
       }
       return "pending" as const;
-    });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (this.prismaCode(error) === "P2034") {
+        throw new ConflictException({ code: "member_limit_reached", message: "Workspace capacity changed while submitting the request. Refresh and try again." });
+      }
+      throw error;
+    }
     return { data: { organization: { id: organization.id, name: organization.name }, status: requestStatus } };
   }
 
@@ -638,23 +700,12 @@ export class MembersController {
           if (otherWorkspace) {
             throw new ConflictException({ code: "workspace_membership_exists", message: "This account already belongs to another workspace and cannot be added here." });
           }
-          const organization = await transaction.organization.findUnique({
-            where: { id: organizationId },
-            select: { subscriptionStatus: true, subscriptionEndsAt: true, subscriptionPlan: true },
-          });
-          if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
-          const plan = organization.subscriptionPlan
-            ? await transaction.subscriptionPlan.findUnique({
-                where: { code: organization.subscriptionPlan },
-                select: { employeeLimit: true },
-              })
-            : null;
-          const memberLimit = plan?.employeeLimit ?? null;
+          const memberLimit = await this.getMemberLimit(organizationId, transaction);
           if (memberLimit !== null) {
             const activeCount = await transaction.membership.count({
-              where: { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } },
+              where: { organizationId, status: { in: ["ACTIVE", "PENDING"] } },
             });
-            if (activeCount >= memberLimit) {
+            if (activeCount > memberLimit) {
               throw new ConflictException({
                 code: "member_limit_reached",
                 message: "This workspace plan's team-member limit has been reached.",
@@ -751,21 +802,10 @@ export class MembersController {
       if (row.email && existingEmails.has(row.email)) row.errors.push("An account already uses this email.");
     }
 
-    const organization = await db.organization.findUnique({
-      where: { id: organizationId },
-      select: { subscriptionStatus: true, subscriptionEndsAt: true, subscriptionPlan: true },
-    });
-    if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
-    const plan = organization.subscriptionPlan
-      ? await db.subscriptionPlan.findUnique({
-        where: { code: organization.subscriptionPlan },
-        select: { employeeLimit: true },
-      })
-      : null;
-    const memberLimit = plan?.employeeLimit ?? null;
+    const memberLimit = await this.getMemberLimit(organizationId, db);
     if (memberLimit !== null) {
       const activeCount = await db.membership.count({
-        where: { organizationId, status: "ACTIVE", user: { status: "ACTIVE" } },
+        where: { organizationId, status: { in: ["ACTIVE", "PENDING"] } },
       });
       let availableSeats = Math.max(0, memberLimit - activeCount);
       for (const row of rows) {
@@ -775,6 +815,22 @@ export class MembersController {
       }
     }
     return rows;
+  }
+
+  private async getMemberLimit(organizationId: string, db: EmployeeImportDatabase): Promise<number | null> {
+    const organization = await db.organization.findUnique({ where: { id: organizationId }, select: { subscriptionPlan: true, subscriptionStatus: true, subscriptionEndsAt: true } });
+    if (!organization) throw new NotFoundException({ code: "not_found", message: "Workspace not found" });
+    if (!organization.subscriptionPlan) return null;
+    const subscriptionActive = effectiveSubscriptionStatus(organization.subscriptionStatus, organization.subscriptionEndsAt) === "active";
+    const [basePlan, override, activeAddons] = await Promise.all([
+      db.subscriptionPlan.findUnique({ where: { code: organization.subscriptionPlan }, select: { employeeLimit: true } }),
+      db.organizationSubscriptionPlanOverride.findUnique({ where: { organizationId_planCode: { organizationId, planCode: organization.subscriptionPlan } }, select: { employeeLimit: true, isActive: true } }),
+      subscriptionActive
+        ? db.additionalSeatPurchase.aggregate({ where: { organizationId, status: "ACTIVE", startsAt: { lte: new Date() }, endsAt: { gt: new Date() } }, _sum: { quantity: true } })
+        : Promise.resolve({ _sum: { quantity: 0 } }),
+    ]);
+    const included = override?.isActive ? override.employeeLimit : basePlan?.employeeLimit ?? null;
+    return included === null ? null : included + (activeAddons._sum.quantity ?? 0);
   }
 
   private prismaCode(error: unknown) {

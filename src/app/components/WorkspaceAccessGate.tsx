@@ -4,6 +4,7 @@ import { createContext, ReactNode, useContext, useEffect, useState } from 'react
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { crmApiFetch } from '../../lib/api-client';
+import { billingIntervalLabel } from '../../lib/billing-interval';
 
 export type WorkspaceSubscription = {
   planCode: string | null;
@@ -18,14 +19,14 @@ type RenewalPlan = {
   name: string;
   monthlyPrice: number;
   currency: string;
-  billingInterval: 'monthly' | 'yearly';
+  billingInterval: number;
   features: string[];
 };
 
 type ActivationRequest = {
   id: string;
   planCode: string;
-  requestType: 'trial' | 'activation';
+  requestType: 'activation';
   requestedAt: string;
 };
 
@@ -37,7 +38,6 @@ type WorkspaceAccess = {
   canManageBilling: boolean;
   payuEnabled: boolean;
   partnerPlansUrl: string | null;
-  trialExpired: boolean;
 };
 
 const SubscriptionContext = createContext<WorkspaceAccess | null>(null);
@@ -151,8 +151,8 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
         const endsAt = typeof current.endsAt === 'string' ? current.endsAt : null;
         const status = String(current.status);
         const validEndDate = endsAt !== null && new Date(endsAt).getTime() > Date.now();
-        const active = ['active', 'trial'].includes(status) && validEndDate;
-        const expired = !['active', 'trial'].includes(status) || !validEndDate;
+        const active = status === 'active' && validEndDate;
+        const expired = status !== 'active' || !validEndDate;
         if (active) setAccessCheckResult('idle');
         if (!active && !expired) {
           window.location.assign('/dashboard');
@@ -171,17 +171,16 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
           plans: Array.isArray(data.plans) ? data.plans.filter((plan): plan is RenewalPlan =>
             isRecord(plan) && typeof plan.code === 'string' && typeof plan.name === 'string' &&
             typeof plan.monthlyPrice === 'number' && typeof plan.currency === 'string' &&
-            (plan.billingInterval === 'monthly' || plan.billingInterval === 'yearly') &&
+            typeof plan.billingInterval === 'number' && Number.isSafeInteger(plan.billingInterval) && plan.billingInterval > 0 &&
             Array.isArray(plan.features) && plan.features.every((feature) => typeof feature === 'string'),
           ) : [],
           activationRequest: isRecord(activation) && typeof activation.id === 'string' &&
             typeof activation.planCode === 'string' && typeof activation.requestedAt === 'string' &&
-            (activation.requestType === 'trial' || activation.requestType === 'activation')
+            activation.requestType === 'activation'
             ? activation as ActivationRequest : null,
           canManageBilling: data && data.canManageBilling === true,
           payuEnabled: data && data.payuEnabled === true,
           partnerPlansUrl: typeof data.partnerPlansUrl === 'string' && /^https:\/\//i.test(data.partnerPlansUrl) ? data.partnerPlansUrl : null,
-          trialExpired: status === 'trial' && expired,
         });
       } catch (caught) {
         if (!controller.signal.aborted) {
@@ -200,7 +199,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const subscription = access?.subscription;
-    if (!subscription || !['active', 'trial'].includes(subscription.status) || !subscription.endsAt) return;
+    if (!subscription || subscription.status !== 'active' || !subscription.endsAt) return;
     const expiryTime = new Date(subscription.endsAt).getTime();
     if (!Number.isFinite(expiryTime)) return;
     const delay = Math.min(Math.max(50, expiryTime - Date.now() + 50), 2_147_000_000);
@@ -224,7 +223,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
     </main>;
   }
   if (!access) return null;
-  const isExpired = !['active', 'trial'].includes(access.subscription.status);
+  const isExpired = access.subscription.status !== 'active';
   return (
     <SubscriptionContext.Provider value={access}>
       {isExpired ? (
@@ -325,7 +324,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
       <section className="workspace-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-expired-title">
         <p className="date-label">WORKSPACE SUBSCRIPTION</p>
         <h1 id="workspace-expired-title">{access.organizationName} is paused</h1>
-        <p className="workspace-expired-copy">{access.subscription.status === 'pending' ? 'Your subscription is waiting for payment verification.' : access.trialExpired ? 'Your CRM trial has ended.' : 'Your subscription is inactive.'} {access.subscription.status === 'pending' ? 'Access will begin after your partner confirms the payment.' : 'Your organization must have an active plan to continue using your CRM.'} Your data remains private and retained.</p>
+        <p className="workspace-expired-copy">{access.subscription.status === 'pending' ? 'Your subscription is waiting for payment verification.' : 'Your subscription is inactive.'} {access.subscription.status === 'pending' ? 'Access will begin after your partner confirms the payment.' : 'Your organization must have an active plan to continue using your CRM.'} Your data remains private and retained.</p>
         {access.activationRequest && !canPayWithPayU && (
           <p className="workspace-renewal-status" role="status">A renewal request for {access.plans.find((plan) => plan.code === access.activationRequest?.planCode)?.name ?? access.activationRequest.planCode} is awaiting platform review.</p>
         )}
@@ -340,7 +339,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
           {access.plans.map((plan) => (
             <article className="workspace-renewal-plan" key={plan.code}>
               <h2>{plan.name}</h2>
-              <p><strong>{plan.currency} {plan.monthlyPrice.toLocaleString('en-IN')}</strong> / {plan.billingInterval === 'yearly' ? 'year' : 'month'}</p>
+              <p><strong>{plan.currency} {plan.monthlyPrice.toLocaleString('en-IN')}</strong> / {billingIntervalLabel(plan.billingInterval)}</p>
               <ul>{plan.features.slice(0, 3).map((feature) => <li key={feature}>{feature}</li>)}</ul>
               {canPayWithPayU ? (
                 <button className="button button-primary" type="button" disabled={Boolean(busyPlan)} onClick={() => void payForPlan(plan)}>
@@ -374,14 +373,14 @@ export function SubscriptionExpiryBanner() {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-  if (!access?.subscription.endsAt || !['active', 'trial'].includes(access.subscription.status) || now === null) return null;
+  if (!access?.subscription.endsAt || access.subscription.status !== 'active' || now === null) return null;
   const daysLeft = subscriptionDaysRemaining(access.subscription.endsAt, now);
-  if (daysLeft === null || daysLeft < 1 || daysLeft > 10) return null;
+  if (daysLeft === null) return null;
 
   return (
     <div className={`subscription-expiry-banner${daysLeft <= 3 ? ' is-urgent' : ''}`} role="status" aria-live="polite">
       <strong>{daysLeft}</strong>
-      <span>{daysLeft === 1 ? 'day left' : 'days left'} before plan expiry</span>
+      <span>{daysLeft === 0 ? 'Plan expires today' : `${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} until plan expiry`}</span>
       <a href="/subscription" aria-label="Open subscription and renew your plan">Renew</a>
     </div>
   );

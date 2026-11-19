@@ -32,10 +32,11 @@ describe('subscription expiry', () => {
       if (path === '/billing/current') {
         return jsonResponse({ data: {
           organization: { id: 'org-a', name: 'Acme', status: 'active' },
-          subscription: { planCode: 'growth', status: 'trial', startsAt: null, endsAt, provider: 'manual' },
+          subscription: { planCode: 'growth', status: 'active', startsAt: null, endsAt, provider: 'manual' },
           activationRequest: null,
           plans: [],
           canManageBilling: true,
+          payuEnabled: false,
         } });
       }
       return jsonResponse({ error: { message: 'Unexpected request' } }, 404);
@@ -43,7 +44,7 @@ describe('subscription expiry', () => {
 
     render(<WorkspaceAccessGate><SubscriptionExpiryBanner /></WorkspaceAccessGate>);
 
-    const countdown = await screen.findByText('days left before plan expiry');
+    const countdown = await screen.findByText(/days until plan expiry/);
     expect(countdown.parentElement).toHaveTextContent('5');
     expect(screen.getByRole('link', { name: /renew/i })).toHaveAttribute('href', '/subscription');
   });
@@ -56,7 +57,7 @@ describe('subscription expiry', () => {
           organization: { id: 'org-a', name: 'Acme', status: 'active' },
           subscription: { planCode: 'growth', status: 'expired', startsAt: null, endsAt: '2026-11-14T12:00:00.000Z', provider: 'manual' },
           activationRequest: null,
-          plans: [{ code: 'growth', name: 'Growth', monthlyPrice: 999, currency: 'INR', billingInterval: 'monthly', features: ['CRM access'] }],
+          plans: [{ code: 'growth', name: 'Growth', monthlyPrice: 999, currency: 'INR', billingInterval: 30, features: ['CRM access'] }],
           canManageBilling: true,
         } });
       }

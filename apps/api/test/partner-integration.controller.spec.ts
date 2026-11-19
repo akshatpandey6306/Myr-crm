@@ -21,15 +21,17 @@ describe("PartnerIntegrationController", () => {
     await assert.rejects(controller.customer("Bearer invalid", "external-1"), UnauthorizedException);
   });
 
-  it("provisions an exactly 48-hour eligible trial and returns an idempotent replay", async () => {
+  it("provisions a paid customer with credentials and returns an idempotent replay", async () => {
+    const previousEncryptionKey = process.env.PARTNER_SECRET_ENCRYPTION_KEY;
+    const encryptionKey = randomBytes(32);
+    process.env.PARTNER_SECRET_ENCRYPTION_KEY = encryptionKey.toString("hex");
+    const expectedValidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const apiKey = "partner-api-secret";
     const partner = { id: "partner-1", name: "Partner", enabled: true, permissions: ["provision", "customers:read", "subscriptions:write"] };
     const storedRequest = {
       id: "provision-1", requestId: "partner:partner-1:req-1", idempotencyKey: "partner:partner-1:once-1", orderId: "partner:partner-1:order-1", status: "SUCCEEDED", organizationId: "org-1", ownerUserId: "user-1", planCode: "starter", tenantSlug: "acme-abc123", activationEmailSent: true,
-      purchaseType: "trial", externalCustomerRef: "cust-1", trialStartedAt: new Date(), trialEndsAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+      purchaseType: "paid", externalCustomerRef: "cust-1", credentialsEnc: encryptForTest(JSON.stringify({ username: "owner@example.com", password: "generated-secret", validUntil: expectedValidUntil }), encryptionKey),
     };
-    let persistedTrial: { startedAt: Date; endsAt: Date } | undefined;
-    let emailRecipient = "";
     let replay = false;
     const api = {
       partnerApiKey: {
@@ -44,48 +46,54 @@ describe("PartnerIntegrationController", () => {
       partnerCustomerMapping: { findUnique: async () => null, create: async () => ({}) },
       subscriptionPlan: { findFirst: async () => ({ code: "starter", modules: ["leads", "contacts"] }) },
       user: { findUnique: async () => null, create: async () => ({ id: "user-1" }) },
-      partnerTrialEligibility: {
-        findUnique: async () => null,
-        create: async ({ data }: { data: { startedAt: Date } }) => { persistedTrial = { startedAt: data.startedAt, endsAt: new Date(data.startedAt.getTime() + 48 * 60 * 60 * 1000) }; return {}; },
-      },
-      emailToken: { create: async () => ({}) },
       provisioning: { create: async () => ({ id: "provision-1" }) },
       platformAuditLog: { create: async () => ({}) },
       $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({
         provisioningRequest: { create: async () => ({ id: "provision-1" }), update: async () => storedRequest },
         user: { create: async () => ({ id: "user-1" }) },
-        emailToken: { create: async () => ({}) },
         partnerCustomerMapping: { create: async () => ({}) },
-        partnerTrialEligibility: { create: async ({ data }: { data: { startedAt: Date } }) => { persistedTrial = { startedAt: data.startedAt, endsAt: new Date(data.startedAt.getTime() + 48 * 60 * 60 * 1000) }; return {}; } },
       }),
     };
-    const controller = new PartnerIntegrationController(api as never, { sendAccountActivation: async (_token: string, email: string) => { emailRecipient = email; } } as never, { createWorkspace: async () => ({ id: "org-1" }) } as never);
-    const body = { externalCustomerRef: "cust-1", externalOrderRef: "order-1", purchaseType: "trial", organization: { name: "Acme" }, owner: { name: "Owner", email: "Owner@Example.com" }, plan: { code: "starter" } };
-    const response = await controller.provision("Bearer partner-api-secret", "once-1", body);
-    assert.equal(persistedTrial!.endsAt.getTime() - persistedTrial!.startedAt.getTime(), 48 * 60 * 60 * 1000);
-    assert.equal(emailRecipient, "owner@example.com");
-    assert.equal(response.subscription.status, "TRIAL");
-    assert.equal(response.subscription.trialEndsAt, storedRequest.trialEndsAt.toISOString());
+    const controller = new PartnerIntegrationController(api as never, {} as never, { createWorkspace: async () => ({ id: "org-1" }) } as never);
+    const body = { requestId: "req-1", product: "crm", email: "Owner@Example.com", name: "Owner", organization: "Acme", plan: "starter", validityDays: 30, externalCustomerRef: "cust-1", externalOrderRef: "order-1" };
+    try {
+      const response = await controller.provision("Bearer partner-api-secret", "once-1", body);
+      assert.equal(response.status, "SUCCEEDED");
+      assert.equal(response.username, "owner@example.com");
+      assert.equal(response.password, "generated-secret");
+      assert.equal(response.subscription.status, "ACTIVE");
+      assert.equal(response.subscription.validUntil, expectedValidUntil);
 
-    replay = true;
-    const duplicate = await controller.provision("Bearer partner-api-secret", "once-1", body);
-    assert.equal(duplicate.organization.id, "org-1");
+      replay = true;
+      const duplicate = await controller.provision("Bearer partner-api-secret", "once-1", body);
+      assert.equal(duplicate.organization.id, "org-1");
+      assert.equal(duplicate.password, "generated-secret");
+    } finally {
+      if (previousEncryptionKey === undefined) delete process.env.PARTNER_SECRET_ENCRYPTION_KEY;
+      else process.env.PARTNER_SECRET_ENCRYPTION_KEY = previousEncryptionKey;
+    }
   });
 
   it("rejects a different payload reusing an existing idempotency key", async () => {
+    const previousEncryptionKey = process.env.PARTNER_SECRET_ENCRYPTION_KEY;
+    process.env.PARTNER_SECRET_ENCRYPTION_KEY = randomBytes(32).toString("hex");
     const key = "partner-api-secret";
     const partner = { id: "partner-1", enabled: true, permissions: ["provision"] };
     const prisma = {
       partnerApiKey: { findUnique: async () => ({ id: "key-1", active: true, revokedAt: null, permissions: ["provision"], partner }), update: async () => ({}) },
       partnerApiUsageLog: { create: async () => ({}) },
       subscriptionPlan: { findFirst: async () => ({ code: "starter", isActive: true }) },
-      provisioningRequest: { findFirst: async () => ({ idempotencyKey: "partner:partner-1:once", externalCustomerRef: "different", planCode: "starter", purchaseType: "trial" }) },
+      provisioningRequest: { findFirst: async () => ({ requestId: "partner:partner-1:request", orderId: "partner:partner-1:order", idempotencyKey: "partner:partner-1:once", externalCustomerRef: "different", planCode: "starter", purchaseType: "paid" }) },
     };
     const controller = new PartnerIntegrationController(prisma as never, {} as never, {} as never);
-    await assert.rejects(controller.provision(`Bearer ${key}`, "once", {
-      requestId: "request", externalCustomerRef: "customer", externalOrderRef: "order", purchaseType: "trial",
-      organization: { name: "Acme" }, owner: { name: "Owner", email: "owner@example.com" }, plan: { code: "starter" },
-    }), ConflictException);
+    try {
+      await assert.rejects(controller.provision(`Bearer ${key}`, "once", {
+        requestId: "request", product: "crm", email: "owner@example.com", name: "Owner", organization: "Acme", plan: "starter", validityDays: 30, externalCustomerRef: "customer", externalOrderRef: "order",
+      }), ConflictException);
+    } finally {
+      if (previousEncryptionKey === undefined) delete process.env.PARTNER_SECRET_ENCRYPTION_KEY;
+      else process.env.PARTNER_SECRET_ENCRYPTION_KEY = previousEncryptionKey;
+    }
   });
 
   it("rejects an invalid subscription webhook signature", async () => {

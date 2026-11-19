@@ -1,4 +1,4 @@
-# Deploy Myr CRM to Render with Supabase
+# Deploy LeadPilot to Render with Supabase
 
 This deployment runs the Next.js web app and NestJS API inside one Render web
 service. Supabase hosts PostgreSQL separately; no Render PostgreSQL service is
@@ -77,9 +77,8 @@ PAYU_CALLBACK_URL=https://<your-render-service>.onrender.com/api/v1/billing/payu
 Use your actual Render URL in both `WEB_ORIGIN` and `PAYU_CALLBACK_URL`. The
 callback arrives at Next.js and its `/api/v1` rewrite forwards it to the local
 NestJS API. `API_PROXY_URL` must be set during the build so the Next.js rewrite
-targets the API in this same service. Leave `NEXT_PUBLIC_API_URL` unset. Remove
-`PAYU_TEST_TRIAL_AMOUNT` from production. Never use live credentials in sandbox
-mode or expose the salt in browser code.
+targets the API in this same service. Leave `NEXT_PUBLIC_API_URL` unset. Never
+use live credentials in sandbox mode or expose the salt in browser code.
 
 Keep `PARTNER_SECRET_ENCRYPTION_KEY` stable after deployment. Generate it as 32
 random bytes encoded as 64 hex characters; rotating it requires re-encrypting
@@ -93,10 +92,42 @@ account onboarding and password-reset emails.
 3. Open `https://<your-render-service>.onrender.com/api/v1/health`; expect
    `{"status":"ok"}`.
 4. Sign in, check the workspace modules, and open Subscription.
-5. For an eligible workspace, run the authorized ₹49 live trial checkout. It is
+5. Use an authorized live plan checkout for any production payment check. It is
    a real charge. Confirm PayU returns to Subscription and the plan changes only
    after server-side `verify_payment` succeeds.
 
 If a payment returns as pending, use the payment status recheck on Subscription.
 Do not manually mark it successful. The API and web server both need to remain
 up for callbacks and browser requests to work.
+
+## First platform-admin account
+
+Migrations create the schema, not a user. Production does not create the local
+demo administrator. After rotating the Supabase database password and updating
+the root `.env` `DATABASE_URL`, set `PLATFORM_ADMIN_EMAIL` there to the email you
+want to use. From the repository root, bootstrap that one account with a
+temporary PowerShell environment value (the password prompt is hidden):
+
+```powershell
+$env:BOOTSTRAP_ADMIN_EMAIL = 'you@example.com'
+$env:BOOTSTRAP_ADMIN_NAME = 'Platform Administrator'
+$secure = Read-Host 'Choose a strong platform-admin password' -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+  $env:BOOTSTRAP_ADMIN_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+  npm.cmd run bootstrap:admin --workspace @myr-crm/api
+} finally {
+  Remove-Item Env:BOOTSTRAP_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+  $secure.Dispose()
+  Remove-Item Env:BOOTSTRAP_ADMIN_EMAIL -ErrorAction SilentlyContinue
+  Remove-Item Env:BOOTSTRAP_ADMIN_NAME -ErrorAction SilentlyContinue
+}
+```
+
+The command creates or resets the configured active platform-admin user. It
+does not create a workspace or assign a plan, and removes workspace memberships
+from that platform-admin account. It requires `BOOTSTRAP_ADMIN_EMAIL` to match
+`PLATFORM_ADMIN_EMAIL`. Set the same email as `PLATFORM_ADMIN_EMAIL` in
+Render, save/redeploy, then sign in with the password you chose. Keep that
+password in a password manager; it is not a Render environment variable.

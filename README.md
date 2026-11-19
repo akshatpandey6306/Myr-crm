@@ -1,4 +1,4 @@
-# Myr CRM
+# LeadPilot
 
 A modular, multi-organization SaaS CRM. This repository follows the project
 master prompt supplied in chat. Treat this README and `AGENTS.md` as the
@@ -195,13 +195,14 @@ for the current service map, ownership, local workflow, and remaining migration.
   Leads, Roles, and Users sections; lead choices and workspace roles are
   documented as fixed until their customization APIs are implemented.
 - New workspaces start pending and are directed to `/subscription` after sign-in.
-  Owners/Admins start the two-day trial through PayU by paying ₹49. The browser
-  posts a server-priced, server-hashed checkout form to PayU Hosted Checkout.
-  PayU returns to the API callback, which validates the reverse hash, matches
-  the saved order and amount, then confirms status with PayU's `verify_payment`
-  API before activating a trial or paid plan. The subscription page displays
-  the verified result and selected plan; pending results can be rechecked from
-  the API using the authenticated workspace context. A different plan can be
+  Owners/Admins buy a plan through PayU Hosted Checkout. The browser posts a
+  server-priced, server-hashed checkout form. PayU returns to the API callback,
+  which validates the reverse hash, matches the saved order and amount, then
+  confirms status with PayU's `verify_payment` API before activating the plan.
+  The plan duration is an administrator-configured whole number of days. The
+  subscription page displays the verified result and selected plan; pending
+  results can be rechecked from the API using the authenticated workspace
+  context. A different plan can be
   purchased immediately by an active subscriber; the new plan starts after
   payment verification at its full configured price (no proration). Renewal is
   available during the final 10 days; it extends from the existing expiry.

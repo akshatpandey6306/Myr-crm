@@ -5,6 +5,7 @@ import { Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
+import { billingIntervalLabel } from '../../lib/billing-interval';
 import { downloadCsv } from '../../lib/csv';
 import PartnerManagementPanel from './PartnerManagementPanel';
 
@@ -14,6 +15,8 @@ type Organization = {
   status: 'active' | 'suspended';
   memberCount: number;
   pendingMemberRequestCount: number;
+  additionalSeats: number;
+  additionalSeatRevenue: number;
   dealCount: number;
   openPipelineValue: number;
   wonRevenue: number;
@@ -33,7 +36,7 @@ type Organization = {
   } | null;
   subscription: {
     planCode: string | null;
-    status: 'pending' | 'trial' | 'active' | 'expired' | 'cancelled';
+    status: 'pending' | 'active' | 'expired' | 'cancelled';
     startsAt: string | null;
     endsAt: string | null;
     provider: string | null;
@@ -44,11 +47,12 @@ type SubscriptionPlan = {
   name: string;
   price: number;
   currency: string;
-  billingInterval: 'monthly' | 'yearly';
-  trialDays: number;
+  billingInterval: number;
   features: string[];
   modules: string[];
   employeeLimit: number | null;
+  additionalSeatsEnabled: boolean;
+  additionalSeatPrice: number;
   maxDevicesPerUser: number;
   deviceRestrictionEnabled: boolean;
   usageLimits: Record<string, number>;
@@ -57,7 +61,7 @@ type SubscriptionPlan = {
 type SubscriptionActivationRequest = {
   id: string;
   planCode: string;
-  requestType: 'trial' | 'activation';
+  requestType: 'activation';
   requestedAt: string;
   organization: { id: string; name: string };
   requestedBy: { name: string; email: string };
@@ -98,7 +102,7 @@ type SubscriptionStatusFilter = 'all' | Organization['subscription']['status'];
 export type ControlPanelSection = 'overview' | 'onboarding' | 'plans' | 'approvals' | 'provisioning' | 'workspaces' | 'partners' | 'security' | 'audit-log';
 type PendingSensitiveAction =
   | { kind: 'access'; organization: Organization; status: 'active' | 'suspended' }
-  | { kind: 'subscription'; organization: Organization; status: 'active' | 'trial' | 'expired' | 'cancelled' }
+  | { kind: 'subscription'; organization: Organization; status: 'active' | 'expired' | 'cancelled' }
   | { kind: 'modules'; organization: Organization; modules: string[] };
 
 const crmModules = [
@@ -134,19 +138,18 @@ const emptyPlan = {
   name: '',
   price: '0',
   currency: 'INR',
-  billingInterval: 'monthly' as const,
-  trialDays: '0',
+  billingInterval: '30',
   features: '',
   modules: ['leads', 'contacts', 'companies', 'deals', 'vendors', 'billing-invoicing', 'activities', 'team', 'settings'],
   employeeLimit: '',
+  additionalSeatsEnabled: false,
+  additionalSeatPrice: '0',
   maxDevicesPerUser: '1',
   deviceRestrictionEnabled: true,
   usageLimits: '{}',
   isActive: true,
 };
-type PlanFormState = Omit<typeof emptyPlan, 'billingInterval'> & {
-  billingInterval: SubscriptionPlan['billingInterval'];
-};
+type PlanFormState = typeof emptyPlan;
 type AuditLog = {
   id: string;
   action: string;
@@ -216,7 +219,7 @@ function isOrganization(value: unknown): value is Organization {
     )) &&
     typeof organization.subscription === 'object' &&
     organization.subscription !== null &&
-    ['pending', 'trial', 'active', 'expired', 'cancelled'].includes((organization.subscription as Record<string, unknown>).status as string);
+    ['pending', 'active', 'expired', 'cancelled'].includes((organization.subscription as Record<string, unknown>).status as string);
 }
 
 function isSubscriptionPlan(value: unknown): value is SubscriptionPlan {
@@ -226,8 +229,7 @@ function isSubscriptionPlan(value: unknown): value is SubscriptionPlan {
     typeof plan.name === 'string' &&
     typeof plan.price === 'number' &&
     typeof plan.currency === 'string' &&
-    (plan.billingInterval === 'monthly' || plan.billingInterval === 'yearly') &&
-    typeof plan.trialDays === 'number' &&
+    Number.isSafeInteger(plan.billingInterval) && Number(plan.billingInterval) > 0 &&
     Array.isArray(plan.features) &&
     Array.isArray(plan.modules) &&
     plan.modules.every((module) => typeof module === 'string') &&
@@ -280,6 +282,9 @@ function localDateValue(value: string) {
 
 export default function ControlPanelPage({ section = 'overview' }: { section?: ControlPanelSection }) {
   const currentSection = controlPanelSections.find((item) => item.id === section) ?? controlPanelSections[0];
+  const currentSectionIndex = controlPanelSections.findIndex((item) => item.id === section);
+  const previousSection = currentSectionIndex > 0 ? controlPanelSections[currentSectionIndex - 1] : null;
+  const nextSection = currentSectionIndex < controlPanelSections.length - 1 ? controlPanelSections[currentSectionIndex + 1] : null;
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
   const [activationRequests, setActivationRequests] = useState<SubscriptionActivationRequest[]>([]);
@@ -339,6 +344,9 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
     subscription.status === 'active').length;
   const attentionWorkspaces = organizations.filter(({ status, subscription }) =>
     status === 'suspended' || ['pending', 'expired', 'cancelled'].includes(subscription.status)).length;
+  const recentOrganizations = [...organizations]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 5);
   const normalizedSearch = search.trim().toLowerCase();
   const visibleOrganizations = organizations.filter((organization) => {
     const matchesSearch = !normalizedSearch || [
@@ -349,7 +357,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
       adminMatchIds.includes(organization.id);
     const matchesQuickFilter = filter === 'all' ||
       (filter === 'active'
-        ? organization.status === 'active' && ['active', 'trial'].includes(organization.subscription.status)
+        ? organization.status === 'active' && organization.subscription.status === 'active'
         : organization.status === 'suspended' || ['pending', 'expired', 'cancelled'].includes(organization.subscription.status));
     const createdDate = localDateValue(organization.createdAt);
     return matchesSearch &&
@@ -528,7 +536,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           typeof request === 'object' && request !== null &&
           typeof (request as SubscriptionActivationRequest).id === 'string' &&
           typeof (request as SubscriptionActivationRequest).planCode === 'string' &&
-          ((request as SubscriptionActivationRequest).requestType === 'trial' || (request as SubscriptionActivationRequest).requestType === 'activation') &&
+          (request as SubscriptionActivationRequest).requestType === 'activation' &&
           typeof (request as SubscriptionActivationRequest).requestedAt === 'string' &&
           typeof (request as SubscriptionActivationRequest).organization?.id === 'string' &&
           typeof (request as SubscriptionActivationRequest).organization?.name === 'string' &&
@@ -739,9 +747,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
         : undefined;
       setAccessMessage(result?.alreadyActive
         ? `Cleared the pending request for ${subscriptionRequest.organization.name}; this workspace is already active on ${subscriptionRequest.planCode}.`
-        : subscriptionRequest.requestType === 'trial'
-          ? `Trial request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'approved; the two-day trial has started' : 'declined'}.`
-          : `Plan request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'manually activated' : 'declined'}. No payment was collected or verified.`,
+        : `Plan request for ${subscriptionRequest.organization.name} ${decision === 'approve' ? 'manually activated' : 'declined'}. No payment was collected or verified.`,
       );
       await Promise.all([loadActivationRequests(), loadOrganizations(), loadAuditLogs()]);
     } catch (caught) {
@@ -810,11 +816,12 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
         name: planDraft.name,
         price: Number(planDraft.price),
         currency: planDraft.currency,
-        billingInterval: planDraft.billingInterval,
-        trialDays: Number(planDraft.trialDays),
+        billingInterval: Number(planDraft.billingInterval),
         features: planDraft.features.split('\n').map((feature) => feature.trim()).filter(Boolean),
         modules: planDraft.modules,
         employeeLimit: planDraft.employeeLimit === '' ? null : Number(planDraft.employeeLimit),
+        additionalSeatsEnabled: planDraft.additionalSeatsEnabled,
+        additionalSeatPrice: Number(planDraft.additionalSeatPrice),
         maxDevicesPerUser: Number(planDraft.maxDevicesPerUser),
         deviceRestrictionEnabled: planDraft.deviceRestrictionEnabled,
         usageLimits,
@@ -871,11 +878,12 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           name: typeof record.name === 'string' ? record.name : plan.name,
           price: typeof record.price === 'number' ? record.price : plan.price,
           currency: typeof record.currency === 'string' ? record.currency.trim() : plan.currency,
-          billingInterval: record.billingInterval === 'yearly' ? 'yearly' : 'monthly',
-          trialDays: typeof record.trialDays === 'number' ? record.trialDays : plan.trialDays,
+          billingInterval: Number(record.billingInterval) || plan.billingInterval,
           features: Array.isArray(record.features) ? record.features as string[] : plan.features,
           modules: Array.isArray(record.modules) ? record.modules as string[] : plan.modules,
           employeeLimit: typeof record.employeeLimit === 'number' ? record.employeeLimit : null,
+          additionalSeatsEnabled: typeof record.additionalSeatsEnabled === 'boolean' ? record.additionalSeatsEnabled : plan.additionalSeatsEnabled,
+          additionalSeatPrice: typeof record.additionalSeatPrice === 'number' ? record.additionalSeatPrice : plan.additionalSeatPrice,
           maxDevicesPerUser: typeof record.maxDevicesPerUser === 'number' ? record.maxDevicesPerUser : plan.maxDevicesPerUser,
           deviceRestrictionEnabled: typeof record.deviceRestrictionEnabled === 'boolean' ? record.deviceRestrictionEnabled : plan.deviceRestrictionEnabled,
           usageLimits: typeof record.usageLimits === 'object' && record.usageLimits !== null ? record.usageLimits as Record<string, number> : plan.usageLimits,
@@ -892,11 +900,12 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
       name: effectivePlan.name,
       price: String(effectivePlan.price),
       currency: effectivePlan.currency,
-      billingInterval: effectivePlan.billingInterval,
-      trialDays: String(effectivePlan.trialDays),
+      billingInterval: String(effectivePlan.billingInterval),
       features: effectivePlan.features.join('\n'),
       modules: effectivePlan.modules,
       employeeLimit: effectivePlan.employeeLimit === null ? '' : String(effectivePlan.employeeLimit),
+      additionalSeatsEnabled: effectivePlan.additionalSeatsEnabled,
+      additionalSeatPrice: String(effectivePlan.additionalSeatPrice),
       maxDevicesPerUser: String(effectivePlan.maxDevicesPerUser),
       deviceRestrictionEnabled: effectivePlan.deviceRestrictionEnabled,
       usageLimits: JSON.stringify(effectivePlan.usageLimits, null, 2),
@@ -1137,7 +1146,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
     });
   }
 
-  function requestSubscriptionStatus(organization: Organization, status: 'active' | 'trial' | 'expired' | 'cancelled') {
+  function requestSubscriptionStatus(organization: Organization, status: 'active' | 'expired' | 'cancelled') {
     setActionReason('');
     setPendingSensitiveAction({ kind: 'subscription', organization, status });
   }
@@ -1206,7 +1215,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
 
   async function setSubscriptionStatus(
     organization: Organization,
-    status: 'active' | 'trial' | 'expired' | 'cancelled',
+    status: 'active' | 'expired' | 'cancelled',
     reason: string,
   ): Promise<boolean> {
     const activeDefault = subscriptionPlans.find((plan) => plan.isActive)?.code ?? '';
@@ -1228,7 +1237,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
               ? { endsAt: new Date(`${accessEndDates[organization.id]}T23:59:59`).toISOString() }
               : {}),
           } : {}),
-          ...(status === 'trial' ? { planCode, trialDays: 2 } : {}),
         }),
       });
       let payload: unknown;
@@ -1260,13 +1268,15 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
   return (
     <main className="control-panel-page">
       <header className="control-panel-header">
-        <div className="brand" aria-label="Myr CRM platform administration">
-          <span className="brand-mark">m</span>
-          <span>myr<span className="brand-light">crm</span></span>
+        <div className="brand" aria-label="LeadPilot platform administration">
+          <img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" />
         </div>
+        <div className="control-panel-header-actions">
+          <span className="control-panel-live"><i /> Admin console</span>
         <button suppressHydrationWarning className="control-panel-signout" type="button" disabled={signingOut} onClick={() => void signOut()}>
           {signingOut ? 'Signing out…' : 'Sign out'}
         </button>
+        </div>
       </header>
       <div className="control-panel-content">
         <div className="control-panel-title-row">
@@ -1279,7 +1289,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
             <button suppressHydrationWarning className="control-panel-action" type="button" disabled={refreshing || loading} onClick={() => section === 'provisioning' ? void loadProvisioningRequests() : void refreshOrganizations()}>
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </button>
-            <span className="control-panel-live"><i /> Admin console</span>
           </div>
         </div>
 
@@ -1292,11 +1301,11 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
         {accessMessage && <p className="control-panel-success control-panel-access-message" role="status">{accessMessage}</p>}
 
         <div className="control-panel-layout">
-        <nav className="control-panel-nav" aria-label="Control panel pages">
+        <nav className="control-panel-nav" aria-label="Control panel sections">
+          <span className="control-panel-nav-heading">SECTIONS</span>
           {controlPanelSections.map((item) => (
-            <Link key={item.id} href={item.href} aria-current={section === item.id ? 'page' : undefined}>
-              <span>{item.label}</span>
-              {item.id === 'approvals' && (activationRequests.length + workspaceSignupRequests.length > 0) && <span className="control-panel-nav-count">{activationRequests.length + workspaceSignupRequests.length}</span>}
+            <Link key={item.id} href={item.href} aria-current={item.id === section ? 'page' : undefined} title={item.description}>
+              <span>{item.label}</span><span className="control-panel-nav-arrow" aria-hidden="true">›</span>
             </Link>
           ))}
         </nav>
@@ -1317,13 +1326,52 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           </article>
         </section>
         <p className="control-panel-billing-note">Workspace revenue shows won CRM deal value; open deal value is shown separately as pipeline. Payment revenue is unavailable because no payment ledger is connected.</p>
-        <div className="control-panel-overview-links" aria-label="Administration shortcuts">
-          {controlPanelSections.filter((item) => item.id !== 'overview').map((item) => (
-            <Link key={item.id} href={item.href}>
-              <strong>{item.label}</strong><span>{item.description}</span><b aria-hidden="true">&rarr;</b>
-            </Link>
-          ))}
-        </div>
+        <section className="control-panel-overview-grid" aria-label="Workspace and subscription overview">
+          <article className="control-panel-overview-card control-panel-health-card">
+            <div className="control-panel-overview-card-heading">
+              <div><p className="control-panel-overview-eyebrow">PORTFOLIO HEALTH</p><h2>Subscription status</h2></div>
+              <Link href="/control-panel/workspaces">Manage workspaces <span aria-hidden="true">↗</span></Link>
+            </div>
+            <div className="control-panel-health-total"><strong>{loading ? '—' : organizations.length}</strong><span>workspaces tracked</span></div>
+            <div className="control-panel-health-bar" role="img" aria-label={`${activeSubscriptions} active, ${attentionWorkspaces} needing attention`}>
+              <span className="active" style={{ width: `${organizations.length ? activeSubscriptions / organizations.length * 100 : 0}%` }} />
+              <span className="attention" style={{ width: `${organizations.length ? attentionWorkspaces / organizations.length * 100 : 0}%` }} />
+            </div>
+            <div className="control-panel-health-legend">
+              <div><i className="active" /><span>Active</span><strong>{loading ? '—' : activeSubscriptions}</strong></div>
+              <div><i className="attention" /><span>Needs attention</span><strong>{loading ? '—' : attentionWorkspaces}</strong></div>
+            </div>
+            <div className="control-panel-overview-actions">
+              <Link href="/control-panel/approvals">Review requests <span aria-hidden="true">→</span></Link>
+              <Link href="/control-panel/plans">Manage plans <span aria-hidden="true">→</span></Link>
+              <Link href="/control-panel/security">Security &amp; devices <span aria-hidden="true">→</span></Link>
+            </div>
+          </article>
+          <article className="control-panel-overview-card control-panel-recent-card">
+            <div className="control-panel-overview-card-heading">
+              <div><p className="control-panel-overview-eyebrow">LATEST ACTIVITY</p><h2>Recently created workspaces</h2></div>
+              <Link href="/control-panel/workspaces">View all <span aria-hidden="true">↗</span></Link>
+            </div>
+            {loading ? <p className="control-panel-overview-empty">Loading workspace activity…</p> : recentOrganizations.length ? (
+              <ul className="control-panel-recent-list">
+                {recentOrganizations.map((organization) => (
+                  <li key={organization.id}>
+                    <span className="control-panel-recent-avatar" aria-hidden="true">{organization.name.trim().charAt(0).toUpperCase() || 'W'}</span>
+                    <span className="control-panel-recent-copy"><strong>{organization.name}</strong><small>{organization.owner?.email ?? 'No owner email'}</small></span>
+                    <span className={`control-panel-status ${organization.subscription.status}`}>{organization.subscription.status}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="control-panel-overview-empty-state">
+                <span aria-hidden="true">✦</span>
+                <strong>Your workspace portfolio starts here</strong>
+                <p>Create the first workspace or review your platform setup.</p>
+                <Link className="control-panel-action primary" href="/control-panel/onboarding">Onboard a workspace <span aria-hidden="true">→</span></Link>
+              </div>
+            )}
+          </article>
+        </section>
         </>}
 
         {section === 'approvals' && <div className="control-panel-section-stack">
@@ -1359,7 +1407,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           <div className="panel-heading">
             <div className="control-panel-section-title">
               <h2>Activation requests</h2>
-              <p>{activationRequests.length} trial and plan requests awaiting review</p>
+              <p>{activationRequests.length} plan requests awaiting review</p>
             </div>
           </div>
           {activationRequests.length ? (
@@ -1370,7 +1418,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                   <tr key={activationRequest.id}>
                     <td><strong>{activationRequest.organization.name}</strong></td>
                     <td>{activationRequest.requestedBy.name}<small>{activationRequest.requestedBy.email}</small></td>
-                    <td>{activationRequest.requestType === 'trial' ? '2-day trial' : 'Plan activation'}</td>
+                    <td>Plan activation</td>
                     <td>{subscriptionPlans.find((plan) => plan.code === activationRequest.planCode)?.name ?? activationRequest.planCode}</td>
                     <td>{new Date(activationRequest.requestedAt).toLocaleDateString()}</td>
                     <td>
@@ -1380,7 +1428,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                         disabled={Boolean(busyOrganizationId)}
                         onClick={() => void reviewSubscriptionRequest(activationRequest, 'approve')}
                       >
-                        {activationRequest.requestType === 'trial' ? 'Approve trial' : 'Activate manually'}
+                        Activate manually
                       </button>
                       {' '}
                       <button
@@ -1394,7 +1442,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                 ))}</tbody>
               </table>
             </div>
-          ) : <p className="control-panel-empty">No trial or plan requests are waiting.</p>}
+          ) : <p className="control-panel-empty">No plan requests are waiting.</p>}
         </section>
         </div>}
 
@@ -1434,7 +1482,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                 <option value="pending">No plan (pending)</option>
                 {subscriptionPlans.filter((plan) => plan.isActive).map((plan) => (
                   <option key={plan.code} value={plan.code}>
-                    {plan.name} · {plan.trialDays > 0 ? `${plan.trialDays}-day trial` : plan.billingInterval}
+                    {plan.name} · {billingIntervalLabel(plan.billingInterval)}
                   </option>
                 ))}
               </select>
@@ -1458,14 +1506,13 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
           {planMessage && <p className="control-panel-success" role="status">{planMessage}</p>}
           <div className="table-scroll control-panel-plan-table">
             <table>
-              <thead><tr><th>PLAN</th><th>PRICE</th><th>INTERVAL</th><th>TRIAL</th><th>EMPLOYEES</th><th>DEVICES / USER</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
+              <thead><tr><th>PLAN</th><th>PRICE</th><th>INTERVAL</th><th>EMPLOYEES</th><th>DEVICES / USER</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
               <tbody>
                 {subscriptionPlans.map((plan) => (
                   <tr key={plan.code}>
                     <td><strong>{plan.name}</strong><small>{plan.code}</small></td>
                     <td>{plan.currency} {plan.price.toLocaleString()}</td>
-                    <td>{plan.billingInterval}</td>
-                    <td>{plan.trialDays} days</td>
+                    <td>{billingIntervalLabel(plan.billingInterval)}</td>
                     <td>{plan.employeeLimit ?? 'Unlimited'}</td>
                     <td>{plan.deviceRestrictionEnabled ? plan.maxDevicesPerUser : 'Unlimited'}</td>
                     <td><span className={`control-panel-status ${plan.isActive ? 'active' : 'cancelled'}`}>{plan.isActive ? 'Active' : 'Inactive'}</span></td>
@@ -1477,20 +1524,21 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                     </td>
                   </tr>
                 ))}
-                {subscriptionPlans.length === 0 && <tr><td colSpan={8} className="control-panel-empty">No plans found. Create your first plan below.</td></tr>}
+                {subscriptionPlans.length === 0 && <tr><td colSpan={7} className="control-panel-empty">No plans found. Create your first plan below.</td></tr>}
               </tbody>
             </table>
           </div>
           <form className="control-panel-plan-form control-panel-onboarding-form" onSubmit={(event) => void savePlan(event)}>
             <h3>{editingPlanCode ? `Edit ${editingPlanCode}` : 'Create a plan'}</h3>
             {!editingPlanCode && <p>New plans are shared with all workspaces. Choose an edit scope above to customize an existing plan.</p>}
-            <label>Plan code<input value={planDraft.code} disabled={Boolean(editingPlanCode)} required pattern="[a-z0-9][a-z0-9-]{1,31}" onChange={(event) => setPlanDraft((current) => ({ ...current, code: event.target.value.toLowerCase() }))} placeholder="team-monthly" /></label>
+            <label>Plan code<input value={planDraft.code} disabled={Boolean(editingPlanCode)} required pattern="[a-z0-9][a-z0-9-]{1,31}" onChange={(event) => setPlanDraft((current) => ({ ...current, code: event.target.value.toLowerCase() }))} placeholder="team-30-days" /></label>
             <label>Plan name<input value={planDraft.name} required maxLength={80} onChange={(event) => setPlanDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Team Monthly" /></label>
             <label>Price (whole units)<input type="number" min="0" step="1" value={planDraft.price} required onChange={(event) => setPlanDraft((current) => ({ ...current, price: event.target.value }))} /></label>
             <label>Currency<input value={planDraft.currency} required maxLength={3} onChange={(event) => setPlanDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} /></label>
-            <label>Billing interval<select value={planDraft.billingInterval} onChange={(event) => setPlanDraft((current) => ({ ...current, billingInterval: event.target.value as SubscriptionPlan['billingInterval'] }))}><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
-            <label>Trial days<input type="number" min="0" max="365" step="1" value={planDraft.trialDays} onChange={(event) => setPlanDraft((current) => ({ ...current, trialDays: event.target.value }))} /></label>
+            <label>Plan duration (days)<input type="number" min="1" max="3650" step="1" value={planDraft.billingInterval} onChange={(event) => setPlanDraft((current) => ({ ...current, billingInterval: event.target.value }))} required /></label>
             <label>Employee limit<input type="number" min="1" step="1" value={planDraft.employeeLimit} onChange={(event) => setPlanDraft((current) => ({ ...current, employeeLimit: event.target.value }))} placeholder="Blank means unlimited" /></label>
+            <label>Additional seat price per seat / plan period<input type="number" min="0" step="1" value={planDraft.additionalSeatPrice} onChange={(event) => setPlanDraft((current) => ({ ...current, additionalSeatPrice: event.target.value }))} disabled={!planDraft.additionalSeatsEnabled} /></label>
+            <label className="control-panel-checkbox"><input type="checkbox" checked={planDraft.additionalSeatsEnabled} onChange={(event) => setPlanDraft((current) => ({ ...current, additionalSeatsEnabled: event.target.checked }))} /> Allow paid additional seats</label>
             <label>Maximum simultaneous devices per user<input type="number" min="1" max="100" step="1" value={planDraft.maxDevicesPerUser} onChange={(event) => setPlanDraft((current) => ({ ...current, maxDevicesPerUser: event.target.value }))} /></label>
             <label className="control-panel-checkbox"><input type="checkbox" checked={planDraft.deviceRestrictionEnabled} onChange={(event) => setPlanDraft((current) => ({ ...current, deviceRestrictionEnabled: event.target.checked }))} /> Enforce this device limit for the plan</label>
             <label>Features (one per line)<textarea rows={4} value={planDraft.features} onChange={(event) => setPlanDraft((current) => ({ ...current, features: event.target.value }))} /></label>
@@ -1566,7 +1614,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
               <select value={subscriptionStatusFilter} onChange={(event) => setSubscriptionStatusFilter(event.target.value as SubscriptionStatusFilter)}>
                 <option value="all">All subscription states</option>
                 <option value="pending">Pending</option>
-                <option value="trial">Trial</option>
                 <option value="active">Active</option>
                 <option value="expired">Expired</option>
                 <option value="cancelled">Cancelled</option>
@@ -1625,17 +1672,18 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                 </thead>
                 <tbody>
                   {visibleOrganizations.map((organization) => {
-                    const hasActiveSubscription = organization.subscription.status === 'active' || organization.subscription.status === 'trial';
+                    const hasActiveSubscription = organization.subscription.status === 'active';
                     const activeDefault = subscriptionPlans.find((plan) => plan.isActive)?.code ?? '';
                     const currentPlanAvailable = subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode && plan.isActive);
                     const selectedPlan = selectedPlans[organization.id] ?? (currentPlanAvailable ? organization.subscription.planCode : activeDefault) ?? '';
                     const selectedPlanRecord = subscriptionPlans.find((plan) => plan.code === selectedPlan);
                     const tenantPlan = subscriptionPlans.find((plan) => plan.code === organization.subscription.planCode);
                     const seatLimit = tenantPlan?.employeeLimit;
+                    const totalSeatLimit = seatLimit === null || seatLimit === undefined ? null : seatLimit + organization.additionalSeats;
                     const seatsUsed = organization.memberCount + organization.pendingMemberRequestCount;
-                    const seatLimitStatus = seatLimit === null || seatLimit === undefined
+                    const seatLimitStatus = totalSeatLimit === null
                       ? null
-                      : seatsUsed > seatLimit ? 'over' : seatsUsed === seatLimit ? 'at' : null;
+                      : seatsUsed > totalSeatLimit ? 'over' : seatsUsed === totalSeatLimit ? 'at' : null;
                     const currentPlanName = selectedPlanRecord?.name ?? selectedPlan;
                     return (
                     <Fragment key={organization.id}>
@@ -1675,11 +1723,12 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                             {tenantPlan
                               ? tenantPlan.employeeLimit === null
                                 ? `${seatsUsed} / Unlimited seats`
-                                : `${seatsUsed} / ${tenantPlan.employeeLimit} seats`
+                                : `${seatsUsed} / ${totalSeatLimit} seats`
                               : organization.subscription.planCode
                                 ? `${seatsUsed} seats · plan limit unavailable`
                                 : `${seatsUsed} seats · no plan assigned`}
                           </small>
+                          {organization.additionalSeats > 0 && <small>{organization.additionalSeats} paid extra seat{organization.additionalSeats === 1 ? '' : 's'} · {tenantPlan?.currency ?? 'INR'} {organization.additionalSeatRevenue.toLocaleString('en-IN')} received</small>}
                           {organization.pendingMemberRequestCount > 0 && (
                             <small>{organization.pendingMemberRequestCount} pending join requests included</small>
                           )}
@@ -1707,21 +1756,20 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                             {organization.subscription.planCode && !subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode) && (
                               <option value={organization.subscription.planCode} disabled>{organization.subscription.planCode} (unavailable)</option>
                             )}
-                            {subscriptionPlans.filter((plan) => plan.isActive).map((plan) => <option key={plan.code} value={plan.code}>{plan.name} · {plan.billingInterval}</option>)}
+                            {subscriptionPlans.filter((plan) => plan.isActive).map((plan) => <option key={plan.code} value={plan.code}>{plan.name} · {billingIntervalLabel(plan.billingInterval)}</option>)}
                           </select>
                           <input aria-label={`Optional access end date for ${organization.name}`} className="control-panel-end-date" id={`access-end-${organization.id}`} type="date" value={accessEndDates[organization.id] ?? ''} disabled={busyOrganizationId === organization.id} onChange={(event) => setAccessEndDates((dates) => ({ ...dates, [organization.id]: event.target.value }))} />
                           <button suppressHydrationWarning className="control-panel-action primary" type="button" disabled={busyOrganizationId === organization.id || !subscriptionPlans.some((plan) => plan.isActive)} onClick={() => requestSubscriptionStatus(organization, 'active')}>
                             {busyOrganizationId === organization.id
                               ? 'Saving…'
                               : hasActiveSubscription && selectedPlan === organization.subscription.planCode
-                                ? `Extend ${selectedPlanRecord?.billingInterval ?? 'plan'}`
+                                ? `Extend ${selectedPlanRecord ? billingIntervalLabel(selectedPlanRecord.billingInterval) : 'plan'}`
                                 : hasActiveSubscription
                                   ? `Change to ${currentPlanName}`
                                 : organization.subscription.status === 'expired'
                                   ? `Reactivate ${currentPlanName}`
                                   : `Activate ${currentPlanName}`}
                           </button>
-                          {(organization.subscription.status === 'trial' || (organization.subscription.status === 'expired' && organization.subscription.provider === 'partner')) && <button suppressHydrationWarning className="control-panel-action" type="button" disabled={busyOrganizationId === organization.id || !subscriptionPlans.some((plan) => plan.code === organization.subscription.planCode && plan.isActive)} onClick={() => requestSubscriptionStatus(organization, 'trial')}>Extend 48 hours</button>}
                           {hasActiveSubscription
                             ? <>
   <button suppressHydrationWarning className="control-panel-action danger" type="button" disabled={busyOrganizationId === organization.id} onClick={() => requestSubscriptionStatus(organization, 'expired')}>Expire now</button>
@@ -1781,7 +1829,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                                <strong>Enabled CRM modules</strong>
                                <p>
                                  Changes take effect immediately for this tenant’s users and API access.
-                                 {organization.subscription.status === 'trial' && ' Trial workspaces can be granted extra modules here.'}
                                </p>
                                </div>
                                <button className="control-panel-module-editor-close" type="button" aria-label="Close module access" onClick={() => setExpandedModules((current) => ({ ...current, [organization.id]: false }))}>×</button>
@@ -1982,7 +2029,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
               {pendingSensitiveAction.kind === 'access'
                 ? pendingSensitiveAction.status === 'suspended' ? 'Suspend workspace access?' : 'Restore workspace access?'
                 : pendingSensitiveAction.kind === 'subscription'
-                  ? pendingSensitiveAction.status === 'active' ? 'Manually activate subscription?' : pendingSensitiveAction.status === 'trial' ? 'Extend two-day trial?' : pendingSensitiveAction.status === 'expired' ? 'Expire subscription?' : 'Cancel subscription?'
+                  ? pendingSensitiveAction.status === 'active' ? 'Manually activate subscription?' : pendingSensitiveAction.status === 'expired' ? 'Expire subscription?' : 'Cancel subscription?'
                   : 'Update CRM module access?'}
             </h2>
             <p className="control-panel-confirmation-copy">
@@ -1993,8 +2040,6 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
                 : pendingSensitiveAction.kind === 'subscription'
                   ? pendingSensitiveAction.status === 'active'
                     ? `Manually assign ${pendingActionPlan?.name ?? pendingActionPlanCode ?? 'the selected plan'} to ${pendingSensitiveAction.organization.name}. No payment will be collected.`
-                    : pendingSensitiveAction.status === 'trial'
-                      ? `Extend the ${pendingSensitiveAction.organization.name} trial by 48 hours. This action is recorded in the platform audit log.`
                     : `This changes the subscription status for ${pendingSensitiveAction.organization.name}.`
                   : `Changes take effect immediately for ${pendingSensitiveAction.organization.name}.`}
             </p>

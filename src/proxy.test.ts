@@ -18,4 +18,10 @@ describe('auth proxy', () => {
     expect(response.status).toBe(307);
     expect(new URL(response.headers.get('location')!).pathname).toBe('/sign-in');
   });
+
+  it('allows public logo assets without a session cookie', () => {
+    for (const path of ['/advance-solution-logo.svg', '/leadpilot-advance-solution.svg']) {
+      expect(proxy(new NextRequest(`http://localhost${path}`)).status).toBe(200);
+    }
+  });
 });

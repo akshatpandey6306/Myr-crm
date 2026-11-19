@@ -182,6 +182,29 @@ describe("AuthController", () => {
     assert.match(response.message, /active/);
   });
 
+  it("activates an invited employee membership after setting a password", async () => {
+    let userUpdate: Record<string, unknown> | undefined;
+    let membershipUpdate: Record<string, unknown> | undefined;
+    const transaction = {
+      emailToken: { updateMany: async () => ({ count: 1 }) },
+      user: { updateMany: async (args: Record<string, unknown>) => { userUpdate = args; return { count: 1 }; } },
+      membership: { updateMany: async (args: Record<string, unknown>) => { membershipUpdate = args; return { count: 1 }; } },
+    };
+    const controller = new AuthController({
+      emailToken: { findFirst: async () => ({ id: "token-a", userId: "employee-a" }) },
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
+    } as never, emailService as never);
+
+    const response = await controller.activateProvisionedAccount({ token: "activation-token", password: "employee-password-123" });
+
+    assert.deepEqual(userUpdate?.where, { id: "employee-a", status: "PENDING" });
+    assert.equal((userUpdate?.data as Record<string, unknown>).status, "ACTIVE");
+    assert.equal((userUpdate?.data as Record<string, unknown>).passwordHash === "employee-password-123", false);
+    assert.deepEqual(membershipUpdate?.where, { userId: "employee-a", status: "PENDING" });
+    assert.deepEqual(membershipUpdate?.data, { status: "ACTIVE" });
+    assert.match(response.message, /active/);
+  });
+
   it("sets a secure HttpOnly session cookie after verified login without returning the session token", async () => {
     let sessionCreate: Record<string, unknown> | undefined;
     const cookies: { name: string; value: string; options: Record<string, unknown> }[] = [];

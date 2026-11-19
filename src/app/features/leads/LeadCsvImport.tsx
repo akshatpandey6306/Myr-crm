@@ -193,7 +193,7 @@ export default function LeadCsvImport({ onImported, compact = false }: Props) {
               </select>
             </label>)}
           </div>
-          <p>Sources: website, referral, linkedin, other. Statuses: new, contacted, qualified, disqualified. Unmapped source/status default to website/new.</p>
+          <p>Sources: Facebook, Instagram, Meta Ads, Google, LinkedIn, referral, website, other. Use the standard statuses or enter any custom status up to 48 characters. Unmapped source/status default to website/new.</p>
           <button className="button button-secondary" type="button" disabled={busy || requiredFields.some((field) => mapping[field] === '-1')} onClick={() => void validateRows()}>{busy ? 'Validating…' : 'Preview and validate import'}</button>
         </div>
         {preview.length > 0 && <div className={styles.preview}>

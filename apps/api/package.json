@@ -12,7 +12,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "bootstrap:admin": "tsx scripts/bootstrap-platform-admin.ts",
+    "cleanup:bootstrap-admin-workspace": "tsx scripts/remove-bootstrap-admin-workspace.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.0",

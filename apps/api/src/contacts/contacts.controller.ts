@@ -2,9 +2,20 @@ import { BadRequestException, Body, ConflictException, Controller, Delete, Get, 
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { assignedOwnerFilter, requireRecordArchive, requireRecordWrite } from "../auth/record-permissions.js";
+import type { Prisma } from "../../generated/prisma/client.js";
 
 const sortFields = ["createdAt", "name", "email", "company"] as const;
 const sortOrders = ["asc", "desc"] as const;
+type ContactImportRow = {
+  row: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  title: string | null;
+  company: string | null;
+  errors: string[];
+};
+type ContactDatabase = Pick<Prisma.TransactionClient, "contact">;
 
 @Controller("contacts")
 export class ContactsController {
@@ -72,6 +83,52 @@ export class ContactsController {
       return { data: this.present(contact) };
     } catch (error) {
       if (this.prismaCode(error) === "P2002") throw this.duplicate();
+      throw error;
+    }
+  }
+
+  @Post("import/validate")
+  async validateImport(@Req() request: HttpRequest, @Body() body: Record<string, unknown>) {
+    requireRecordWrite(request);
+    const { organizationId } = this.context(request);
+    const rows = await this.validateContactImport(organizationId, this.parseContactImportRows(body?.rows), this.prisma);
+    return { data: { rows, canImport: rows.every(({ errors }) => errors.length === 0) } };
+  }
+
+  @Post("import")
+  async importContacts(@Req() request: HttpRequest, @Body() body: Record<string, unknown>) {
+    requireRecordWrite(request);
+    const { organizationId, userId } = this.context(request);
+    const rows = this.parseContactImportRows(body?.rows);
+    try {
+      const result = await this.prisma.$transaction(async (transaction) => {
+        const validated = await this.validateContactImport(organizationId, rows, transaction);
+        const invalidRows = validated.filter(({ errors }) => errors.length > 0);
+        if (invalidRows.length) {
+          throw new BadRequestException({
+            code: "contact_import_conflict",
+            message: "Contact import validation changed. Review the rows and retry.",
+            rows: invalidRows.map(({ row, errors }) => ({ row, errors })),
+          });
+        }
+        return transaction.contact.createMany({
+          data: validated.map(({ name, email, phone, title, company }) => ({
+            organizationId,
+            name,
+            email,
+            phone,
+            title,
+            company,
+            ownerUserId: userId,
+            createdByUserId: userId,
+          })),
+        });
+      });
+      return { data: { createdCount: result.count } };
+    } catch (error) {
+      if (this.prismaCode(error) === "P2002") {
+        throw new ConflictException({ code: "contact_import_conflict", message: "A contact email was added by another user. Review the file and retry; no contacts were imported." });
+      }
       throw error;
     }
   }
@@ -187,6 +244,43 @@ export class ContactsController {
 
   private duplicate() {
     return new ConflictException({ code: "duplicate_contact", message: "A contact with this email already exists in this workspace" });
+  }
+
+  private parseContactImportRows(value: unknown): ContactImportRow[] {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 500) {
+      throw this.invalid("Import between 1 and 500 contacts at a time");
+    }
+    return value.map((value, index) => {
+      const row = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+      const name = typeof row.name === "string" ? row.name.trim() : "";
+      const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+      const phone = typeof row.phone === "string" && row.phone.trim() ? row.phone.trim() : null;
+      const title = typeof row.title === "string" && row.title.trim() ? row.title.trim() : null;
+      const company = typeof row.company === "string" && row.company.trim() ? row.company.trim() : null;
+      const errors: string[] = [];
+      if (!name || name.length > 120) errors.push("Name is required and must be at most 120 characters.");
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Enter a valid email address (maximum 254 characters).");
+      if (phone && phone.length > 40) errors.push("Phone must be at most 40 characters.");
+      if (title && title.length > 120) errors.push("Job title must be at most 120 characters.");
+      if (company && company.length > 160) errors.push("Company must be at most 160 characters.");
+      return { row: index + 2, name, email, phone, title, company, errors };
+    });
+  }
+
+  private async validateContactImport(organizationId: string, rows: ContactImportRow[], db: ContactDatabase) {
+    const existing = await db.contact.findMany({
+      where: { organizationId, email: { in: rows.map(({ email }) => email).filter(Boolean) } },
+      select: { email: true },
+    });
+    const existingEmails = new Set(existing.map(({ email }) => email.toLowerCase()));
+    const seenEmails = new Set<string>();
+    return rows.map((row) => {
+      const errors = [...row.errors];
+      if (row.email && existingEmails.has(row.email)) errors.push("A contact with this email already exists in this workspace.");
+      if (row.email && seenEmails.has(row.email)) errors.push("This email appears more than once in the CSV.");
+      if (row.email) seenEmails.add(row.email);
+      return { ...row, errors };
+    });
   }
 
   private invalid(message: string) {

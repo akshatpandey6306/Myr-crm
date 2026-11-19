@@ -56,7 +56,7 @@ Content-Type: application/json
   "product": "crm",
   "plan": {
     "code": "growth",
-    "billingInterval": "monthly",
+    "billingInterval": 30,
     "currency": "INR",
     "amountMinor": 249900
   },

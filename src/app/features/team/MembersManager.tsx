@@ -7,7 +7,7 @@ import LeadCsvImport from '../leads/LeadCsvImport';
 import styles from './MembersManager.module.css';
 
 type Role = 'owner' | 'admin' | 'sales_manager' | 'sales_rep' | 'read_only';
-type Member = { userId: string; name: string; email: string; role: Role; customRoleId?: string | null; customRoleName?: string | null; reactivated?: boolean; enabledModules: string[]; emailVerified: boolean; joinedAt: string };
+type Member = { userId: string; name: string; email: string; role: Role; status?: 'active' | 'pending'; customRoleId?: string | null; customRoleName?: string | null; reactivated?: boolean; invitationResent?: boolean; enabledModules: string[]; emailVerified: boolean; joinedAt: string };
 type WorkspaceRole = { id: string; name: string; description: string; permissionProfile: Exclude<Role, 'owner'> };
 type MembershipRequest = { userId: string; name: string; email: string; requestedAt: string };
 type SessionActivity = { name: string; email: string; loginAt: string; logoutAt: string | null; lastSeenAt: string; status: 'active' | 'signed_out' | 'expired'; device: string };
@@ -63,7 +63,7 @@ export default function MembersManager() {
   const [editingModulesFor, setEditingModulesFor] = useState<Member | null>(null);
   const [moduleDraft, setModuleDraft] = useState<string[]>([]);
   const [savingModules, setSavingModules] = useState(false);
-  const [newEmployee, setNewEmployee] = useState({ name: '', email: '', password: '', role: 'sales_rep' });
+  const [newEmployee, setNewEmployee] = useState({ name: '', email: '', role: 'sales_rep' });
   const [creatingEmployee, setCreatingEmployee] = useState(false);
 
   const load = useCallback(async () => {
@@ -245,11 +245,12 @@ export default function MembersManager() {
   }
 
   async function removeMember(member: Member) {
-    if (!window.confirm(`Remove ${member.name} from this workspace?`)) return;
+    const isInvitation = member.status === 'pending';
+    if (!window.confirm(isInvitation ? `Cancel the invitation for ${member.name}?` : `Remove ${member.name} from this workspace?`)) return;
     setError('');
     try {
       await responseMessage(await crmApiFetch(`/organizations/members/${member.userId}`, { method: 'DELETE' }));
-      setNotice(`${member.name} was removed from the workspace.`);
+      setNotice(isInvitation ? `The invitation for ${member.name} was cancelled.` : `${member.name} was removed from the workspace.`);
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not remove this member.');
@@ -333,9 +334,11 @@ export default function MembersManager() {
         body: JSON.stringify(newEmployee),
       }));
       const created = payload.data as Member;
-      setMembers((current) => [...current, created]);
-      setNotice(`${created.reactivated ? 'Account reactivated' : 'Account created'} for ${created.name}. Share the sign-in email and initial password with them securely. Their account is linked to this workspace.`);
-      setNewEmployee({ name: '', email: '', password: '', role: 'sales_rep' });
+      setMembers((current) => current.some((member) => member.userId === created.userId)
+        ? current.map((member) => member.userId === created.userId ? created : member)
+        : [...current, created]);
+      setNotice(`${created.invitationResent ? 'Invitation resent' : 'Invitation sent'} to ${created.email}. They can set their password using the secure link.`);
+      setNewEmployee({ name: '', email: '', role: 'sales_rep' });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create the employee account.');
     } finally {
@@ -354,19 +357,23 @@ export default function MembersManager() {
       {!loading && !canManage && !error && <div className={styles.error} role="alert">Only the Organization Owner or Admin can manage members and invitations.</div>}
 
       <section className={styles.panel}>
-        <div className={styles.panelHeading}><div><h2>Members</h2><p>{members.length} active in this workspace</p></div>{canManage && <button className="button button-secondary" type="button" onClick={() => void exportEmployees()} disabled={employeeCsvBusy}>Export employees CSV</button>}</div>
+        <div className={styles.panelHeading}><div><h2>Members</h2><p>{members.filter((member) => member.status !== 'pending').length} active{members.some((member) => member.status === 'pending') ? ` · ${members.filter((member) => member.status === 'pending').length} pending invitations` : ''}</p></div>{canManage && <button className="button button-secondary" type="button" onClick={() => void exportEmployees()} disabled={employeeCsvBusy}>Export employees CSV</button>}</div>
         {loading ? <p className={styles.empty}>Loading members…</p> : members.length === 0 ? <p className={styles.empty}>No members are available.</p> : (
           <div className={styles.tableWrap}><table className={styles.table}>
             <thead><tr><th>MEMBER</th><th>EMAIL</th><th>ROLE</th><th>MODULE ACCESS</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
             <tbody>{members.map((member) => <tr key={member.userId}>
               <td><strong>{member.name}</strong></td>
               <td>{member.email}</td>
-              <td>{member.role === 'owner' ? <span className={styles.roleBadge}>Owner</span> : <select aria-label={`Role for ${member.name}`} value={member.customRoleId ?? member.role} disabled={!canManage} onChange={(event) => void changeRole(member, event.target.value)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
-              <td>{member.role === 'owner' || member.role === 'admin'
+              <td>{member.role === 'owner' || member.status === 'pending'
+                ? <span className={styles.roleBadge}>{member.role === 'owner' ? 'Owner' : roleLabel(member.customRoleId ?? member.role, workspaceRoles)}</span>
+                : <select aria-label={`Role for ${member.name}`} value={member.customRoleId ?? member.role} disabled={!canManage} onChange={(event) => void changeRole(member, event.target.value)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select>}</td>
+              <td>{member.status === 'pending'
+                ? <span>Not assigned until accepted</span>
+                : member.role === 'owner' || member.role === 'admin'
                 ? <span className={styles.roleBadge}>All CRM modules</span>
                 : <button type="button" className={styles.moduleAccessButton} onClick={() => editModuleAccess(member)}>{member.enabledModules.filter((module) => availableModules.includes(module)).length} modules · Manage</button>}</td>
-              <td><span className={styles.verified}>Active</span></td>
-              <td className={styles.actions}>{currentRole === 'owner' && member.role !== 'owner' && <button type="button" onClick={() => void transferOwnership(member)}>Transfer ownership</button>}{member.role !== 'owner' && <button type="button" className={styles.danger} disabled={!canManage} onClick={() => void removeMember(member)}>Remove</button>}</td>
+              <td><span className={member.status === 'pending' ? styles.pending : styles.verified}>{member.status === 'pending' ? 'Invitation pending' : 'Active'}</span></td>
+              <td className={styles.actions}>{member.status !== 'pending' && currentRole === 'owner' && member.role !== 'owner' && <button type="button" onClick={() => void transferOwnership(member)}>Transfer ownership</button>}{member.role !== 'owner' && <button type="button" className={styles.danger} disabled={!canManage} onClick={() => void removeMember(member)}>{member.status === 'pending' ? 'Cancel invitation' : 'Remove'}</button>}</td>
             </tr>)}</tbody>
           </table></div>
         )}
@@ -389,16 +396,15 @@ export default function MembersManager() {
 
       {canManage && <>
         <section className={styles.panel}>
-          <div className={styles.panelHeading}><div><h2>Add employee manually</h2><p>Create an account with an active membership in this workspace. Employees sign in with their work email and password.</p></div></div>
+          <div className={styles.panelHeading}><div><h2>Invite employee</h2><p>Send a secure, single-use link so they can set their own password and join this workspace.</p></div></div>
           <form className={styles.csvImport} onSubmit={(event) => void createEmployee(event)}>
             <div className={styles.csvActions}>
               <label>Employee name<input required minLength={2} maxLength={100} autoComplete="name" value={newEmployee.name} onChange={(event) => setNewEmployee((current) => ({ ...current, name: event.target.value }))} /></label>
               <label>Work email<input required type="email" maxLength={254} autoComplete="email" value={newEmployee.email} onChange={(event) => setNewEmployee((current) => ({ ...current, email: event.target.value }))} /></label>
-              <label>Initial password<input required type="password" minLength={8} maxLength={128} autoComplete="new-password" value={newEmployee.password} onChange={(event) => setNewEmployee((current) => ({ ...current, password: event.target.value }))} /></label>
               <label>Role<select value={newEmployee.role} onChange={(event) => setNewEmployee((current) => ({ ...current, role: event.target.value }))}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
-              <button className="button button-primary" type="submit" disabled={creatingEmployee}>{creatingEmployee ? 'Creating account…' : 'Create employee account'}</button>
+              <button className="button button-primary" type="submit" disabled={creatingEmployee}>{creatingEmployee ? 'Sending invitation…' : 'Send employee invitation'}</button>
             </div>
-            <p>The plan’s seat limit applies. Employee module access starts empty; assign permitted modules from the Members list.</p>
+            <p>The plan’s seat limit applies. The employee is added after accepting the invitation. Module access starts empty and can be assigned from the Members list.</p>
           </form>
         </section>
 

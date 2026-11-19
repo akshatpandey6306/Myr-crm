@@ -5,8 +5,12 @@ import { WorkspaceModuleAccessProvider } from "./components/WorkspaceModuleAcces
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Myr CRM | Workspace overview",
-  description: "A preview of the Myr CRM sales workspace.",
+  title: "LeadPilot | Workspace overview",
+  description: "LeadPilot customer relationship and sales workspace.",
+  icons: {
+    icon: "/advance-solution-logo.svg",
+    apple: "/advance-solution-logo.svg",
+  },
 };
 
 export const viewport: Viewport = {

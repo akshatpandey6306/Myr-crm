@@ -11,6 +11,7 @@ const sections = [
   { title: 'Users', description: 'Invite teammates and manage workspace membership and roles.', href: '/settings/users' },
   { title: 'Security & devices', description: 'Review active sign-in sessions and sign out sessions you no longer use.', href: '/settings/security' },
   { title: 'Workspace control', description: 'Manage employee access to plan modules and view the private employee join code.', href: '/settings/workspace' },
+  { title: 'Plan & payments', description: 'Review the current workspace plan and its payment and purchase history.', href: '/settings/billing' },
   { title: 'Subscription', description: 'View this workspace’s plan, included modules, and renewal options.', href: '/subscription' },
 ];
 
@@ -23,7 +24,7 @@ export default function SettingsPage() {
         {canManageTeam ? 'Manage workspace preferences, lead configuration, and team access.' : 'Manage workspace preferences and lead configuration.'}
       </p>
       <div className="settings-route-grid">
-        {sections.filter((section) => canManageTeam || !['/settings/roles', '/settings/users', '/settings/workspace', '/subscription'].includes(section.href)).map((section) => (
+        {sections.filter((section) => canManageTeam || !['/settings/roles', '/settings/users', '/settings/workspace', '/settings/billing', '/subscription'].includes(section.href)).map((section) => (
           <Link className="settings-route-card" href={section.href} key={section.href}>
             <h2>{section.title}</h2>
             <p>{section.description}</p>

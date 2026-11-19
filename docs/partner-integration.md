@@ -6,9 +6,9 @@ Set `PARTNER_SECRET_ENCRYPTION_KEY` in the CRM API environment to 32 random byte
 
 The generated `crm_partner_…` API key belongs in the partner website's **server-side** environment (for example, `CRM_PARTNER_API_KEY`). The browser must call the partner website backend; it must never receive this key. Use the generated webhook signing secret as a separate server-side value (`CRM_PARTNER_WEBHOOK_SECRET`). The partner website control panel should save these server secrets and display its own account/payment counts from the CRM partner dashboard endpoints; this CRM repository does not contain that separate website's admin UI.
 
-### Website registration and ₹49 three-day trial
+### Website account provisioning
 
-The website must first create and verify its ₹49 PayU order on its own backend, including calling PayU's server-side payment verification. Only after PayU confirms the expected order and INR 49 amount should the backend call the CRM provisioning endpoint with `purchaseType: "trial"`. The CRM then creates the owner account, sends its activation email, and starts a 72-hour trial using the selected active CRM plan. Do not send the partner key or PayU salt/key from browser code. A paid plan should use `purchaseType: "paid"`; keep that workspace pending until a signed `subscription.activated` webhook arrives after the website has verified payment. This lets the CRM update the workspace only from a partner-authenticated server event.
+The website verifies payment on its own backend before calling CRM provisioning. CRM does not create trial subscriptions: a successful paid order provisions access for the plan's configured day count. Do not send the partner key or PayU credentials from browser code. This lets the CRM provision accounts only from an authenticated server request.
 
 `GET /partner/v1/health` checks a partner key and returns the CRM integration status. `GET /partner/v1/summary` (requires `customers:read`) returns that partner's provisioned account totals by subscription status and signed payment success/failure event counts. Call it from the website backend to populate the website admin panel; it does not expose another partner's accounts or global platform totals.
 
@@ -51,9 +51,9 @@ Success response:
 
 The generated password is hashed for login and stored encrypted with the provisioning record so an idempotent retry can receive the same credentials. Keep `PARTNER_SECRET_ENCRYPTION_KEY` stable and backed up; rotating it requires re-encrypting both stored partner webhook secrets and provisioning credentials.
 
-The original nested trial/paid contract below remains available for integrations that need CRM email activation and signed subscription webhooks.
+The nested paid contract below remains available for integrations that need CRM email activation and signed subscription webhooks.
 
-## Provision a trial or paid customer
+## Provision a paid customer
 
 `POST /partner/v1/provision` requires `Authorization: Bearer <partner-api-key>` and an `Idempotency-Key` header.
 
@@ -70,14 +70,14 @@ Content-Type: application/json
   "externalCustomerRef": "customer-2841",
   "externalOrderRef": "order-98374",
   "externalSubscriptionRef": "partner-sub-98374",
-  "purchaseType": "trial",
+  "purchaseType": "paid",
   "organization": { "name": "Acme", "timezone": "Asia/Kolkata" },
   "owner": { "name": "A. Customer", "email": "owner@example.com" },
   "plan": { "code": "starter" }
 }
 ```
 
-Use `purchaseType: "paid"` after the partner website has accepted the order. The CRM creates that organization with a `PENDING` subscription. A signed subscription webhook activates it after payment is confirmed. Trial requests start immediately for exactly 72 hours using the CRM UTC clock; trial eligibility is one time per normalized email across all partners. Duplicate request/order identifiers are idempotent only when their customer, plan, and purchase type match. Reusing them with different details returns `409`.
+The partner website must accept and verify payment before sending `purchaseType: "paid"`. The CRM creates that organization with a `PENDING` subscription. A signed subscription webhook activates it after payment is confirmed. Duplicate request/order identifiers are idempotent only when their customer, plan, and purchase type match. Reusing them with different details returns `409`.
 
 Example response:
 
@@ -88,7 +88,7 @@ Example response:
   "externalCustomerRef": "customer-2841",
   "organization": { "id": "<uuid>", "tenantId": "<uuid>", "slug": "acme-<suffix>", "loginUrl": "https://crm.example/sign-in" },
   "owner": { "userId": "<uuid>", "activationRequired": true },
-  "subscription": { "status": "TRIAL", "planCode": "starter", "trialEndsAt": "<UTC ISO timestamp>" },
+  "subscription": { "status": "PENDING", "planCode": "starter" },
   "activationEmailSent": true
 }
 ```
@@ -138,7 +138,7 @@ Successful responses include `{ "received": true, "duplicate": false, "outcome":
 
 ## Platform controls and routes
 
-The authenticated Platform Admin can create/enable/disable partners, configure permissions and HTTPS webhook/plans URLs, rotate/revoke keys and webhook secrets, inspect mapped customers, API usage, and recent webhook events, monitor provisioning requests, and extend an existing trial by 1–30 days through the audited subscription control. Workspace creation through the customer organization API is disabled; internal invitations remain unchanged. `/subscription` redirects into the CRM and no longer offers CRM-hosted checkout/trial entry. Expired or pending workspaces are gated by the API and show a blurred dashboard; when a partner plans URL is configured, the gate links to it. Data is retained after expiration.
+The authenticated Platform Admin can create/enable/disable partners, configure permissions and HTTPS webhook/plans URLs, rotate/revoke keys and webhook secrets, inspect mapped customers, API usage, and recent webhook events, and monitor provisioning requests. Workspace creation through the customer organization API is disabled; internal invitations remain unchanged. `/subscription` supports paid plan checkout and does not offer trial entry. Expired or pending workspaces are gated by the API and show a blurred dashboard; when a partner plans URL is configured, the gate links to it. Data is retained after expiration.
 
 Admin API routes (session authenticated and Platform Admin guarded): `GET/POST /control-panel/partners`, `PATCH /control-panel/partners/{partnerId}`, `POST /control-panel/partners/{partnerId}/status`, `POST /control-panel/partners/{partnerId}/keys/rotate`, `POST /control-panel/partners/{partnerId}/keys/{keyId}/revoke`, `POST /control-panel/partners/{partnerId}/webhook-secret/rotate`, and `GET /control-panel/partners/{customers|events|usage}`. The API records key-authenticated operation names and last-use timestamps; failed key and webhook authentication attempts are added to the platform audit log.
 

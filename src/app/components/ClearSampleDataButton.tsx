@@ -8,6 +8,7 @@ export default function ClearSampleDataButton() {
   const [clearing, setClearing] = useState(false);
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [samplesLoaded, setSamplesLoaded] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let controller: AbortController | null = null;
@@ -32,6 +33,11 @@ export default function ClearSampleDataButton() {
           const selectedOrganization = organizations.find((organization) => organization.id === selectedId) ?? organizations[0];
           if (selectedOrganization?.role !== 'owner' && selectedOrganization?.role !== 'admin') return;
 
+          // Keep the admin control available even if the sample-status endpoint
+          // is temporarily unavailable. The clear endpoint is independently
+          // protected and only removes records tagged as demo data.
+          setVisible(true);
+
           const statusResponse = await crmApiFetch('/demo-data/status', { signal: activeController.signal });
           if (!statusResponse.ok) return;
           const statusPayload: unknown = await statusResponse.json();
@@ -43,7 +49,7 @@ export default function ClearSampleDataButton() {
             if (data.loaded === true) window.dispatchEvent(new Event('myr:demo-data-changed'));
           }
         } catch {
-          // Hide the control when sample status cannot be checked; do not show a workspace error banner.
+          // The control remains visible to workspace administrators if status fails.
         }
       })();
     };
@@ -56,14 +62,16 @@ export default function ClearSampleDataButton() {
   }, []);
 
   async function clearSampleData() {
+    if (!window.confirm('Clear the example data from this workspace? Your real CRM records will not be changed.')) return;
     setClearing(true);
+    setError('');
     try {
       const response = await crmApiFetch('/demo-data/clear', { method: 'DELETE' });
-      if (!response.ok) return;
-      setVisible(false);
+      if (!response.ok) throw new Error('Could not clear sample data. Please try again.');
+      setSamplesLoaded(false);
       window.dispatchEvent(new Event('myr:demo-data-changed'));
-    } catch {
-      // Keep the control available so the workspace admin can retry.
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not clear sample data. Please try again.');
     } finally {
       setClearing(false);
     }
@@ -71,13 +79,14 @@ export default function ClearSampleDataButton() {
 
   async function loadSampleData() {
     setLoadingSamples(true);
+    setError('');
     try {
       const response = await crmApiFetch('/demo-data/load', { method: 'POST' });
-      if (!response.ok) return;
+      if (!response.ok) throw new Error('Could not load sample data. Please try again.');
       setSamplesLoaded(true);
       window.dispatchEvent(new Event('myr:demo-data-changed'));
-    } catch {
-      // Leave the load action available so the workspace admin can retry.
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not load sample data. Please try again.');
     } finally {
       setLoadingSamples(false);
     }
@@ -88,5 +97,6 @@ export default function ClearSampleDataButton() {
   return <>{samplesLoaded
     ? <button className="clear-sample-data-button" type="button" onClick={() => void clearSampleData()} disabled={clearing}>{clearing ? 'Clearing sample data…' : 'Clear sample data'}</button>
     : <button className="clear-sample-data-button" type="button" onClick={() => void loadSampleData()} disabled={loadingSamples}>{loadingSamples ? 'Loading sample data…' : 'Load sample data'}</button>}
+    {error && <span className="clear-sample-data-error" role="alert">{error}</span>}
   </>;
 }

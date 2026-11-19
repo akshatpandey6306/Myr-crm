@@ -29,12 +29,10 @@
 
 ## Purchase rules
 
-- Starting a pending workspace trial costs ₹49 and starts a two-day trial after
-  verification. `PAYU_TEST_TRIAL_AMOUNT=1.00` is an explicit test-mode-only
-  override.
 - Buying a plan or changing from an active plan charges the selected plan's
-  configured INR price. The new plan starts immediately after verification;
-  this checkout does not prorate the old plan.
+  configured INR price. The plan duration is set in whole days by the platform
+  administrator. The new plan starts immediately after verification; this
+  checkout does not prorate the old plan.
 - A same-plan renewal is available during the final ten days and extends from
   the current expiry date.
 - A different pending transaction can never activate a payment in another

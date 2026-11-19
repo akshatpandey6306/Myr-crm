@@ -9,7 +9,7 @@ type Assignee = { id: string; name: string };
 type Settings = { canManage: boolean; enabled: boolean; assigneeUserIds: string[]; assignees: Assignee[] };
 type Distribution = { label: string; value: number };
 
-const sourceNames = ['website', 'referral', 'linkedin', 'other'];
+const sourceNames = ['facebook', 'instagram', 'meta_ads', 'google', 'linkedin', 'referral', 'website', 'other'];
 const statusNames = ['new', 'contacted', 'qualified', 'disqualified'];
 const nice = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 
@@ -94,7 +94,7 @@ export default function LeadSettingsPage() {
         <div className={styles.panelFooter}><span>{settings?.canManage ? 'Changes apply to new leads.' : 'Only workspace admins can change assignment.'}</span><button type="button" onClick={() => void save()} disabled={loading || saving || !settings?.canManage || (enabled && assigneeIds.length === 0)}>{saving ? 'Saving…' : 'Save assignment'}</button></div>
       </section>
       <section className={styles.panel}>
-        <div className={styles.panelHeading}><div><span className={styles.eyebrow}>PIPELINE CONFIGURATION</span><h3>Lead sources</h3><p>Source values are fixed by the workspace data model.</p></div></div>
+        <div className={styles.panelHeading}><div><span className={styles.eyebrow}>CHANNEL ATTRIBUTION</span><h3>Lead sources</h3><p>Track where workspace leads came from. Source data is isolated to this workspace.</p></div></div>
         <div className={styles.distribution}>{activeSources.map(({ name, count }) => <div className={styles.distributionRow} key={name}><span>{nice(name)}</span><div><i style={{ width: `${Math.min(count * 12, 100)}%` }} /></div><strong>{count}</strong></div>)}</div>
         <Link className={styles.secondaryLink} href="/leads">View source filters <span aria-hidden="true">↗</span></Link>
       </section>

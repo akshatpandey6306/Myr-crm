@@ -198,8 +198,16 @@ export default function VendorsManager() {
       workspaceVersionRef.current += 1;
       setWorkspaceVersion((value) => value + 1);
     }
+    function onDemoDataChanged() {
+      setPage(1);
+      setRefresh((value) => value + 1);
+    }
     window.addEventListener('myr:organization-changed', onWorkspaceChange);
-    return () => window.removeEventListener('myr:organization-changed', onWorkspaceChange);
+    window.addEventListener('myr:demo-data-changed', onDemoDataChanged);
+    return () => {
+      window.removeEventListener('myr:organization-changed', onWorkspaceChange);
+      window.removeEventListener('myr:demo-data-changed', onDemoDataChanged);
+    };
   }, []);
 
   useEffect(() => {

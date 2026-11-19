@@ -41,7 +41,7 @@ describe("LeadsController", () => {
     let args: Record<string, unknown> | undefined;
     const lead = {
       id: "lead-a", name: "Olivia Rhye", company: "Northstar", source: "WEBSITE", status: "NEW",
-      ownerUserId: "user-a", createdAt: new Date(), updatedAt: new Date(), owner: { user: { name: "Maya Chen" } },
+      ownerUserId: "user-a", createdAt: new Date(), updatedAt: new Date(), owner: { role: "OWNER", user: { name: "Maya Chen" } },
     };
     const prisma = {
       $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
@@ -112,7 +112,7 @@ describe("LeadsController", () => {
       ownerUserId: "user-a", createdByUserId: "user-a", createdAt: new Date(), updatedAt: new Date(),
     };
     const updated = {
-      ...before, status: "QUALIFIED", owner: { user: { name: "Maya Chen" } },
+      ...before, status: "QUALIFIED", owner: { role: "OWNER", user: { name: "Maya Chen" } },
     };
     let findCount = 0;
     let auditData: Record<string, unknown> | undefined;
@@ -135,7 +135,7 @@ describe("LeadsController", () => {
       { status: "qualified" },
     );
     assert.equal(event?.event, "lead_status_changed");
-    assert.equal(event?.status, "QUALIFIED");
+    assert.equal(event?.status, "qualified");
     assert.equal(event?.leadId, "lead-a");
     assert.equal(event?.organizationId, "org-a");
     assert.deepEqual(auditData, {
@@ -145,6 +145,48 @@ describe("LeadsController", () => {
       resourceType: "activity",
       resourceId: "activity-generated",
     });
+  });
+
+  it("accepts custom lead statuses and normalizes whitespace and case", async () => {
+    let createArgs: { data: Record<string, unknown> } | undefined;
+    const lead = {
+      id: "lead-a", name: "Olivia Rhye", company: "Northstar", source: "WEBSITE", status: "follow up",
+      ownerUserId: "user-a", createdAt: new Date(), updatedAt: new Date(), owner: { role: "OWNER", user: { name: "Maya Chen" } },
+    };
+    const prisma = {
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        organizationSettings: { findUnique: async () => null },
+        membership: { findMany: async () => [] },
+        lead: { create: async (args: { data: Record<string, unknown> }) => { createArgs = args; return lead; } },
+      }),
+    };
+    const controller = createController(prisma);
+
+    await controller.create(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/leads" },
+      { name: "Olivia Rhye", company: "Northstar", source: "website", status: "  FOLLOW   UP " },
+    );
+
+    assert.equal(createArgs?.data.status, "follow up");
+  });
+
+  it("filters leads by normalized custom statuses", async () => {
+    let where: Record<string, unknown> | undefined;
+    const controller = createController({
+      lead: {
+        count: async (args: { where: Record<string, unknown> }) => { where = args.where; return 0; },
+        findMany: async (args: { where: Record<string, unknown> }) => { where = args.where; return []; },
+      },
+    });
+
+    await controller.list(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/leads" },
+      undefined,
+      undefined,
+      "  FOLLOW UP ",
+    );
+
+    assert.deepEqual(where?.status, { in: ["follow up"] });
   });
 
   it("distributes selected leads evenly among active members within the organization", async () => {
@@ -232,7 +274,7 @@ describe("LeadsController", () => {
     let createArgs: Record<string, unknown> | undefined;
     const lead = {
       id: "lead-a", name: "Olivia Rhye", company: "Northstar", source: "WEBSITE", status: "NEW",
-      ownerUserId: assignedTo, createdAt: new Date(), updatedAt: new Date(), owner: { user: { name: "Jordan Lee" } },
+      ownerUserId: assignedTo, createdAt: new Date(), updatedAt: new Date(), owner: { role: "SALES_REP", user: { name: "Jordan Lee" } },
     };
     const prisma = {
       $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({

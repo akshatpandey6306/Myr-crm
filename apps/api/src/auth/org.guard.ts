@@ -52,7 +52,7 @@ export class OrgGuard implements CanActivate {
     }
     const subscription = membership.organization;
     const currentSubscriptionStatus = effectiveSubscriptionStatus(subscription.subscriptionStatus, subscription.subscriptionEndsAt);
-    if (currentSubscriptionStatus !== "active" && currentSubscriptionStatus !== "trial") {
+    if (currentSubscriptionStatus !== "active") {
       throw new ForbiddenException({
         code: currentSubscriptionStatus === "expired" ? "subscription_expired" : "subscription_required",
         message: "An active subscription is required to access this workspace.",

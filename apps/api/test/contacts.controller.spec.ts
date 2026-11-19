@@ -46,4 +46,54 @@ describe("ContactsController", () => {
     assert.equal(data.title, null);
     assert.equal(data.company, null);
   });
+
+  it("imports validated contacts atomically under the authenticated workspace and user", async () => {
+    let createArgs: { data: Record<string, unknown>[] } | undefined;
+    const prisma = {
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        contact: {
+          findMany: async () => [],
+          createMany: async (args: { data: Record<string, unknown>[] }) => { createArgs = args; return { count: args.data.length }; },
+        },
+      }),
+    };
+    const controller = new ContactsController(prisma as never);
+
+    const result = await controller.importContacts(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/contacts/import" },
+      { rows: [{ name: "Ari Lee", email: "ARI@example.com", company: "Northstar" }] },
+    );
+
+    assert.deepEqual(result, { data: { createdCount: 1 } });
+    assert.deepEqual(createArgs?.data[0], {
+      organizationId: "org-a",
+      name: "Ari Lee",
+      email: "ari@example.com",
+      phone: null,
+      title: null,
+      company: "Northstar",
+      ownerUserId: "user-a",
+      createdByUserId: "user-a",
+    });
+  });
+
+  it("marks existing and duplicate CSV emails during contact import validation", async () => {
+    const prisma = {
+      contact: { findMany: async () => [{ email: "existing@example.com" }] },
+    };
+    const controller = new ContactsController(prisma as never);
+
+    const result = await controller.validateImport(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/contacts/import/validate" },
+      { rows: [
+        { name: "Existing", email: "existing@example.com" },
+        { name: "Duplicate one", email: "new@example.com" },
+        { name: "Duplicate two", email: "new@example.com" },
+      ] },
+    );
+
+    assert.equal(result.data.canImport, false);
+    assert.ok(result.data.rows[0]?.errors.some((error) => error.includes("already exists")));
+    assert.ok(result.data.rows[2]?.errors.some((error) => error.includes("more than once")));
+  });
 });
