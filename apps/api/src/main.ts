@@ -19,6 +19,18 @@ dotenv.config(envPath ? { path: envPath } : {});
 async function bootstrap() {
   const webOrigin = getWebOrigin();
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  app.use((_request: unknown, response: { setHeader(name: string, value: string): void }, next: () => void) => {
+    response.setHeader("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    response.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+    if (process.env.NODE_ENV === "production") {
+      response.setHeader("Strict-Transport-Security", "max-age=31536000");
+    }
+    next();
+  });
   app.enableCors({ origin: webOrigin, credentials: false });
   const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
   if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0) {

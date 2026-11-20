@@ -85,13 +85,47 @@ export default function ContactsManager() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not archive this contact.'); }
   }
 
+  async function exportContacts() {
+    setError('');
+    try {
+      const rows: Contact[] = [];
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      const [sortBy, sortOrder] = sort.split(':');
+      params.set('sortBy', sortBy);
+      params.set('sortOrder', sortOrder);
+      params.set('pageSize', '100');
+      let totalPages = 1;
+      for (let currentPage = 1; currentPage <= totalPages; currentPage += 1) {
+        params.set('page', String(currentPage));
+        const response = await crmApiFetch(`/contacts?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(message(payload));
+        if (Array.isArray(payload.data)) rows.push(...payload.data as Contact[]);
+        totalPages = Math.max(1, Number(payload.meta?.totalPages) || 1);
+      }
+      const columns: Array<keyof Contact> = ['name', 'email', 'phone', 'title', 'company', 'owner'];
+      const csvCell = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+      const csv = `\uFEFF${[columns.join(','), ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(','))].join('\r\n')}`;
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `leadpilot-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setNotice(`Exported ${rows.length} ${rows.length === 1 ? 'contact' : 'contacts'}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not export contacts.');
+    }
+  }
+
   function saved() {
     const editing = Boolean(dialogContact); setDialogContact(undefined);
     setNotice(editing ? 'Contact changes saved.' : 'Contact created.'); setRefresh((value) => value + 1);
   }
 
   return <section className="contacts-feature">
-    <div className="leads-page-heading"><div><p className="date-label">WORKSPACE / CONTACTS</p><h1>Contacts</h1><p className="welcome-copy">Keep customer relationships organized and easy to follow.</p></div><div className="leads-header-actions"><button className="button button-secondary" type="button" aria-expanded={showImport} onClick={() => setShowImport((visible) => !visible)}>{showImport ? 'Close CSV import' : 'Import contacts'}</button><button className="button button-primary" type="button" onClick={() => setDialogContact(null)}><span aria-hidden="true">＋</span> Add contact</button></div></div>
+    <div className="leads-page-heading"><div><p className="date-label">WORKSPACE / CONTACTS</p><h1>Contacts</h1><p className="welcome-copy">Keep customer relationships organized and easy to follow.</p></div><div className="leads-header-actions"><button className="button button-secondary" type="button" onClick={() => void exportContacts()} disabled={loading || pageInfo.total === 0}>Export CSV</button><button className="button button-secondary" type="button" aria-expanded={showImport} onClick={() => setShowImport((visible) => !visible)}>{showImport ? 'Close CSV import' : 'Import contacts'}</button><button className="button button-primary" type="button" onClick={() => setDialogContact(null)}><span aria-hidden="true">＋</span> Add contact</button></div></div>
     {notice && <div className="module-notice" role="status"><span>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
     {error && <div className="leads-error" role="alert"><span>{error}</span>{error.toLowerCase().includes('token') || error.toLowerCase().includes('authenticated') ? <Link href="/sign-in">Sign in</Link> : <button type="button" onClick={() => setRefresh((value) => value + 1)}>Retry</button>}</div>}
     {showImport && <section className="panel lead-csv-import-panel" aria-label="Contact CSV import"><div className="lead-assignment-heading"><div><strong>Import contacts from CSV</strong><p>Preview and fix every row before importing. Duplicate emails are not imported.</p></div></div><ContactCsvImport onImported={(count) => { setShowImport(false); setNotice(`${count} contacts were imported and are available when creating invoices.`); setRefresh((value) => value + 1); }} /></section>}

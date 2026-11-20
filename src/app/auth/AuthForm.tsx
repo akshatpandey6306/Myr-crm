@@ -41,7 +41,9 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
         if (isSignup && signupType === 'workspace' && !verifyingSignup && code === 'signup_otp_delivery_failed') {
           setPendingOtpEmail(String(values.email ?? '').trim().toLowerCase());
         }
-        const message = payload?.error?.message ?? payload?.message ?? 'We could not sign you in. Check your details and try again.';
+        const message = response.status >= 500 || code === 'internal_error'
+          ? `The ${isSignup ? 'account' : 'sign-in'} service hit a server error. Check the Render API logs and confirm the latest database migrations completed.`
+          : payload?.error?.message ?? payload?.message ?? 'We could not sign you in. Check your details and try again.';
         throw new Error(Array.isArray(message) ? message.join(', ') : message);
       }
       if (isSignup) {
@@ -94,9 +96,9 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
 
   function BrandLockup({ mobile = false }: { mobile?: boolean }) {
     return (
-      <Link className={`auth-logo-lockup${mobile ? ' auth-logo-lockup-mobile' : ''}`} href="/" aria-label="LeadPilot by Advance Solution home">
+      <Link className={`auth-logo-lockup${mobile ? ' auth-logo-lockup-mobile' : ''}`} href="/" aria-label="LeadPilot Advance Solution home">
         <img className="auth-logo-mark" src="/advance-solution-logo.svg" alt="" />
-        <span className="auth-logo-copy"><strong>LeadPilot</strong><small>by Advance Solution</small></span>
+        <span className="auth-logo-copy"><strong>LeadPilot</strong><small>Advance Solution</small></span>
       </Link>
     );
   }

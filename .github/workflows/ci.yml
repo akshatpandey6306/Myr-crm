@@ -1,0 +1,35 @@
+name: LeadPilot CI
+
+on:
+  push:
+    branches: [main, mergetest]
+  pull_request:
+    branches: [main, mergetest]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/leadpilot_ci?schema=public
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check web types
+        run: npm run typecheck
+      - name: Check API types
+        run: npm run api:typecheck
+      - name: Run web tests
+        run: npm test -- --maxWorkers=1
+      - name: Run API tests
+        run: npm run api:test
+      - name: Build API
+        run: npm run api:build
+      - name: Build web app
+        run: npm run build
