@@ -13,6 +13,8 @@
 }
 
 .activities-screen {
+  width: 100%;
+  min-width: 0;
   margin: 0;
   background: var(--canvas);
   color: var(--ink);
@@ -325,9 +327,11 @@
 }
 
 .activities-screen .page-wrap {
-  width: min(1120px, 100%);
-  margin: 0 auto;
-  padding: 39px 38px 28px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: clamp(24px, 2.5vw, 40px) clamp(18px, 2.5vw, 42px) 28px;
 }
 
 .activities-screen .page-heading {
