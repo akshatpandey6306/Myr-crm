@@ -2126,6 +2126,54 @@ td:first-child strong {
 .auth-copyright { margin-top: 36px; text-align: center; }
 @media (prefers-reduced-motion: reduce) { .auth-card { animation: none; } }
 
+.premium-auth-page {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100svh;
+  place-items: center;
+  overflow-y: auto;
+  background: radial-gradient(ellipse at 90% 5%, #f1efff 0, #fff 52%);
+  padding: 36px 24px 28px;
+}
+.premium-auth-content { width: min(100%, 403px); margin: auto; }
+.premium-auth-page-compact .premium-auth-content { width: min(100%, 403px); }
+.premium-auth-eyebrow { display: block; margin-bottom: 16px; color: #7054ff; font-size: 8px; font-weight: 800; letter-spacing: .2em; }
+.premium-auth-heading { margin: 0; color: #24243f; font-size: clamp(25px, 6vw, 32px); font-weight: 750; line-height: 1.15; letter-spacing: -.055em; }
+.premium-auth-copy { margin: 8px 0 29px; color: #84839e; font-size: 11px; line-height: 1.65; }
+.premium-auth-form { gap: 9px; }
+.premium-auth-form > label,
+.premium-auth-password-label label { margin-top: 4px; color: #50506a; font-size: 10px; font-weight: 650; }
+.premium-auth-form > input,
+.premium-auth-password-wrap input,
+.premium-auth-form select { height: 45px; border: 1px solid #dfe2f5; border-radius: 10px; background: #eaf0ff; padding: 0 13px; color: #292942; font-size: 11px; }
+.premium-auth-form select { width: 100%; }
+.premium-auth-form > input:focus,
+.premium-auth-password-wrap input:focus,
+.premium-auth-form select:focus { border-color: #8c7bff; box-shadow: 0 0 0 3px rgb(112 84 255 / 10%); outline: none; }
+.premium-auth-password-label { margin-top: 6px; }
+.premium-auth-password-wrap input { padding-right: 58px; }
+.premium-auth-password-wrap button { height: 45px; color: #696887; }
+.premium-auth-error,
+.premium-auth-success { border-radius: 9px; padding: 10px 11px; font-size: 10px; }
+.premium-auth-submit { height: 46px; margin-top: 9px; border-radius: 10px; background: linear-gradient(105deg, #7152ef, #347ee0); box-shadow: 0 12px 24px rgb(86 90 218 / 18%); font-size: 11px; }
+.premium-auth-submit:hover { background: linear-gradient(105deg, #6446e0, #2f70cf); box-shadow: 0 14px 25px rgb(86 90 218 / 24%); }
+.premium-auth-switch { margin-top: 17px; color: #777693; font-size: 10px; line-height: 1.65; }
+.premium-auth-switch a { color: #6950ec; }
+.premium-auth-footnote { margin-top: 22px; color: #9291a8; font-size: 8px; }
+.premium-auth-security { display: flex; align-items: center; gap: 10px; margin-top: 29px; border: 1px solid #e6e1ff; border-radius: 10px; background: rgb(250 249 255 / 90%); padding: 10px 12px; }
+.premium-auth-lock { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border-radius: 9px; background: #f0edff; color: #7155f2; }
+.premium-auth-lock svg { width: 15px; height: 15px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.premium-auth-security > span:last-child { display: grid; gap: 3px; }
+.premium-auth-security strong { color: #7155f2; font-size: 7px; letter-spacing: .16em; }
+.premium-auth-security small { color: #7d7c97; font-size: 9px; }
+.premium-auth-copyright { margin-top: 5px; color: #23233f; font-size: 10px; text-align: center; }
+.premium-auth-page-compact .premium-auth-security { margin-top: 25px; }
+@media (max-width: 520px) {
+  .premium-auth-page { padding: 30px 23px 24px; }
+  .premium-auth-copy { margin-bottom: 25px; }
+  .premium-auth-security { margin-top: 25px; }
+}
+
 .dialog-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; overflow-y: auto; background: rgb(24 38 30 / 42%); padding: 20px; backdrop-filter: blur(4px); animation: dialog-fade 150ms ease-out; }
 .record-dialog { width: min(100%, 510px); max-height: min(760px, calc(100vh - 40px)); overflow-y: auto; border: 1px solid #e7ece7; border-radius: 14px; background: #fff; box-shadow: 0 25px 80px rgb(18 32 24 / 25%); animation: pop-in 170ms ease-out; }
 .record-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 1px solid #f0f2f0; padding: 21px 23px 17px; }
