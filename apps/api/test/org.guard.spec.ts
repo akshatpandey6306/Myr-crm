@@ -46,6 +46,46 @@ describe("OrgGuard", () => {
     assert.equal(request.orgId, undefined);
   });
 
+  it("isolates three separate CRM tenants when users select a workspace", async () => {
+    const tenantByUser = new Map([
+      ["crm-1-user", "crm-1"],
+      ["crm-2-user", "crm-2"],
+      ["crm-3-user", "crm-3"],
+    ]);
+    const guard = new OrgGuard({
+      membership: {
+        findFirst: async ({ where }: { where: { userId: string; organizationId: string } }) => {
+          const tenant = tenantByUser.get(where.userId);
+          if (tenant !== where.organizationId) return null;
+          return {
+            organizationId: tenant,
+            role: "OWNER",
+            enabledModules: null,
+            organization: {
+              status: "ACTIVE",
+              subscriptionStatus: "ACTIVE",
+              subscriptionEndsAt: new Date(Date.now() + 60_000),
+              enabledModules: ["leads"],
+            },
+          };
+        },
+      },
+    } as never);
+
+    for (const [userId, ownTenant] of tenantByUser) {
+      const ownRequest: Record<string, unknown> = { headers: { "x-organization-id": ownTenant }, params: {}, path: "/api/v1/leads", userId };
+      assert.equal(await guard.canActivate(makeContext(ownRequest) as never), true);
+      assert.equal(ownRequest.orgId, ownTenant);
+
+      for (const otherTenant of tenantByUser.values()) {
+        if (otherTenant === ownTenant) continue;
+        const crossTenantRequest: Record<string, unknown> = { headers: { "x-organization-id": otherTenant }, params: {}, path: "/api/v1/leads", userId };
+        await assert.rejects(guard.canActivate(makeContext(crossTenantRequest) as never), NotFoundException);
+        assert.equal(crossTenantRequest.orgId, undefined);
+      }
+    }
+  });
+
   it("blocks members of a suspended organization", async () => {
     const request = {
       headers: { "x-organization-id": "org-a" },

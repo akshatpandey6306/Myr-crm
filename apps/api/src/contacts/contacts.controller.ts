@@ -29,9 +29,11 @@ export class ContactsController {
     @Query("pageSize") pageSizeValue?: string,
     @Query("sortBy") sortByValue?: string,
     @Query("sortOrder") sortOrderValue?: string,
+    @Query("companyId") companyId?: string,
   ) {
     const organizationId = this.organizationId(request);
     if (query && query.length > 120) throw this.invalid("q must be at most 120 characters");
+    if (companyId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(companyId)) throw this.invalid("companyId must be a valid company ID");
     const { page, pageSize } = this.pagination(pageValue, pageSizeValue);
     const sortBy = sortByValue ?? "createdAt";
     const sortOrder = sortOrderValue ?? "desc";
@@ -45,6 +47,7 @@ export class ContactsController {
     const where = {
       organizationId,
       archivedAt: null,
+      ...(companyId ? { companyId } : {}),
       ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}),
       ...(search ? { OR: [
         { name: { contains: search, mode: "insensitive" as const } },
@@ -61,7 +64,7 @@ export class ContactsController {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { owner: { include: { user: { select: { name: true } } } } },
+        include: { owner: { include: { user: { select: { name: true } } } }, companyRecord: { select: { id: true, name: true } } },
       }),
     ]);
     return {
@@ -75,10 +78,12 @@ export class ContactsController {
     requireRecordWrite(request);
     const { organizationId, userId } = this.context(request);
     const data = this.fields(body, true);
+    const companyLink = await this.resolveCompany(organizationId, body.companyId);
+    if (companyLink) { data.companyId = companyLink.id; data.company = companyLink.name; }
     try {
       const contact = await this.prisma.contact.create({
         data: { ...data, organizationId, ownerUserId: userId, createdByUserId: userId },
-        include: { owner: { include: { user: { select: { name: true } } } } },
+        include: { owner: { include: { user: { select: { name: true } } } }, companyRecord: { select: { id: true, name: true } } },
       });
       return { data: this.present(contact) };
     } catch (error) {
@@ -138,7 +143,7 @@ export class ContactsController {
     const organizationId = this.organizationId(request);
     const contact = await this.prisma.contact.findFirst({
       where: { id, organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) },
-      include: { owner: { include: { user: { select: { name: true } } } } },
+      include: { owner: { include: { user: { select: { name: true } } } }, companyRecord: { select: { id: true, name: true } } },
     });
     if (!contact) throw new NotFoundException({ code: "not_found", message: "Contact not found" });
     return { data: this.present(contact) };
@@ -149,6 +154,11 @@ export class ContactsController {
     requireRecordWrite(request);
     const organizationId = this.organizationId(request);
     const patch = this.fields(body, false);
+    if ("companyId" in (body ?? {})) {
+      const companyLink = await this.resolveCompany(organizationId, body.companyId);
+      patch.companyId = companyLink?.id ?? null;
+      if (companyLink) patch.company = companyLink.name;
+    }
     if (Object.keys(patch).length === 0) throw new BadRequestException({ code: "validation_error", message: "Provide at least one editable contact field" });
     const ownerUserId = assignedOwnerFilter(request);
     const existing = await this.prisma.contact.findFirst({ where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) }, select: { id: true } });
@@ -161,7 +171,7 @@ export class ContactsController {
     }
     const contact = await this.prisma.contact.findFirst({
       where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) },
-      include: { owner: { include: { user: { select: { name: true } } } } },
+      include: { owner: { include: { user: { select: { name: true } } } }, companyRecord: { select: { id: true, name: true } } },
     });
     if (!contact) throw new NotFoundException({ code: "not_found", message: "Contact not found" });
     return { data: this.present(contact) };
@@ -179,10 +189,10 @@ export class ContactsController {
     return { ok: true };
   }
 
-  private fields(body: Record<string, unknown>, required: true): { name: string; email: string; phone: string | null; title: string | null; company: string | null };
-  private fields(body: Record<string, unknown>, required: false): Partial<{ name: string; email: string; phone: string | null; title: string | null; company: string | null }>;
+  private fields(body: Record<string, unknown>, required: true): { name: string; email: string; phone: string | null; title: string | null; company: string | null; companyId?: string | null };
+  private fields(body: Record<string, unknown>, required: false): Partial<{ name: string; email: string; phone: string | null; title: string | null; company: string | null; companyId?: string | null }>;
   private fields(body: Record<string, unknown>, required: boolean) {
-    const patch: Partial<{ name: string; email: string; phone: string | null; title: string | null; company: string | null }> = {};
+    const patch: Partial<{ name: string; email: string; phone: string | null; title: string | null; company: string | null; companyId?: string | null }> = {};
     const fields = ["name", "email", "phone", "title", "company"] as const;
     for (const field of fields) {
       if (!required && !(field in (body ?? {}))) continue;
@@ -207,7 +217,7 @@ export class ContactsController {
     return patch;
   }
 
-  private present(contact: { id: string; name: string; email: string; phone: string | null; title: string | null; company: string | null; createdAt: Date; updatedAt: Date; owner: { user: { name: string } } }) {
+  private present(contact: { id: string; name: string; email: string; phone: string | null; title: string | null; company: string | null; companyId?: string | null; companyRecord?: { id: string; name: string } | null; createdAt: Date; updatedAt: Date; owner: { user: { name: string } } }) {
     return {
       id: contact.id,
       name: contact.name,
@@ -215,10 +225,20 @@ export class ContactsController {
       phone: contact.phone,
       title: contact.title,
       company: contact.company,
+      companyId: contact.companyRecord?.id ?? contact.companyId ?? null,
+      companyName: contact.companyRecord?.name ?? contact.company,
       owner: contact.owner.user.name,
       createdAt: contact.createdAt.toISOString(),
       updatedAt: contact.updatedAt.toISOString(),
     };
+  }
+
+  private async resolveCompany(organizationId: string, raw: unknown): Promise<{ id: string; name: string } | null> {
+    if (raw === undefined || raw === null || raw === "") return null;
+    if (typeof raw !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) throw this.invalid("companyId must be a valid company ID");
+    const company = await this.prisma.company.findFirst({ where: { id: raw, organizationId, archivedAt: null }, select: { id: true, name: true } });
+    if (!company) throw new NotFoundException({ code: "not_found", message: "Company not found in this workspace" });
+    return company;
   }
 
   private context(request: HttpRequest) {

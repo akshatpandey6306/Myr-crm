@@ -62,7 +62,7 @@ describe("AutomationsService", () => {
     assert.equal(data.priority, "HIGH");
     assert.ok(data.dueAt instanceof Date);
     assert.deepEqual(runLookupArgs, {
-      where: { leadId, ruleId: { in: [ruleId] } },
+      where: { organizationId, leadId, ruleId: { in: [ruleId] } },
       select: { ruleId: true },
     });
     assert.deepEqual(runArgs?.data, {
@@ -151,7 +151,7 @@ describe("AutomationsService", () => {
 
     assert.equal(lookupCount, 1);
     assert.deepEqual(lookupArgs, {
-      where: { leadId, ruleId: { in: [ruleId, secondRuleId] } },
+      where: { organizationId, leadId, ruleId: { in: [ruleId, secondRuleId] } },
       select: { ruleId: true },
     });
     assert.deepEqual(generatedIds, ["activity-1"]);

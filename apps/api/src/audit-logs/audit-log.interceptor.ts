@@ -1,4 +1,4 @@
-import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from "@nestjs/common";
+import { CallHandler, ExecutionContext, Inject, Injectable, Logger, NestInterceptor } from "@nestjs/common";
 import { AuditAction } from "../../generated/prisma/client.js";
 import { Observable } from "rxjs";
 import { concatMap } from "rxjs/operators";
@@ -23,7 +23,7 @@ const ignoredResources = new Set(["auth", "health", "notifications"]);
 export class AuditLogInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AuditLogInterceptor.name);
 
-  constructor(private readonly auditLogs: AuditLogsService) {}
+  constructor(@Inject(AuditLogsService) private readonly auditLogs: AuditLogsService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<AuditableRequest>();

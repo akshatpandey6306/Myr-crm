@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Inject, Logger, NotFoundException, Param, Patch, PayloadTooLargeException, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Inject, Logger, NotFoundException, Param, Patch, PayloadTooLargeException, Post, Query, Req, UnauthorizedException } from "@nestjs/common";
 import { Prisma } from "../../generated/prisma/client.js";
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -288,15 +288,46 @@ export class LeadsController {
     const { organizationId, userId } = this.context(request);
     const name = this.requiredText(body?.name, "name", 120);
     const company = this.requiredText(body?.company, "company", 160);
+    const emailValue = this.optionalText(body?.email, "email", 254);
+    if (emailValue && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) throw this.invalid("email must be a valid email address");
+    const email = emailValue?.toLowerCase() ?? null;
+    const phone = this.optionalText(body?.phone, "phone", 40);
     const source = this.resolveLeadSource(body);
     const status = this.normalizeLeadStatus(body?.status ?? "new");
     const result = await this.prisma.$transaction(async (tx) => {
+      if (email || (phone && this.phoneDigits(phone).length >= 7)) {
+        const where: Prisma.LeadWhereInput = {
+          organizationId,
+          archivedAt: null,
+          ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}),
+          OR: [
+            ...(email ? [{ email: { equals: email, mode: "insensitive" as const } }] : []),
+            ...(phone && this.phoneDigits(phone).length >= 7 ? [{ phone: { contains: this.phoneDigits(phone).slice(-7) } }] : []),
+          ],
+        };
+        const candidates = await tx.lead.findMany({ where, take: 100, select: { id: true, name: true, company: true, email: true, phone: true } });
+        const normalizedEmail = email?.toLowerCase();
+        const normalizedPhone = phone ? this.phoneDigits(phone) : "";
+        const duplicates = candidates.filter((candidate) =>
+          (normalizedEmail && candidate.email?.toLowerCase() === normalizedEmail)
+          || (normalizedPhone.length >= 7 && this.phoneDigits(candidate.phone ?? "") === normalizedPhone),
+        );
+        if (duplicates.length) {
+          throw new ConflictException({
+            code: "duplicate_lead",
+            message: "A lead with this email or phone already exists in this workspace.",
+            details: { duplicates: duplicates.map(({ id, name: existingName, company: existingCompany }) => ({ id, name: existingName, company: existingCompany })) },
+          });
+        }
+      }
       const ownerUserId = await this.nextLeadOwner(tx, organizationId, userId);
       const createdLead = await tx.lead.create({
         data: {
           organizationId,
           name,
           company,
+          ...(email ? { email } : {}),
+          ...(phone ? { phone } : {}),
           source: sourceToDatabase[source],
           status,
           ownerUserId,
@@ -521,10 +552,159 @@ export class LeadsController {
       include: {
         owner: { include: { user: { select: { name: true } } } },
         calls: { orderBy: { calledAt: "desc" }, take: 30, include: { logger: { include: { user: { select: { name: true } } } } } },
+        conversion: { include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, email: true } }, deal: { select: { id: true, name: true } } } },
       },
     });
     if (!lead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
-    return { data: this.present(lead) };
+    const activities = await this.prisma.activity.findMany({
+      where: { organizationId, relatedToType: "LEAD", relatedToId: id, archivedAt: null },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 100,
+      include: {
+        creator: { include: { user: { select: { name: true } } } },
+        assignee: { include: { user: { select: { name: true } } } },
+        leadCall: { select: { callStatus: true, durationSeconds: true, customerResponse: true, nextAction: true, followUpAt: true } },
+      },
+    });
+    return { data: { ...this.present(lead), conversion: lead.conversion ? {
+      id: lead.conversion.id,
+      convertedAt: lead.conversion.convertedAt.toISOString(),
+      company: lead.conversion.company,
+      contact: lead.conversion.contact,
+      deal: lead.conversion.deal,
+    } : null, activities: activities.map((activity) => ({
+      id: activity.id,
+      type: activity.type.toLowerCase(),
+      title: activity.title,
+      description: activity.description,
+      status: activity.status.toLowerCase(),
+      priority: activity.priority.toLowerCase(),
+      dueAt: activity.dueAt?.toISOString() ?? null,
+      createdAt: activity.createdAt.toISOString(),
+      createdBy: activity.creator.user.name,
+      assignedTo: activity.assignee?.user.name ?? null,
+      call: activity.leadCall ? {
+        status: activity.leadCall.callStatus,
+        durationSeconds: activity.leadCall.durationSeconds,
+        customerResponse: activity.leadCall.customerResponse,
+        nextAction: activity.leadCall.nextAction,
+        followUpAt: activity.leadCall.followUpAt?.toISOString() ?? null,
+      } : null,
+    })) } };
+  }
+
+  @Get(":id/conversion-options")
+  async conversionOptions(@Req() request: HttpRequest, @Param("id") id: string, @Query("q") query?: string) {
+    const { organizationId } = this.context(request);
+    if (!request.enabledModules?.includes("companies") || !request.enabledModules.includes("contacts")) {
+      throw new ForbiddenException({ code: "module_disabled", message: "Company and Contact modules must be enabled to convert a lead." });
+    }
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) },
+      select: { id: true },
+    });
+    if (!lead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
+    if (query && query.length > 120) throw this.invalid("q must be at most 120 characters");
+    const normalizedQuery = query?.trim();
+    const [companies, contacts] = await Promise.all([
+      this.prisma.company.findMany({
+        where: { organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}), ...(normalizedQuery ? { name: { contains: normalizedQuery, mode: "insensitive" } } : {}) },
+        orderBy: { name: "asc" }, take: 50, select: { id: true, name: true },
+      }),
+      this.prisma.contact.findMany({
+        where: { organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}), ...(normalizedQuery ? { OR: [ { name: { contains: normalizedQuery, mode: "insensitive" } }, { email: { contains: normalizedQuery, mode: "insensitive" } } ] } : {}) },
+        orderBy: { name: "asc" }, take: 50, select: { id: true, name: true, email: true },
+      }),
+    ]);
+    return { data: { companies, contacts, canCreateDeal: request.enabledModules?.includes("deals") ?? false } };
+  }
+
+  @Post(":id/convert")
+  async convert(@Req() request: HttpRequest, @Param("id") id: string, @Body() body: Record<string, unknown>) {
+    requireRecordWrite(request);
+    const { organizationId, userId } = this.context(request);
+    if (!request.enabledModules?.includes("companies") || !request.enabledModules.includes("contacts")) {
+      throw new ForbiddenException({ code: "module_disabled", message: "Company and Contact modules must be enabled to convert a lead." });
+    }
+    const companyId = body?.companyId === undefined || body.companyId === null || body.companyId === "" ? null : this.uuid(body.companyId, "companyId");
+    const contactId = body?.contactId === undefined || body.contactId === null || body.contactId === "" ? null : this.uuid(body.contactId, "contactId");
+    const createDeal = body?.createDeal === true;
+    if (createDeal && !request.enabledModules.includes("deals")) throw new ForbiddenException({ code: "module_disabled", message: "The Deals module is not enabled for this workspace." });
+    const leadFilter = assignedOwnerFilter(request);
+
+    const conversion = await this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.findFirst({
+        where: { id, organizationId, archivedAt: null, ...(leadFilter ? { ownerUserId: leadFilter } : {}) },
+      });
+      if (!lead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
+      const prior = await tx.leadConversion.findUnique({
+        where: { organizationId_leadId: { organizationId, leadId: id } },
+        include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, email: true } }, deal: { select: { id: true, name: true } } },
+      });
+      if (prior) return { record: prior, alreadyConverted: true };
+
+      const existingCompany = companyId
+        ? await tx.company.findFirst({ where: { id: companyId, organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) } })
+        : null;
+      if (companyId && !existingCompany) throw new NotFoundException({ code: "not_found", message: "Company not found" });
+      if (!companyId) {
+        const duplicateCompanies = await tx.company.findMany({
+          where: { organizationId, archivedAt: null, name: { equals: lead.company, mode: "insensitive" }, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) },
+          take: 10, select: { id: true, name: true },
+        });
+        if (duplicateCompanies.length) throw new ConflictException({ code: "duplicate_company", message: "A company with this name already exists in this workspace. Select it to continue.", details: { companies: duplicateCompanies } });
+      }
+      const company = existingCompany ?? await tx.company.create({
+        data: { organizationId, name: lead.company, phone: lead.phone, ownerUserId: lead.ownerUserId, createdByUserId: userId },
+        select: { id: true, name: true },
+      });
+
+      const existingContact = contactId
+        ? await tx.contact.findFirst({ where: { id: contactId, organizationId, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) }, select: { id: true, name: true, email: true, companyId: true } })
+        : null;
+      if (contactId && !existingContact) throw new NotFoundException({ code: "not_found", message: "Contact not found" });
+      if (existingContact?.companyId && existingContact.companyId !== company.id) throw new ConflictException({ code: "contact_company_conflict", message: "The selected contact is already linked to a different company in this workspace." });
+      if (!contactId && !lead.email) throw new BadRequestException({ code: "lead_email_required", message: "Add an email to the lead or select an existing contact before converting." });
+      if (!contactId) {
+        const duplicateContact = await tx.contact.findFirst({
+          where: { organizationId, email: { equals: lead.email!, mode: "insensitive" }, archivedAt: null, ...(assignedOwnerFilter(request) ? { ownerUserId: assignedOwnerFilter(request) } : {}) },
+          select: { id: true, name: true, email: true },
+        });
+        if (duplicateContact) throw new ConflictException({ code: "duplicate_contact", message: "A contact with this email already exists in this workspace. Select it to continue.", details: { contacts: [duplicateContact] } });
+      }
+      const contact = existingContact ?? await tx.contact.create({
+        data: { organizationId, companyId: company.id, name: lead.name, email: lead.email!, phone: lead.phone, company: company.name, ownerUserId: lead.ownerUserId, createdByUserId: userId },
+        select: { id: true, name: true, email: true },
+      });
+      if (existingContact && !existingContact.companyId) await tx.contact.update({ where: { organizationId_id: { organizationId, id: existingContact.id } }, data: { companyId: company.id, company: company.name } });
+
+      let deal: { id: string; name: string } | null = null;
+      if (createDeal) {
+        const pipeline = await tx.pipeline.findFirst({ where: { organizationId }, orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }], include: { stages: { orderBy: { position: "asc" }, take: 1, select: { id: true } } } });
+        const stageId = pipeline?.stages[0]?.id;
+        if (!pipeline || !stageId) throw new BadRequestException({ code: "pipeline_required", message: "Create a pipeline stage before adding a deal from this lead." });
+        const dealName = `${lead.company} opportunity`.slice(0, 160);
+        deal = await tx.deal.create({
+          data: { organizationId, name: dealName, companyId: company.id, pipelineId: pipeline.id, stageId, ownerUserId: lead.ownerUserId, createdByUserId: userId },
+          select: { id: true, name: true },
+        });
+      }
+
+      const record = await tx.leadConversion.create({
+        data: { organizationId, leadId: id, companyId: company.id, contactId: contact.id, ...(deal ? { dealId: deal.id } : {}), convertedByUserId: userId },
+        include: { company: { select: { id: true, name: true } }, contact: { select: { id: true, name: true, email: true } }, deal: { select: { id: true, name: true } } },
+      });
+      await tx.auditLog.create({ data: { organizationId, actorUserId: userId, action: "UPDATE", resourceType: "lead_conversion", resourceId: id } });
+      return { record, alreadyConverted: false };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return { data: {
+      id: conversion.record.id,
+      convertedAt: conversion.record.convertedAt.toISOString(),
+      company: conversion.record.company,
+      contact: conversion.record.contact,
+      deal: conversion.record.deal,
+      alreadyConverted: conversion.alreadyConverted,
+    } };
   }
 
   @Patch(":id")
@@ -584,15 +764,58 @@ export class LeadsController {
     const nextAction = this.optionalText(body?.nextAction, "nextAction", 2000);
     const followUpAt = this.optionalDate(body?.followUpAt, "followUpAt");
     const ownerUserId = assignedOwnerFilter(request);
-    const lead = await this.prisma.lead.findFirst({ where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) }, select: { id: true } });
+    const lead = await this.prisma.lead.findFirst({ where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) }, select: { id: true, name: true } });
     if (!lead) throw new NotFoundException({ code: "not_found", message: "Lead not found" });
     const call = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.leadCall.create({ data: { organizationId, leadId: id, loggedByUserId: userId, callStatus, durationSeconds, customerResponse, nextAction, followUpAt }, include: { logger: { include: { user: { select: { name: true } } } } } });
+      const calledAt = new Date();
+      const activity = await tx.activity.create({ data: {
+        organizationId,
+        type: "CALL",
+        title: `Call with ${lead.name}`.slice(0, 160),
+        description: [
+          `Call status: ${callStatus.replaceAll("_", " ")}`,
+          durationSeconds !== null ? `Duration: ${durationSeconds} seconds` : null,
+          customerResponse ? `Customer response: ${customerResponse}` : null,
+          nextAction ? `Next action: ${nextAction}` : null,
+        ].filter(Boolean).join("\n"),
+        status: "COMPLETED",
+        priority: "NORMAL",
+        dueAt: calledAt,
+        completedAt: calledAt,
+        assignedToUserId: userId,
+        relatedToType: "LEAD",
+        relatedToId: id,
+        createdByUserId: userId,
+        createdAt: calledAt,
+        updatedAt: calledAt,
+      } });
+      const created = await tx.leadCall.create({ data: { organizationId, leadId: id, loggedByUserId: userId, activityId: activity.id, callStatus, durationSeconds, customerResponse, nextAction, followUpAt, calledAt }, include: { logger: { include: { user: { select: { name: true } } } } } });
       if (followUpAt) await tx.lead.updateMany({ where: { id, organizationId, archivedAt: null, ...(ownerUserId ? { ownerUserId } : {}) }, data: { followUpAt } });
       await tx.auditLog.create({ data: { organizationId, actorUserId: userId, action: "CREATE", resourceType: "lead_call", resourceId: created.id } });
-      return created;
+      return { ...created, activity };
     });
-    return { data: { id: call.id, callStatus: call.callStatus, durationSeconds: call.durationSeconds, customerResponse: call.customerResponse, nextAction: call.nextAction, followUpAt: call.followUpAt?.toISOString() ?? null, calledAt: call.calledAt.toISOString(), loggedBy: call.logger.user.name } };
+    return { data: {
+      id: call.id,
+      callStatus: call.callStatus,
+      durationSeconds: call.durationSeconds,
+      customerResponse: call.customerResponse,
+      nextAction: call.nextAction,
+      followUpAt: call.followUpAt?.toISOString() ?? null,
+      calledAt: call.calledAt.toISOString(),
+      loggedBy: call.logger.user.name,
+      activity: {
+        id: call.activity.id,
+        type: call.activity.type.toLowerCase(),
+        title: call.activity.title,
+        description: call.activity.description,
+        status: call.activity.status.toLowerCase(),
+        priority: call.activity.priority.toLowerCase(),
+        dueAt: call.activity.dueAt?.toISOString() ?? null,
+        createdAt: call.activity.createdAt.toISOString(),
+        createdBy: call.logger.user.name,
+        assignedTo: call.logger.user.name,
+      },
+    } };
   }
 
   private async auditGeneratedActivities(activityIds: string[], organizationId: string, actorUserId: string) {
@@ -777,6 +1000,15 @@ export class LeadsController {
     if (value === null || value === undefined || value === "") return null;
     if (typeof value !== "string" || value.trim().length > maximum) throw this.invalid(`${field} must be at most ${maximum} characters`);
     return value.trim();
+  }
+
+  private phoneDigits(value: string) {
+    return value.replace(/\D/g, "");
+  }
+
+  private uuid(value: unknown, field: string) {
+    if (typeof value !== "string" || !uuidPattern.test(value)) throw this.invalid(`${field} must be a valid identifier`);
+    return value;
   }
 
   private optionalDate(value: unknown, field: string): Date | null {

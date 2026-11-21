@@ -14,11 +14,11 @@ describe('AuthForm', () => {
     apiFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ message: 'Verification code sent.' }),
+        text: async () => JSON.stringify({ message: 'Verification code sent.' }),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ message: 'Account verified.' }),
+        text: async () => JSON.stringify({ message: 'Account verified.' }),
       } as Response);
 
     render(<AuthForm mode="signup" />);
@@ -54,7 +54,7 @@ describe('AuthForm', () => {
   it('shows OTP entry and resend when initial email delivery fails after signup', async () => {
     vi.mocked(crmApiFetch).mockResolvedValueOnce({
       ok: false,
-      json: async () => ({
+      text: async () => JSON.stringify({
         error: {
           code: 'signup_otp_delivery_failed',
           message: 'We could not deliver the verification email. Request a new code and try again.',
@@ -83,5 +83,17 @@ describe('AuthForm', () => {
     render(<AuthForm mode="signin" />);
     expect(await screen.findByRole('textbox', { name: 'Work email' })).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
+  });
+
+  it('keeps the LeadPilot brand and interactive password control in the redesigned sign-in', async () => {
+    render(<AuthForm mode="signin" />);
+    expect(await screen.findByRole('heading', { name: 'Sign in to your workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'LeadPilot Advance Solution home' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'LeadPilot — Advance Solution' })).toBeInTheDocument();
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(password.type).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(password.type).toBe('text');
+    expect(screen.getByRole('link', { name: 'Forgot password?' })).toHaveAttribute('href', '/forgot-password');
   });
 });

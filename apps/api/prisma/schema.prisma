@@ -98,6 +98,17 @@ enum DealStatus {
   @@map("deal_status")
 }
 
+enum CompanyStatus {
+  PROSPECT   @map("prospect")
+  ENGAGED    @map("engaged")
+  OPPORTUNITY @map("opportunity")
+  CUSTOMER   @map("customer")
+  INACTIVE   @map("inactive")
+  LOST       @map("lost")
+
+  @@map("company_status")
+}
+
 enum ActivityType {
   TASK    @map("task")
   CALL    @map("call")
@@ -267,6 +278,7 @@ model Organization {
   memberships            Membership[]
   workspaceRoles         WorkspaceRole[]
   leads                  Lead[]
+  leadConversions        LeadConversion[]
   leadCalls              LeadCall[]
   contacts               Contact[]
   companies              Company[]
@@ -409,6 +421,7 @@ model Membership {
   leadsOwned             Lead[]                   @relation("LeadOwner")
   leadsCreated           Lead[]                   @relation("LeadCreator")
   leadCallsLogged        LeadCall[]                @relation("LeadCallLogger")
+  leadConversionsMade    LeadConversion[]          @relation("LeadConversionActor")
   contactsOwned          Contact[]                @relation("ContactOwner")
   contactsCreated        Contact[]                @relation("ContactCreator")
   companiesOwned         Company[]                @relation("CompanyOwner")
@@ -676,6 +689,7 @@ model Lead {
   creator         Membership      @relation("LeadCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   automationRuns  AutomationRun[]
   calls           LeadCall[]
+  conversion      LeadConversion?
 
   @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
@@ -683,6 +697,31 @@ model Lead {
   @@index([organizationId, source, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
   @@map("leads")
+}
+
+model LeadConversion {
+  id                  String       @id @default(uuid()) @db.Uuid
+  organizationId      String       @map("organization_id") @db.Uuid
+  leadId              String       @map("lead_id") @db.Uuid
+  companyId           String       @map("company_id") @db.Uuid
+  contactId           String       @map("contact_id") @db.Uuid
+  dealId              String?      @map("deal_id") @db.Uuid
+  convertedByUserId   String       @map("converted_by_user_id") @db.Uuid
+  convertedAt         DateTime     @default(now()) @map("converted_at") @db.Timestamptz(3)
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead                Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade)
+  company             Company      @relation(fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
+  contact             Contact      @relation(fields: [organizationId, contactId], references: [organizationId, id], onDelete: Restrict)
+  deal                Deal?        @relation(fields: [organizationId, dealId], references: [organizationId, id], onDelete: Restrict)
+  convertedBy         Membership   @relation("LeadConversionActor", fields: [organizationId, convertedByUserId], references: [organizationId, userId], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, leadId])
+  @@index([organizationId, convertedAt])
+  @@index([organizationId, companyId])
+  @@index([organizationId, contactId])
+  @@index([organizationId, dealId])
+  @@map("lead_conversions")
 }
 
 model LeadCall {
@@ -696,10 +735,13 @@ model LeadCall {
   nextAction        String?      @map("next_action") @db.Text
   followUpAt        DateTime?    @map("follow_up_at") @db.Timestamptz(3)
   calledAt          DateTime     @default(now()) @map("called_at") @db.Timestamptz(3)
+  activityId        String       @map("activity_id") @db.Uuid
   organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   lead              Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade)
   logger            Membership  @relation("LeadCallLogger", fields: [organizationId, loggedByUserId], references: [organizationId, userId], onDelete: Restrict)
+  activity          Activity     @relation(fields: [organizationId, activityId], references: [organizationId, id], onDelete: Restrict)
 
+  @@unique([organizationId, activityId])
   @@index([organizationId, leadId, calledAt])
   @@index([organizationId, loggedByUserId, calledAt])
   @@map("lead_calls")
@@ -713,17 +755,20 @@ model Contact {
   phone           String?        @db.VarChar(40)
   title           String?        @db.VarChar(120)
   company         String?        @db.VarChar(160)
+  companyId       String?        @map("company_id") @db.Uuid
   ownerUserId     String         @map("owner_user_id") @db.Uuid
   createdByUserId String         @map("created_by_user_id") @db.Uuid
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt      DateTime?      @map("archived_at") @db.Timestamptz(3)
   organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companyRecord   Company?       @relation("CompanyContacts", fields: [organizationId, companyId], references: [organizationId, id], onDelete: Restrict)
   owner           Membership     @relation("ContactOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership     @relation("ContactCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   emailMessages   EmailMessage[]
   billingInvoices   BillingInvoice[]   @relation("BillingInvoiceContact")
   billingQuotations BillingQuotation[] @relation("BillingQuotationContact")
+  leadConversions   LeadConversion[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, email])
@@ -739,21 +784,46 @@ model Company {
   industry        String?      @db.VarChar(120)
   website         String?      @db.VarChar(255)
   phone           String?      @db.VarChar(40)
+  email           String?      @db.VarChar(254)
+  logoUrl         String?      @map("logo_url") @db.VarChar(2048)
+  companyType     String?      @map("company_type") @db.VarChar(80)
+  description     String?      @db.Text
+  employeeCount   Int?         @map("employee_count")
+  annualRevenue   Decimal?     @map("annual_revenue") @db.Decimal(14, 2)
+  registrationNumber String?   @map("registration_number") @db.VarChar(120)
+  parentCompanyId String?      @map("parent_company_id") @db.Uuid
+  country         String?      @db.VarChar(120)
+  state           String?      @db.VarChar(120)
+  city            String?      @db.VarChar(120)
+  address         String?      @db.VarChar(500)
+  postalCode      String?      @map("postal_code") @db.VarChar(40)
+  status          CompanyStatus @default(PROSPECT)
+  leadSource      LeadSource?  @map("lead_source")
+  tags            String[]     @default([])
+  internalNotes   String?      @map("internal_notes") @db.Text
+  customFields    Json         @default("{}") @map("custom_fields")
   ownerUserId     String       @map("owner_user_id") @db.Uuid
   createdByUserId String       @map("created_by_user_id") @db.Uuid
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
   archivedAt      DateTime?    @map("archived_at") @db.Timestamptz(3)
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parentCompany   Company?     @relation("CompanyHierarchy", fields: [organizationId, parentCompanyId], references: [organizationId, id], onDelete: Restrict)
+  subsidiaries    Company[]    @relation("CompanyHierarchy")
+  contacts        Contact[]    @relation("CompanyContacts")
   owner           Membership   @relation("CompanyOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership   @relation("CompanyCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   deals           Deal[]
   billingInvoices   BillingInvoice[]   @relation("BillingInvoiceCompany")
   billingQuotations BillingQuotation[] @relation("BillingQuotationCompany")
+  leadConversions   LeadConversion[]
 
   @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
   @@index([organizationId, ownerUserId, archivedAt])
+  @@index([organizationId, status, archivedAt])
+  @@index([organizationId, industry, archivedAt])
+  @@index([organizationId, parentCompanyId])
   @@map("companies")
 }
 
@@ -812,7 +882,9 @@ model Deal {
   stage           PipelineStage @relation(fields: [organizationId, pipelineId, stageId], references: [organizationId, pipelineId, id], onDelete: Restrict)
   owner           Membership    @relation("DealOwner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict)
   creator         Membership    @relation("DealCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
+  leadConversions LeadConversion[]
 
+  @@unique([organizationId, id])
   @@index([organizationId, archivedAt, createdAt])
   @@index([organizationId, pipelineId, stageId, archivedAt])
   @@index([organizationId, ownerUserId, archivedAt])
@@ -840,6 +912,7 @@ model Activity {
   assignee         Membership?        @relation("ActivityAssignee", fields: [organizationId, assignedToUserId], references: [organizationId, userId], onDelete: Restrict)
   creator          Membership         @relation("ActivityCreator", fields: [organizationId, createdByUserId], references: [organizationId, userId], onDelete: Restrict)
   notifications    Notification[]
+  leadCall         LeadCall?
 
   @@unique([organizationId, id])
   @@index([organizationId, archivedAt, dueAt])

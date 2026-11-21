@@ -241,6 +241,43 @@ describe("ActivitiesController", () => {
     assert.ok(args?.data.archivedAt instanceof Date);
   });
 
+  it("bulk updates only selected active activities in the verified organization", async () => {
+    let selection: Record<string, unknown> | undefined;
+    let update: { where: Record<string, unknown>; data: Record<string, unknown> } | undefined;
+    const controller = new ActivitiesController({ $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({
+      activity: {
+        findMany: async (args: { where: Record<string, unknown> }) => { selection = args.where; return [{ id: recordId, title: "Follow up", assignedToUserId: userId }]; },
+        updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => { update = args; return { count: 1 }; },
+      },
+    }) } as never);
+
+    const result = await controller.bulkUpdate(request(), { ids: [recordId], status: "completed" });
+
+    assert.equal(selection?.organizationId, organizationId);
+    assert.equal(selection?.archivedAt, null);
+    assert.deepEqual(selection?.id, { in: [recordId] });
+    assert.equal(update?.where.organizationId, organizationId);
+    assert.equal(update?.data.status, "COMPLETED");
+    assert.ok(update?.data.completedAt instanceof Date);
+    assert.deepEqual(result, { data: { updatedCount: 1 } });
+  });
+
+  it("does not partially bulk archive if any selected activity is unavailable", async () => {
+    let updateCalled = false;
+    const controller = new ActivitiesController({ $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({
+      activity: {
+        count: async ({ where }: { where: Record<string, unknown> }) => {
+          assert.equal(where.organizationId, organizationId);
+          return 0;
+        },
+        updateMany: async () => { updateCalled = true; return { count: 0 }; },
+      },
+    }) } as never);
+
+    await assert.rejects(controller.bulkArchive(request(), { ids: [recordId] }), NotFoundException);
+    assert.equal(updateCalled, false);
+  });
+
   it("returns not found for an activity outside the verified organization", async () => {
     const controller = new ActivitiesController({
       activity: { updateMany: async () => ({ count: 0 }) },

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
+import PremiumAuthLayout from './PremiumAuthLayout';
 
 type Mode = 'forgot' | 'reset' | 'verify' | 'activate';
 
@@ -79,16 +80,29 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
   }
 
   const heading = headings[mode];
+  if (mode === 'forgot') return <PremiumAuthLayout compact>
+    <span className="premium-auth-eyebrow">ACCOUNT RECOVERY</span>
+    <h1 className="premium-auth-heading">{heading.title}</h1>
+    <p className="premium-auth-copy">{heading.description}</p>
+    <form className="auth-form premium-auth-form" onSubmit={submit}>
+      <label htmlFor="security-email">Work email</label>
+      <input id="security-email" name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
+      {error && <div className="auth-error premium-auth-error" role="alert">{error}</div>}
+      {success && <div className="auth-success premium-auth-success" role="status">{success}</div>}
+      <button className="auth-submit premium-auth-submit" type="submit" disabled={busy || Boolean(success)}>{busy ? <><span className="auth-spinner" /> Sending reset link…</> : 'Send reset link'}<span aria-hidden="true">→</span></button>
+    </form>
+    <p className="auth-switch premium-auth-switch"><Link href="/sign-in">Back to sign in</Link></p>
+  </PremiumAuthLayout>;
   return (
     <main className="auth-page auth-security-page">
       <section className="auth-main">
         <div className="auth-card">
-          <Link className="brand auth-brand" href="/"><img className="brand-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" /></Link>
+          <Link className="brand auth-brand" href="/"><img className="brand-partner-logo" src="/leadpilot-advance-solution-white.svg" alt="LeadPilot Advance Solution" /></Link>
           <span className="auth-step">ACCOUNT SECURITY</span>
           <h2>{heading.title}</h2>
           <p className="auth-subtitle">{heading.description}</p>
           <form className="auth-form" onSubmit={submit}>
-            {(mode === 'forgot' || (mode === 'verify' && !token)) && <>
+            {mode === 'verify' && !token && <>
               <label htmlFor="security-email">Work email</label>
               <input id="security-email" name="email" type="email" autoComplete="email" required />
             </>}

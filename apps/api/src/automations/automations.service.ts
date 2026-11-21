@@ -25,7 +25,11 @@ export class AutomationsService {
     if (matchingRules.length === 0) return generatedActivityIds;
 
     const previousRuns = await tx.automationRun.findMany({
-      where: { leadId: event.leadId, ruleId: { in: matchingRules.map(({ id }) => id) } },
+      where: {
+        organizationId: event.organizationId,
+        leadId: event.leadId,
+        ruleId: { in: matchingRules.map(({ id }) => id) },
+      },
       select: { ruleId: true },
     });
     const completedRuleIds = new Set(previousRuns.map(({ ruleId }) => ruleId));

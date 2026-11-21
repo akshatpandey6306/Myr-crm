@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { LeadsController } from "../src/leads/leads.controller.js";
 
 const createController = (prisma: unknown) =>
@@ -61,6 +61,30 @@ describe("LeadsController", () => {
     assert.equal(data.createdByUserId, "user-a");
   });
 
+  it("detects duplicate email inside the active tenant and representative ownership scope", async () => {
+    let duplicateWhere: Record<string, unknown> | undefined;
+    const controller = createController({
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        lead: { findMany: async (args: { where: Record<string, unknown> }) => {
+          duplicateWhere = args.where;
+          return [{ id: "existing-lead", name: "Olivia Rhye", company: "Northstar", email: "olivia@example.com", phone: null }];
+        } },
+      }),
+    });
+
+    await assert.rejects(controller.create(
+      { userId: "rep-a", orgId: "org-a", organizationRole: "sales_rep", headers: {}, params: {}, path: "/api/v1/leads" },
+      { name: "Olivia Rhye", company: "Northstar", email: " OLIVIA@example.com ", source: "website" },
+    ), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      const response = error.getResponse() as { details?: { duplicates?: Array<{ id: string }> } };
+      assert.equal(response.details?.duplicates?.[0]?.id, "existing-lead");
+      return true;
+    });
+    assert.equal(duplicateWhere?.organizationId, "org-a");
+    assert.equal(duplicateWhere?.ownerUserId, "rep-a");
+  });
+
   it("returns not found for a record outside the verified organization", async () => {
     const prisma = {
       $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
@@ -103,6 +127,64 @@ describe("LeadsController", () => {
     );
     assert.equal(where?.organizationId, "org-a");
     assert.equal(where?.ownerUserId, "rep-a");
+  });
+
+  it("returns conversion options only for the active tenant and representative ownership", async () => {
+    let companyWhere: Record<string, unknown> | undefined;
+    let contactWhere: Record<string, unknown> | undefined;
+    const controller = createController({
+      lead: { findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        assert.equal(where.organizationId, "org-a");
+        assert.equal(where.ownerUserId, "rep-a");
+        return { id: "lead-a" };
+      } },
+      company: { findMany: async ({ where }: { where: Record<string, unknown> }) => { companyWhere = where; return []; } },
+      contact: { findMany: async ({ where }: { where: Record<string, unknown> }) => { contactWhere = where; return []; } },
+    });
+    const result = await controller.conversionOptions({
+      userId: "rep-a", orgId: "org-a", organizationRole: "sales_rep", enabledModules: ["companies", "contacts"], headers: {}, params: {}, path: "/api/v1/leads/lead-a/conversion-options",
+    }, "lead-a", "North");
+    assert.equal(companyWhere?.organizationId, "org-a");
+    assert.equal(companyWhere?.ownerUserId, "rep-a");
+    assert.equal(contactWhere?.organizationId, "org-a");
+    assert.equal(contactWhere?.ownerUserId, "rep-a");
+    assert.equal((result.data as { canCreateDeal: boolean }).canCreateDeal, false);
+  });
+
+  it("does not allow conversion to link a company from another tenant", async () => {
+    let companyLookup: Record<string, unknown> | undefined;
+    const controller = createController({
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        lead: { findFirst: async () => ({ id: "lead-a", company: "Northstar", name: "Olivia", email: "olivia@example.com", phone: null, ownerUserId: "owner-a" }) },
+        leadConversion: { findUnique: async () => null },
+        company: { findFirst: async ({ where }: { where: Record<string, unknown> }) => { companyLookup = where; return null; } },
+      }),
+    });
+    await assert.rejects(controller.convert({
+      userId: "owner-a", orgId: "org-a", organizationRole: "owner", enabledModules: ["companies", "contacts", "deals"], headers: {}, params: {}, path: "/api/v1/leads/lead-a/convert",
+    }, "lead-a", { companyId: "11111111-1111-4111-8111-111111111111", contactId: "22222222-2222-4222-8222-222222222222" }), NotFoundException);
+    assert.deepEqual(companyLookup, { id: "11111111-1111-4111-8111-111111111111", organizationId: "org-a", archivedAt: null });
+  });
+
+  it("returns an existing conversion instead of creating duplicate CRM records", async () => {
+    const convertedAt = new Date("2026-11-20T10:00:00Z");
+    let writes = 0;
+    const prior = { id: "conversion-a", convertedAt, company: { id: "company-a", name: "Northstar" }, contact: { id: "contact-a", name: "Olivia", email: "olivia@example.com" }, deal: null };
+    const controller = createController({
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        lead: { findFirst: async () => ({ id: "lead-a", company: "Northstar", name: "Olivia", email: "olivia@example.com", phone: null, ownerUserId: "owner-a" }) },
+        leadConversion: { findUnique: async () => prior, create: async () => { writes += 1; return prior; } },
+        company: { create: async () => { writes += 1; return {}; } },
+        contact: { create: async () => { writes += 1; return {}; } },
+        deal: { create: async () => { writes += 1; return {}; } },
+        auditLog: { create: async () => { writes += 1; return {}; } },
+      }),
+    });
+    const result = await controller.convert({
+      userId: "owner-a", orgId: "org-a", organizationRole: "owner", enabledModules: ["companies", "contacts", "deals"], headers: {}, params: {}, path: "/api/v1/leads/lead-a/convert",
+    }, "lead-a", { createDeal: true });
+    assert.equal((result.data as { alreadyConverted: boolean }).alreadyConverted, true);
+    assert.equal(writes, 0);
   });
 
   it("runs status automations inside the lead update transaction only when status changes", async () => {
@@ -405,5 +487,76 @@ describe("LeadsController", () => {
     assert.equal(where?.ownerUserId, "rep-a");
     assert.equal(where?.archivedAt, null);
     assert.equal(where?.source, "WEBSITE");
+  });
+
+  it("writes each lead call once to the shared tenant-scoped activity timeline", async () => {
+    let activityData: Record<string, unknown> | undefined;
+    let callData: Record<string, unknown> | undefined;
+    const callTime = new Date("2026-11-20T10:00:00.000Z");
+    const controller = createController({
+      lead: { findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+        assert.equal(where.organizationId, "org-a");
+        return { id: "lead-a", name: "Ada Lovelace" };
+      } },
+      $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({
+        activity: { create: async ({ data }: { data: Record<string, unknown> }) => {
+          activityData = data;
+          return { ...data, id: "activity-a" };
+        } },
+        leadCall: { create: async ({ data }: { data: Record<string, unknown> }) => {
+          callData = data;
+          return { ...data, id: "call-a", logger: { user: { name: "Alex" } } };
+        } },
+        lead: { updateMany: async () => ({ count: 1 }) },
+        auditLog: { create: async () => undefined },
+      }),
+    });
+
+    const result = await controller.logCall(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/leads/lead-a/calls" },
+      "lead-a",
+      { callStatus: "connected", durationSeconds: 80, customerResponse: "Interested", nextAction: "Send proposal" },
+    );
+
+    assert.equal(activityData?.organizationId, "org-a");
+    assert.equal(activityData?.relatedToType, "LEAD");
+    assert.equal(activityData?.relatedToId, "lead-a");
+    assert.equal(activityData?.createdByUserId, "user-a");
+    assert.equal(activityData?.type, "CALL");
+    assert.equal(callData?.activityId, "activity-a");
+    assert.equal(callData?.calledAt, activityData?.createdAt);
+    assert.equal((result.data as { activity: { id: string } }).activity.id, "activity-a");
+  });
+
+  it("loads a lead timeline using the active workspace and lead relationship", async () => {
+    let timelineWhere: Record<string, unknown> | undefined;
+    const createdAt = new Date("2026-11-20T10:00:00.000Z");
+    const controller = createController({
+      lead: { findFirst: async () => ({
+        id: "lead-a", name: "Ada Lovelace", company: "Analytical Engines", source: "WEBSITE", status: "NEW",
+        createdAt, updatedAt: createdAt, ownerUserId: "user-a", owner: { role: "OWNER", user: { name: "Alex" } }, calls: [],
+      }) },
+      activity: { findMany: async ({ where }: { where: Record<string, unknown> }) => {
+        timelineWhere = where;
+        return [{
+          id: "activity-a", type: "CALL", title: "Call with Ada Lovelace", description: "Call status: connected",
+          status: "COMPLETED", priority: "NORMAL", dueAt: createdAt, createdAt,
+          creator: { user: { name: "Alex" } }, assignee: { user: { name: "Alex" } },
+          leadCall: { callStatus: "connected", durationSeconds: 80, customerResponse: "Interested", nextAction: "Send proposal", followUpAt: null },
+        }];
+      } },
+    });
+
+    const result = await controller.get(
+      { userId: "user-a", orgId: "org-a", organizationRole: "owner", headers: {}, params: {}, path: "/api/v1/leads/lead-a" },
+      "lead-a",
+    );
+
+    assert.deepEqual(timelineWhere, { organizationId: "org-a", relatedToType: "LEAD", relatedToId: "lead-a", archivedAt: null });
+    const data = result.data as { activities: { id: string; call: { status: string; durationSeconds: number | null } }[] };
+    assert.equal(data.activities.length, 1);
+    assert.equal(data.activities[0]?.id, "activity-a");
+    assert.equal(data.activities[0]?.call.status, "connected");
+    assert.equal(data.activities[0]?.call.durationSeconds, 80);
   });
 });

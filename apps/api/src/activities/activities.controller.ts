@@ -198,6 +198,55 @@ export class ActivitiesController {
     return { data: this.present(activity, relatedNames) };
   }
 
+  @Patch("bulk")
+  async bulkUpdate(@Req() request: HttpRequest, @Body() body: Record<string, unknown>) {
+    requireRecordWrite(request);
+    const { organizationId, userId } = this.context(request);
+    const ids = this.ids(body?.ids);
+    const patch: ActivityFields = {};
+    if ("status" in (body ?? {})) {
+      const status = this.enumValue(body.status, statuses, "status");
+      patch.status = status.toUpperCase() as ActivityFields["status"];
+      patch.completedAt = status === "completed" ? new Date() : null;
+    }
+    if ("assignedToUserId" in (body ?? {})) {
+      this.requireAssignmentPermission(request);
+      const assignee = body.assignedToUserId === null ? null : this.uuid(body.assignedToUserId, "assignedToUserId");
+      if (assignee) await this.validateAssignee(organizationId, assignee);
+      patch.assignedToUserId = assignee;
+    }
+    if (Object.keys(patch).length === 0) throw this.invalid("Choose a bulk status or assignee update");
+    const ownerFilter = request.organizationRole === "sales_rep" ? { assignedToUserId: userId } : {};
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.activity.findMany({
+        where: { organizationId, archivedAt: null, id: { in: ids }, ...ownerFilter },
+        select: { id: true, title: true, assignedToUserId: true },
+      });
+      if (existing.length !== ids.length) throw new NotFoundException({ code: "not_found", message: "One or more selected activities are unavailable" });
+      await tx.activity.updateMany({ where: { organizationId, archivedAt: null, id: { in: ids }, ...ownerFilter }, data: patch });
+      if (patch.assignedToUserId) {
+        const notifications = existing
+          .filter((item) => item.assignedToUserId !== patch.assignedToUserId && patch.assignedToUserId !== userId)
+          .map((item) => ({ organizationId, recipientUserId: patch.assignedToUserId!, activityId: item.id, type: "ACTIVITY_ASSIGNED" as const, title: "Activity assigned to you", body: item.title }));
+        if (notifications.length) await tx.notification.createMany({ data: notifications });
+      }
+    });
+    return { data: { updatedCount: ids.length } };
+  }
+
+  @Delete("bulk")
+  async bulkArchive(@Req() request: HttpRequest, @Body() body: Record<string, unknown>) {
+    requireRecordArchive(request);
+    const { organizationId } = this.context(request);
+    const ids = this.ids(body?.ids);
+    const archivedCount = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.activity.count({ where: { organizationId, archivedAt: null, id: { in: ids } } });
+      if (existing !== ids.length) throw new NotFoundException({ code: "not_found", message: "One or more selected activities are unavailable" });
+      return (await tx.activity.updateMany({ where: { organizationId, archivedAt: null, id: { in: ids } }, data: { archivedAt: new Date() } })).count;
+    });
+    return { data: { archivedCount } };
+  }
+
   @Get(":id")
   async get(@Req() request: HttpRequest, @Param("id") id: string) {
     const { organizationId, userId } = this.context(request);
@@ -441,6 +490,13 @@ export class ActivitiesController {
     if (!request.organizationRole || !managers.has(request.organizationRole)) {
       throw new ForbiddenException({ code: "forbidden", message: "Your organization role cannot assign activities" });
     }
+  }
+
+  private ids(value: unknown) {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 100) throw this.invalid("Select between 1 and 100 activities");
+    const ids = value.map((id) => this.uuid(id, "ids"));
+    if (new Set(ids).size !== ids.length) throw this.invalid("Activity IDs must be unique");
+    return ids;
   }
 
   private context(request: HttpRequest) {

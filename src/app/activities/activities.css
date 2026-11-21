@@ -1349,6 +1349,54 @@
   font-size: 9px;
 }
 
+.activities-screen .activity-bulk-toolbar {
+  display: flex;
+  min-height: 48px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #efedf7;
+  background: #fbfaff;
+}
+
+.activities-screen .activity-bulk-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: auto;
+  color: #57566d;
+  font-size: 11px;
+}
+
+.activities-screen .activity-bulk-toolbar button,
+.activities-screen .activity-bulk-toolbar select {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #e5e1f3;
+  border-radius: 7px;
+  background: #fff;
+  color: #4f4b68;
+  font: inherit;
+  font-size: 11px;
+}
+
+.activities-screen .activity-bulk-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.activities-screen .activity-select-checkbox,
+.activities-screen .activity-bulk-toolbar input {
+  width: 15px;
+  height: 15px;
+  accent-color: #6d59df;
+}
+
+.activities-screen .activity-select-checkbox {
+  margin: 0 2px;
+}
+
 .activities-screen .assignee-placeholder {
   display: grid;
   gap: 5px;
@@ -1421,4 +1469,22 @@
   border-color: var(--green-pale);
   background-color: var(--surface);
   color: var(--crm-ink);
+}
+
+@media (max-width: 640px) {
+  .activities-screen .activity-bulk-toolbar {
+    padding: 9px 11px;
+    gap: 6px;
+  }
+
+  .activities-screen .activity-bulk-toolbar label {
+    flex-basis: 100%;
+    margin: 0 0 2px;
+  }
+
+  .activities-screen .activity-bulk-toolbar button,
+  .activities-screen .activity-bulk-toolbar select {
+    flex: 1 1 auto;
+    min-height: 36px;
+  }
 }

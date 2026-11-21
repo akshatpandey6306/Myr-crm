@@ -16,6 +16,7 @@ describe("CompaniesController", () => {
   it("scopes company search and pagination to the verified organization", async () => {
     let where: Record<string, unknown> | undefined;
     const prisma = {
+      activity: { groupBy: async () => [] },
       company: {
         count: async (args: { where: Record<string, unknown> }) => { where = args.where; return 0; },
         findMany: async (args: { where: Record<string, unknown> }) => { where = args.where; return []; },
@@ -50,6 +51,7 @@ describe("CompaniesController", () => {
       owner: { user: { name: "Maya Chen" } },
     };
     const prisma = {
+      activity: { groupBy: async () => [] },
       company: {
         count: async (args: { where: Record<string, unknown> }) => { listWhere = args.where; return 1; },
         findMany: async (args: { where: Record<string, unknown> }) => { listWhere = args.where; return [company]; },
@@ -89,7 +91,6 @@ describe("CompaniesController", () => {
       industry: " Technology ",
       website: "https://northstar.io",
       organizationId: "org-b",
-      ownerUserId: "user-b",
       createdByUserId: "user-b",
     });
 
@@ -131,5 +132,38 @@ describe("CompaniesController", () => {
     assert.equal(where?.id, "company-a");
     assert.equal(where?.organizationId, "org-a");
     assert.equal(where?.archivedAt, null);
+  });
+
+  it("updates selected company statuses atomically inside the verified tenant", async () => {
+    let countWhere: Record<string, unknown> | undefined;
+    let updateArgs: Record<string, unknown> | undefined;
+    const tx = { company: {
+      count: async (args: { where: Record<string, unknown> }) => { countWhere = args.where; return 2; },
+      updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 2 }; },
+    } };
+    const controller = new CompaniesController({ $transaction: async (callback: (client: typeof tx) => unknown) => callback(tx) } as never);
+    const result = await controller.bulkUpdate(request(), { ids: [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ], status: "customer" });
+
+    assert.equal(countWhere?.organizationId, "org-a");
+    assert.deepEqual(countWhere?.id, { in: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+    assert.deepEqual(updateArgs?.data, { status: "CUSTOMER" });
+    assert.deepEqual(result.data, { updatedCount: 2 });
+  });
+
+  it("does not partially update a bulk request containing an unavailable company", async () => {
+    let updated = false;
+    const tx = { company: {
+      count: async () => 1,
+      updateMany: async () => { updated = true; return { count: 1 }; },
+    } };
+    const controller = new CompaniesController({ $transaction: async (callback: (client: typeof tx) => unknown) => callback(tx) } as never);
+    await assert.rejects(
+      controller.bulkUpdate(request(), { ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], status: "customer" }),
+      NotFoundException,
+    );
+    assert.equal(updated, false);
   });
 });

@@ -36,7 +36,12 @@ export default function CrmShell({ active, children }: { active: string; childre
     };
     loadSidebarPreference();
     window.addEventListener('myr:organization-changed', loadSidebarPreference);
-    return () => window.removeEventListener('myr:organization-changed', loadSidebarPreference);
+    const refreshTenantData = () => window.location.reload();
+    window.addEventListener('myr:organization-changed', refreshTenantData);
+    return () => {
+      window.removeEventListener('myr:organization-changed', loadSidebarPreference);
+      window.removeEventListener('myr:organization-changed', refreshTenantData);
+    };
   }, []);
 
   function toggleSidebar() {

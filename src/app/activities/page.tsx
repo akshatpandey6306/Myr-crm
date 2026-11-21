@@ -186,6 +186,9 @@ export default function Home() {
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [organizationRole, setOrganizationRole] = useState("");
   const [memberOptionsError, setMemberOptionsError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkAssignee, setBulkAssignee] = useState("");
+  const [bulkSaving, setBulkSaving] = useState(false);
   const currentPage = page;
   const visibleItems = items;
   const relatedRecords = relatedOptions;
@@ -405,6 +408,38 @@ export default function Home() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not archive this activity.");
     }
+  }
+
+  async function bulkUpdate(changes: { status?: ActivityStatus; assignedToUserId?: string | null }) {
+    if (!selectedIds.length) return;
+    setBulkSaving(true); setError(""); setNotice("");
+    try {
+      const response = await crmApiFetch("/activities/bulk", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds, ...changes }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(payload));
+      setSelectedIds([]); setBulkAssignee(""); setNotice(`${selectedIds.length} activities updated.`); setRefresh((value) => value + 1);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not update the selected activities."); }
+    finally { setBulkSaving(false); }
+  }
+
+  async function bulkArchive() {
+    if (!selectedIds.length || !window.confirm(`Archive ${selectedIds.length} selected activities?`)) return;
+    setBulkSaving(true); setError(""); setNotice("");
+    try {
+      const response = await crmApiFetch("/activities/bulk", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(apiErrorMessage(payload));
+      setSelectedIds([]); setNotice(`${selectedIds.length} activities archived.`); setRefresh((value) => value + 1);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not archive the selected activities."); }
+    finally { setBulkSaving(false); }
   }
 
   async function createItem(event: FormEvent<HTMLFormElement>) {
@@ -664,6 +699,15 @@ export default function Home() {
               </button>
             </div>
 
+            {canWrite && <div className="activity-bulk-toolbar">
+              <label><input type="checkbox" checked={visibleItems.length > 0 && visibleItems.every((item) => selectedIds.includes(item.id))} onChange={() => setSelectedIds((current) => visibleItems.length > 0 && visibleItems.every((item) => current.includes(item.id)) ? current.filter((id) => !visibleItems.some((item) => item.id === id)) : [...new Set([...current, ...visibleItems.map((item) => item.id)])])} /> Select page</label>
+              <span>{selectedIds.length} selected</span>
+              <button type="button" disabled={!selectedIds.length || bulkSaving} onClick={() => void bulkUpdate({ status: "completed" })}>Complete</button>
+              <button type="button" disabled={!selectedIds.length || bulkSaving} onClick={() => void bulkUpdate({ status: "open" })}>Reopen</button>
+              {canAssign && <><select aria-label="Assign selected activities" value={bulkAssignee} onChange={(event) => setBulkAssignee(event.target.value)}><option value="">Choose assignee…</option><option value="__unassigned__">Unassigned</option>{members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select><button type="button" disabled={!selectedIds.length || !bulkAssignee || bulkSaving} onClick={() => void bulkUpdate({ assignedToUserId: bulkAssignee === "__unassigned__" ? null : bulkAssignee })}>Assign</button></>}
+              {canArchive && <button type="button" disabled={!selectedIds.length || bulkSaving} onClick={() => void bulkArchive()}>Archive</button>}
+            </div>}
+
             <div className="item-list">
               {loading ? (
                 <div className="empty-state" role="status">
@@ -726,6 +770,7 @@ export default function Home() {
                       <span>{item.assignedToName ?? "Unassigned"}</span>
                     </div>
                     {(canWrite || canArchive) && <div className="activity-row-actions">
+                      {canWrite && <input className="activity-select-checkbox" type="checkbox" aria-label={`Select ${item.title}`} checked={selectedIds.includes(item.id)} onChange={() => setSelectedIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} />}
                       {canWrite && <button className="activity-archive" type="button" aria-label={`Edit ${item.title}`} onClick={() => {
                         setEditingItem(item);
                         setCreateRelatedType((item.relatedToType as RelatedRecordType | null) ?? "");

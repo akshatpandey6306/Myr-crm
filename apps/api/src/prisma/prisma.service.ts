@@ -16,7 +16,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol) || !databaseUrl.hostname || !databaseUrl.pathname || databaseUrl.pathname === "/") {
       throw new Error("DATABASE_URL must include a PostgreSQL host and database name. URL-encode special characters in its username or password.");
     }
-    super({ adapter: new PrismaPg({ connectionString }) });
+    // Supabase's pooled connection can take longer than Prisma's 2s/5s
+    // interactive-transaction defaults, especially while the CRM is warming
+    // up or plan updates fan out to existing workspaces. Give transactions
+    // enough time to acquire a connection and finish without failing as 500s.
+    super({
+      adapter: new PrismaPg({ connectionString }),
+      transactionOptions: {
+        maxWait: 15_000,
+        timeout: 30_000,
+      },
+    });
   }
 
   async onModuleInit() {
