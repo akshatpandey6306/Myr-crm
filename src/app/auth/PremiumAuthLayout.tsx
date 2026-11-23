@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import styles from './premium-auth.module.css';
 
@@ -16,9 +15,9 @@ export default function PremiumAuthLayout({
   return (
     <main className={`${styles.page}${compact ? ` ${styles.compact}` : ''}`}>
       <section className={`${styles.story} premium-auth-story`} aria-label="LeadPilot CRM">
-        <Link className={styles.brand} href="/sign-in" aria-label="LeadPilot Advance Solution sign in">
+        <a className={styles.brand} href="/sign-in" aria-label="LeadPilot Advance Solution sign in">
           <img src="/leadpilot-advance-solution-white.svg" alt="LeadPilot Advance Solution" />
-        </Link>
+        </a>
 
         <div className={styles.storyContent}>
           <span className={styles.eyebrow}>THE FUTURE OF CRM</span>

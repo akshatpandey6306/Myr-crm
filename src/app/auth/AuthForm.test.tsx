@@ -74,22 +74,20 @@ describe('AuthForm', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('We could not deliver the verification email.');
   });
 
-  it('renders password-manager-sensitive fields only after hydration', async () => {
+  it('server renders the sign-in fields for a faster first paint', async () => {
     const serverHtml = renderToString(<AuthForm mode="signin" />);
-    expect(serverHtml).not.toContain('name="email"');
-    expect(serverHtml).not.toContain('name="password"');
-    expect(serverHtml).toContain('Preparing secure sign-in');
+    expect(serverHtml).toContain('name="email"');
+    expect(serverHtml).toContain('name="password"');
+    expect(serverHtml).toContain('type="password"');
 
     render(<AuthForm mode="signin" />);
-    expect(await screen.findByRole('textbox', { name: 'Work email' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Work email' })).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
   });
 
-  it('keeps the LeadPilot brand and interactive password control in the redesigned sign-in', async () => {
+  it('keeps the interactive password control in the redesigned sign-in', async () => {
     render(<AuthForm mode="signin" />);
     expect(await screen.findByRole('heading', { name: 'Sign in to your workspace' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'LeadPilot Advance Solution home' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'LeadPilot — Advance Solution' })).toBeInTheDocument();
     const password = screen.getByLabelText('Password') as HTMLInputElement;
     expect(password.type).toBe('password');
     fireEvent.click(screen.getByRole('button', { name: 'Show password' }));

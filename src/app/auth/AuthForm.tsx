@@ -1,9 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
-import PremiumAuthLayout from './PremiumAuthLayout';
 
 type AuthMode = 'signin' | 'signup';
 type SignupType = 'workspace' | 'join';
@@ -33,14 +32,9 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
   const [signupType, setSignupType] = useState<SignupType>('workspace');
   const [pendingOtpEmail, setPendingOtpEmail] = useState('');
   const [signupComplete, setSignupComplete] = useState(false);
-
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,12 +109,11 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
   }
 
   return (
-    <PremiumAuthLayout>
+    <>
       <span className="premium-auth-eyebrow">{isSignup ? 'GET STARTED' : 'WELCOME BACK'}</span>
       <h2 className="premium-auth-heading">{isSignup ? 'Create your workspace' : 'Sign in to your workspace'}</h2>
       <p className="premium-auth-copy">{isSignup ? 'Create a workspace or ask your team admin for access.' : 'Pick up where you left off. Your business workspace is waiting.'}</p>
         <form className="auth-form premium-auth-form" method="post" onSubmit={submit}>
-          {hydrated ? <>
           {isSignup && !pendingOtpEmail && !signupComplete && <>
             <label htmlFor="auth-account-type">Account type</label><select id="auth-account-type" name="accountType" value={signupType} onChange={(event) => setSignupType(event.target.value as SignupType)}><option value="workspace">Create a new workspace</option><option value="join">Join an existing workspace</option></select>
             <label htmlFor="auth-name">Your name</label><input id="auth-name" name="name" type="text" autoComplete="name" placeholder="Maya Chen" required minLength={2} />
@@ -149,13 +142,12 @@ export default function AuthForm({ mode }: { mode: AuthMode }) {
           {success && <div className="auth-success premium-auth-success" role="status">{success} {(!isSignup || signupType === 'join' || signupComplete) && <Link href="/sign-in">Go to sign in</Link>}</div>}
           {pendingOtpEmail && <button className="auth-switch premium-auth-switch" type="button" onClick={resendSignupOtp} disabled={busy}>Resend verification code</button>}
           {!signupComplete && <button className="auth-submit premium-auth-submit" type="submit" disabled={busy || (Boolean(success) && !pendingOtpEmail)}>{busy ? <><span className="auth-spinner" /> {pendingOtpEmail ? 'Verifying…' : isSignup ? 'Creating workspace…' : 'Signing in…'}</> : <>{pendingOtpEmail ? 'Verify account' : isSignup ? 'Create account' : 'Sign in to LeadPilot'} <span aria-hidden="true">→</span></>}</button>}
-          </> : <p className="auth-form-loading" role="status">Preparing secure sign-in…</p>}
         </form>
         {!isSignup && <p className="auth-switch premium-auth-switch"><Link href="/forgot-password">Forgot password?</Link></p>}
         {isSignup
           ? <p className="auth-switch premium-auth-switch">Already have an account? <Link href="/sign-in">Sign in</Link></p>
           : <p className="auth-switch premium-auth-switch">Use the work email and password provided by your workspace admin. You will only see workspaces where your account has active membership.</p>}
         <p className="auth-footnote premium-auth-footnote">By continuing, you agree to your workspace’s terms and privacy policy.</p>
-    </PremiumAuthLayout>
+    </>
   );
 }

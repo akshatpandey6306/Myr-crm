@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
-import PremiumAuthLayout from './PremiumAuthLayout';
 
 type Mode = 'forgot' | 'reset' | 'verify' | 'activate';
 
@@ -80,7 +79,7 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
   }
 
   const heading = headings[mode];
-  if (mode === 'forgot') return <PremiumAuthLayout compact>
+  if (mode === 'forgot') return <>
     <span className="premium-auth-eyebrow">ACCOUNT RECOVERY</span>
     <h1 className="premium-auth-heading">{heading.title}</h1>
     <p className="premium-auth-copy">{heading.description}</p>
@@ -92,7 +91,7 @@ export default function SecurityForm({ mode, token = '' }: { mode: Mode; token?:
       <button className="auth-submit premium-auth-submit" type="submit" disabled={busy || Boolean(success)}>{busy ? <><span className="auth-spinner" /> Sending reset link…</> : 'Send reset link'}<span aria-hidden="true">→</span></button>
     </form>
     <p className="auth-switch premium-auth-switch"><Link href="/sign-in">Back to sign in</Link></p>
-  </PremiumAuthLayout>;
+  </>;
   return (
     <main className="auth-page auth-security-page">
       <section className="auth-main">
