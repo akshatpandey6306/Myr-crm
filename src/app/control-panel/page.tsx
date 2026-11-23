@@ -622,6 +622,7 @@ export default function ControlPanelPage({ section = 'overview' }: { section?: C
       void loadWorkspaceSignupRequests(controller.signal);
     } else if (section === 'onboarding' || section === 'plans') {
       void loadPlans(controller.signal);
+      if (section === 'plans') void loadOrganizations(controller.signal);
     } else if (section === 'approvals') {
       void loadPlans(controller.signal);
       void loadActivationRequests(controller.signal);
