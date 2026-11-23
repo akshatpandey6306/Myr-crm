@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { crmApiFetch } from '../../lib/api-client';
 import { billingIntervalLabel } from '../../lib/billing-interval';
+import { postPayUCheckout } from '../../lib/payu-checkout';
 
 export type WorkspaceSubscription = {
   planCode: string | null;
@@ -296,23 +297,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
       if (!checkout || typeof checkout.checkoutUrl !== 'string' || !isRecord(checkout.fields)) {
         throw new Error('PayU returned an invalid checkout response.');
       }
-      const action = new URL(checkout.checkoutUrl);
-      if (action.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(action.hostname)) {
-        throw new Error('The PayU checkout URL must use HTTPS.');
-      }
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = action.toString();
-      for (const [name, value] of Object.entries(checkout.fields)) {
-        if (typeof value !== 'string') continue;
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
-      }
-      document.body.appendChild(form);
-      form.submit();
+      postPayUCheckout(checkout.checkoutUrl, checkout.fields);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
       setBusyPlan('');

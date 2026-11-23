@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { crmApiFetch } from '../../lib/api-client';
 import { billingIntervalLabel } from '../../lib/billing-interval';
+import { postPayUCheckout } from '../../lib/payu-checkout';
 import CrmShell from '../components/CrmShell';
 
 type BillingInfo = {
@@ -192,19 +193,7 @@ export default function SubscriptionPage() {
       if (!payload) throw new Error('The API returned an invalid checkout response.');
       const result = payload?.data as { checkoutUrl?: unknown; fields?: unknown } | undefined;
       if (typeof result?.checkoutUrl !== 'string' || typeof result.fields !== 'object' || result.fields === null) throw new Error('PayU returned an invalid checkout response.');
-      const action = new URL(result.checkoutUrl);
-      if (action.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(action.hostname)) throw new Error('The PayU checkout URL must use HTTPS.');
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = action.toString();
-      for (const [name, value] of Object.entries(result.fields)) {
-        if (typeof value !== 'string') continue;
-        const input = document.createElement('input');
-        input.type = 'hidden'; input.name = name; input.value = value;
-        form.appendChild(input);
-      }
-      document.body.appendChild(form);
-      form.submit();
+      postPayUCheckout(result.checkoutUrl, result.fields as Record<string, unknown>);
     } catch (caught) {
       setCheckoutError(caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
       setCheckoutBusyPlanCode('');
