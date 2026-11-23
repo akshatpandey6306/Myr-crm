@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -18,6 +18,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { hashPassword } from "../auth/password.js";
 import { HttpRequest } from "../common/http.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { SkipOrganizationContext } from "../auth/public.decorator.js";
@@ -836,9 +837,7 @@ export class ControlPanelController {
     const existingUser = await this.prisma.user.findUnique({ where: { email: ownerEmail }, select: { id: true } });
     if (existingUser) throw new ConflictException({ code: "conflict", message: "An account with this email already exists" });
 
-    const salt = randomBytes(16);
-    const derived = scryptSync(ownerPassword, salt, 64);
-    const passwordHash = `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
+    const passwordHash = await hashPassword(ownerPassword);
     const now = new Date();
     const subscriptionEndsAt = plan ? intervalEnd(now, plan.billingInterval as PlanDraft["billingInterval"]) : null;
     const { owner, createdOrganization } = await this.prisma.$transaction(async (tx) => {

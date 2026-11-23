@@ -29,6 +29,15 @@ const policies = new Map<string, Policy>([
   ["POST /auth/email-verification/resend", { limit: 5, windowSeconds: 3600, emailKey: true }],
   ["POST /auth/email-verification/confirm", { limit: 10, windowSeconds: 3600 }],
   ["POST /organizations/join-requests", { limit: 5, windowSeconds: 3600, userKey: true }],
+  ["POST /leads/import/validate", { limit: 20, windowSeconds: 600, userKey: true }],
+  ["POST /leads/import", { limit: 10, windowSeconds: 3600, userKey: true }],
+  ["POST /contacts/import/validate", { limit: 20, windowSeconds: 600, userKey: true }],
+  ["POST /contacts/import", { limit: 10, windowSeconds: 3600, userKey: true }],
+  ["POST /organizations/members/import/validate", { limit: 20, windowSeconds: 600, userKey: true }],
+  ["POST /organizations/members/import", { limit: 10, windowSeconds: 3600, userKey: true }],
+  ["POST /emails", { limit: 30, windowSeconds: 60, userKey: true }],
+  ["GET /reports/summary", { limit: 120, windowSeconds: 60, userKey: true }],
+  ["GET /dashboard/summary", { limit: 120, windowSeconds: 60, userKey: true }],
 ]);
 
 @Injectable()

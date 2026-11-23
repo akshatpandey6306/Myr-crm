@@ -26,6 +26,7 @@ async function bootstrap() {
     response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+    response.setHeader("Cache-Control", "no-store");
     if (process.env.NODE_ENV === "production") {
       response.setHeader("Strict-Transport-Security", "max-age=31536000");
     }

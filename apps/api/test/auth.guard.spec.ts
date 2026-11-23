@@ -41,7 +41,7 @@ describe("AuthGuard cookie sessions", () => {
 
   it("rejects cross-origin unsafe requests, including public login routes", async () => {
     const previousOrigin = process.env.WEB_ORIGIN;
-    process.env.WEB_ORIGIN = "https://crm.example.com";
+    process.env.WEB_ORIGIN = "http://localhost:3000";
     try {
       const handler = () => undefined;
       Reflect.defineMetadata(IS_PUBLIC_KEY, true, handler);
@@ -87,7 +87,7 @@ describe("AuthGuard cookie sessions", () => {
   it("does not allow localhost aliases for production requests", async () => {
     const previousOrigin = process.env.WEB_ORIGIN;
     const previousNodeEnv = process.env.NODE_ENV;
-    process.env.WEB_ORIGIN = "http://localhost:3000";
+    process.env.WEB_ORIGIN = "https://crm.example.com";
     process.env.NODE_ENV = "production";
     try {
       const handler = () => undefined;

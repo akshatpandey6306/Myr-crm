@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -23,7 +23,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { HttpRequest } from "../common/http.types.js";
 import { Public } from "./public.decorator.js";
 import { AuthEmailService } from "./email.service.js";
-import { hashPassword } from "./password.js";
+import { hashPassword, verifyPassword } from "./password.js";
 import { TenantProvisioningService } from "../provisioning/tenant-provisioning.service.js";
 
 const SIGNUP_OTP_LIFETIME_MS = 10 * 60 * 1000;
@@ -70,7 +70,7 @@ export class AuthController {
     try {
       if (accountType === "join") {
         await this.prisma.user.create({
-          data: { email, name, passwordHash: hashPassword(password), emailVerifiedAt: new Date() },
+          data: { email, name, passwordHash: await hashPassword(password), emailVerifiedAt: new Date() },
         });
         return {
           message: "Account created. Sign in to request access to your workspace using its join code.",
@@ -88,7 +88,7 @@ export class AuthController {
         data: {
           email,
           name,
-          passwordHash: hashPassword(password),
+          passwordHash: await hashPassword(password),
           status: "PENDING",
           memberships: {
             create: {
@@ -244,7 +244,8 @@ export class AuthController {
         },
       },
     }) : null;
-    const passwordValid = this.verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    const passwordHash = user?.passwordHash ?? await DUMMY_PASSWORD_HASH;
+    const passwordValid = await verifyPassword(password, passwordHash);
     if (!user || !passwordValid) {
       if (user && user.status === "ACTIVE" && security.failedLoginLockoutEnabled) {
         const now = new Date();
@@ -422,13 +423,14 @@ export class AuthController {
     });
     if (!emailToken) throw new BadRequestException({ code: "invalid_token", message: "This password-reset link is invalid or expired" });
 
+    const passwordHash = await hashPassword(password);
     await this.prisma.$transaction(async (transaction) => {
       const consumed = await transaction.emailToken.updateMany({
         where: { id: emailToken.id, consumedAt: null, expiresAt: { gt: now } },
         data: { consumedAt: now },
       });
       if (consumed.count !== 1) throw new BadRequestException({ code: "invalid_token", message: "This password-reset link is invalid or expired" });
-      await transaction.user.update({ where: { id: emailToken.userId }, data: { passwordHash: hashPassword(password), failedLoginAttempts: 0, lockedUntil: null } });
+      await transaction.user.update({ where: { id: emailToken.userId }, data: { passwordHash, failedLoginAttempts: 0, lockedUntil: null } });
       await transaction.session.updateMany({ where: { userId: emailToken.userId, revokedAt: null }, data: { revokedAt: now } });
       await transaction.emailToken.updateMany({
         where: { userId: emailToken.userId, purpose: "PASSWORD_RESET", consumedAt: null },
@@ -452,10 +454,11 @@ export class AuthController {
       select: { id: true, userId: true },
     });
     if (!emailToken) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
+    const passwordHash = await hashPassword(password);
     await this.prisma.$transaction(async (transaction) => {
       const consumed = await transaction.emailToken.updateMany({ where: { id: emailToken.id, consumedAt: null, expiresAt: { gt: now } }, data: { consumedAt: now } });
       if (consumed.count !== 1) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
-      const user = await transaction.user.updateMany({ where: { id: emailToken.userId, status: "PENDING" }, data: { passwordHash: hashPassword(password), status: "ACTIVE", emailVerifiedAt: now } });
+      const user = await transaction.user.updateMany({ where: { id: emailToken.userId, status: "PENDING" }, data: { passwordHash, status: "ACTIVE", emailVerifiedAt: now } });
       const membership = await transaction.membership.updateMany({ where: { userId: emailToken.userId, status: "PENDING" }, data: { status: "ACTIVE" } });
       if (user.count !== 1 || membership.count < 1) throw new BadRequestException({ code: "invalid_token", message: "This activation link is invalid or expired" });
       await transaction.emailToken.updateMany({ where: { userId: emailToken.userId, purpose: "ACCOUNT_ACTIVATION", consumedAt: null }, data: { consumedAt: now } });
@@ -571,14 +574,6 @@ export class AuthController {
       });
     });
     await this.email.sendSignupOtp(otp, recipientEmail);
-  }
-
-  private verifyPassword(password: string, stored: string) {
-    const [algorithm, saltHex, hashHex] = stored.split("$");
-    if (algorithm !== "scrypt" || !saltHex || !hashHex || !password) return false;
-    const expected = Buffer.from(hashHex, "hex");
-    const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
   }
 
   private prismaCode(error: unknown): string | undefined {

@@ -161,8 +161,7 @@ describe("MembersController", () => {
 
   it("creates imported employees with hashed passwords in the active workspace", async () => {
     let createdUser: Record<string, unknown> | undefined;
-    const prisma = {
-      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({
+    const transaction = {
         organization: {
           findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }),
         },
@@ -177,7 +176,10 @@ describe("MembersController", () => {
             return { id: "created-user" };
           },
         },
-      }),
+      };
+    const prisma = {
+      ...transaction,
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     };
 
     const result = await new MembersController(prisma as never).importMembers(request("owner"), {
@@ -282,8 +284,7 @@ describe("MembersController", () => {
 
   it("rejects empty or malformed employee imports without account creation", async () => {
     let accountCreated = false;
-    const controller = new MembersController({
-      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation({
+    const transaction = {
         organization: {
           findUnique: async () => ({ subscriptionStatus: "ACTIVE", subscriptionEndsAt: null, subscriptionPlan: "growth" }),
         },
@@ -295,7 +296,10 @@ describe("MembersController", () => {
           findMany: async () => [],
           create: async () => { accountCreated = true; return { id: "created-user" }; },
         },
-      }),
+      };
+    const controller = new MembersController({
+      ...transaction,
+      $transaction: async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction),
     } as never);
     await assert.rejects(controller.validateMemberImport(request("admin"), { rows: [] }), BadRequestException);
     await assert.rejects(

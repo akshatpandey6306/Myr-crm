@@ -178,6 +178,7 @@ export class MembersController {
 
     const now = new Date();
     const activationToken = randomBytes(32).toString("hex");
+    const invitationPasswordHash = await hashPassword(randomBytes(32).toString("hex"));
 
     try {
       const invitation = await this.prisma.$transaction(async (transaction) => {
@@ -217,7 +218,7 @@ export class MembersController {
             where: { id: existing.id },
             data: {
               name,
-              passwordHash: hashPassword(randomBytes(32).toString("hex")),
+              passwordHash: invitationPasswordHash,
               status: "PENDING",
               emailVerifiedAt: null,
               failedLoginAttempts: 0,
@@ -243,7 +244,7 @@ export class MembersController {
           data: {
             email,
             name,
-            passwordHash: hashPassword(randomBytes(32).toString("hex")),
+            passwordHash: invitationPasswordHash,
             status: "PENDING",
             memberships: { create: { organizationId, role, customRoleId: customRole?.id ?? null, status: "PENDING", enabledModules: [] } },
           },
@@ -310,6 +311,20 @@ export class MembersController {
     if (!Array.isArray(body?.rows)) throw new BadRequestException({ code: "validation_error", message: "Employee rows are required" });
     const rows = this.parseEmployeeImportRows(body.rows, true);
     try {
+      const preparedRows = await this.validateEmployeeImport(organizationId, rows, this.prisma);
+      const preparationErrors = preparedRows.filter(({ errors }) => errors.length > 0);
+      if (preparationErrors.length > 0) {
+        throw new ConflictException({
+          code: "employee_import_conflict",
+          message: "Employee import validation changed. Review the rows and retry.",
+          rows: preparationErrors.map(({ row, email, errors }) => ({ row, email, errors })),
+        });
+      }
+      const passwordHashes = await Promise.all(preparedRows.map((row) => {
+        if (!row.password) throw new BadRequestException({ code: "validation_error", message: "Every employee row requires a password" });
+        return hashPassword(row.password);
+      }));
+
       const created = await this.prisma.$transaction(async (transaction) => {
         const validatedRows = await this.validateEmployeeImport(organizationId, rows, transaction);
         const invalidRows = validatedRows.filter(({ errors }) => errors.length > 0);
@@ -322,13 +337,12 @@ export class MembersController {
         }
 
         const createdRows = [];
-        for (const row of validatedRows) {
-          if (!row.password) throw new BadRequestException({ code: "validation_error", message: "Every employee row requires a password" });
+        for (const [index, row] of validatedRows.entries()) {
           const user = await transaction.user.create({
             data: {
               email: row.email,
               name: row.name,
-              passwordHash: hashPassword(row.password),
+              passwordHash: passwordHashes[index]!,
               emailVerifiedAt: new Date(),
               memberships: {
                 create: {

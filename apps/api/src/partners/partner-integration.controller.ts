@@ -135,6 +135,7 @@ export class PartnerIntegrationController {
     const slug = text(organization.slug, 63).toLowerCase() || slugCandidate;
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug)) throw new BadRequestException({ code: "validation_error", message: "Organization slug is invalid" });
     const password = credentialResponse ? randomBytes(24).toString("base64url") : "";
+    const passwordHash = await hashPassword(credentialResponse ? password : randomBytes(32).toString("base64url"));
     const activationToken = credentialResponse ? "" : randomBytes(32).toString("base64url");
     let created;
     try {
@@ -144,7 +145,7 @@ export class PartnerIntegrationController {
           product, planCode, partnerId: partner.id, externalCustomerRef, purchaseType,
           tenantSlug: slug, status: "RUNNING", credentialsEnc: credentialResponse ? encryptSecret(JSON.stringify({ username: email, password, validUntil: subscriptionEndsAt?.toISOString() ?? null })) : null,
         } });
-        const user = await tx.user.create({ data: { email, name: ownerName, passwordHash: hashPassword(credentialResponse ? password : randomBytes(32).toString("base64url")), status: credentialResponse ? "ACTIVE" : "PENDING" } });
+        const user = await tx.user.create({ data: { email, name: ownerName, passwordHash, status: credentialResponse ? "ACTIVE" : "PENDING" } });
         const workspace = await this.provisioning.createWorkspace(tx, {
           ownerUserId: user.id, name, slug, timezone: text(organization.timezone, 64) || "UTC", subscriptionPlan: plan.code,
           subscriptionStatus: credentialResponse ? "ACTIVE" : "PENDING", subscriptionStartedAt: credentialResponse ? now : null,

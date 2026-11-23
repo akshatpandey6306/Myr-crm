@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { BadRequestException, Controller, Delete, ForbiddenException, Get, Inject, Injectable, Post, Req, UnauthorizedException } from "@nestjs/common";
 import { HttpRequest } from "../common/http.types.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -94,9 +94,8 @@ function ids(organizationId: string, keys: readonly string[]) {
 }
 
 function hiddenPasswordHash() {
-  const salt = randomBytes(16);
-  const password = randomBytes(48);
-  return `scrypt$${salt.toString("hex")}$${scryptSync(password, salt, 64).toString("hex")}`;
+  // Seed-only demo accounts must never be able to authenticate.
+  return "disabled$demo-account";
 }
 
 function dateOffset(days: number, hour = 10) {

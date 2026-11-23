@@ -18,4 +18,31 @@ describe("getWebOrigin", () => {
     assert.throws(() => getWebOrigin("https://crm.example.com/path"), /WEB_ORIGIN must contain only/);
     assert.throws(() => getWebOrigin("ftp://crm.example.com"), /WEB_ORIGIN must contain only/);
   });
+
+  it("requires an HTTPS web origin in production", () => {
+    const previousMode = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      assert.throws(() => getWebOrigin("http://crm.example.com"), /must use HTTPS in production/);
+      assert.equal(getWebOrigin("https://crm.example.com"), "https://crm.example.com");
+    } finally {
+      if (previousMode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousMode;
+    }
+  });
+
+  it("does not silently fall back to localhost in production", () => {
+    const previousMode = process.env.NODE_ENV;
+    const previousOrigin = process.env.WEB_ORIGIN;
+    process.env.NODE_ENV = "production";
+    delete process.env.WEB_ORIGIN;
+    try {
+      assert.throws(() => getWebOrigin(undefined), /WEB_ORIGIN must be configured in production/);
+    } finally {
+      if (previousMode === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousMode;
+      if (previousOrigin === undefined) delete process.env.WEB_ORIGIN;
+      else process.env.WEB_ORIGIN = previousOrigin;
+    }
+  });
 });

@@ -63,9 +63,10 @@ export class ProvisioningController {
     const now = new Date();
     const activationToken = randomBytes(32).toString("base64url");
     const tokenHash = createHash("sha256").update(activationToken).digest("hex");
+    const initialPasswordHash = await hashPassword(randomBytes(32).toString("base64url"));
     const result = await this.prisma.$transaction(async (tx) => {
       const record = await tx.provisioningRequest.create({ data: { requestId, idempotencyKey, orderId, product, planCode, tenantSlug: organizationSlug, status: "RUNNING" } });
-      const user = await tx.user.create({ data: { email, name: ownerName, passwordHash: hashPassword(randomBytes(32).toString("base64url")), status: "PENDING" } });
+      const user = await tx.user.create({ data: { email, name: ownerName, passwordHash: initialPasswordHash, status: "PENDING" } });
       const organization = await this.tenantProvisioning.createWorkspace(tx, {
         ownerUserId: user.id, name, slug: organizationSlug, timezone: this.text(body.organization?.timezone, 64) || "UTC",
         subscriptionPlan: plan.code, subscriptionStatus: "ACTIVE", subscriptionStartedAt: now,

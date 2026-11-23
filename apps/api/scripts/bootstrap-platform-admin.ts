@@ -27,11 +27,12 @@ async function bootstrap() {
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   try {
+    const passwordHash = await hashPassword(password);
     const user = await prisma.user.upsert({
         where: { email },
         update: {
           name,
-          passwordHash: hashPassword(password),
+          passwordHash,
           status: "ACTIVE",
           emailVerifiedAt: new Date(),
           failedLoginAttempts: 0,
@@ -40,7 +41,7 @@ async function bootstrap() {
         create: {
           email,
           name,
-          passwordHash: hashPassword(password),
+          passwordHash,
           status: "ACTIVE",
           emailVerifiedAt: new Date(),
         },

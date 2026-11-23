@@ -4,6 +4,9 @@ import { WorkspaceAccessGate } from "./components/WorkspaceAccessGate";
 import { WorkspaceModuleAccessProvider } from "./components/WorkspaceModuleAccess";
 import "./globals.css";
 
+// Request-bound CSP nonces must be attached during server rendering rather than static prerendering.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "LeadPilot | Workspace overview",
   description: "LeadPilot customer relationship and sales workspace.",

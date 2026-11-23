@@ -1,5 +1,6 @@
 export function getWebOrigin(value = process.env.WEB_ORIGIN) {
-  const configuredOrigin = (value ?? "http://localhost:3000").trim();
+  const configuredOrigin = (value ?? (process.env.NODE_ENV === "production" ? "" : "http://localhost:3000")).trim();
+  if (!configuredOrigin) throw new Error("WEB_ORIGIN must be configured in production");
   if (/[\u0000-\u001f\u007f]/.test(configuredOrigin)) {
     throw new Error("WEB_ORIGIN must be a single HTTP(S) origin without control characters");
   }
@@ -20,6 +21,9 @@ export function getWebOrigin(value = process.env.WEB_ORIGIN) {
     url.hash
   ) {
     throw new Error("WEB_ORIGIN must contain only an HTTP(S) scheme and host");
+  }
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new Error("WEB_ORIGIN must use HTTPS in production");
   }
 
   return url.origin;
