@@ -8824,3 +8824,48 @@ button:not([aria-label]),
   [role="button"] { min-height: 40px; }
   .premium-auth-page { padding: 24px 20px; }
 }
+
+/* Make record values readable consistently across every workspace module. */
+table th { font-size: var(--type-label) !important; }
+table td { font-size: var(--type-body) !important; line-height: 1.45; }
+table td strong,
+table td a,
+table td button { font-size: inherit !important; }
+table td small { font-size: var(--type-meta) !important; }
+
+.task-copy strong,
+.activity-copy strong,
+.activity-copy b,
+.control-panel-recent-copy strong,
+.deal-card > strong { font-size: var(--type-card) !important; }
+.task-copy > span,
+.activity-copy p,
+.activity-copy > span,
+.deal-card-company,
+.deal-card-meta,
+.control-panel-recent-copy small,
+.lead-unassigned-owner { font-size: var(--type-meta) !important; }
+.task-tag,
+.lead-source-pill,
+.lead-status-pill,
+.deal-status-pill,
+.activities-screen .type-pill,
+.activities-screen .status-pill,
+span[class*="status-badge"],
+span[class*="status-pill"],
+span[class*="source-pill"],
+span[class*="type-pill"] { font-size: var(--type-meta) !important; }
+.leads-toolbar-copy strong { font-size: var(--type-card) !important; }
+.leads-toolbar-copy > span,
+.leads-filters,
+.lead-filter-trigger { font-size: var(--type-meta) !important; }
+.activities-screen .item-title-row h3 { font-size: var(--type-card) !important; }
+.activities-screen .item-meta { font-size: var(--type-meta) !important; }
+.activities-screen .work-item { min-height: 78px; }
+.task-item { min-height: 56px; }
+
+@media (max-width: 600px) {
+  table td { font-size: 14px !important; }
+  .activities-screen .work-item { min-height: 82px; }
+  .task-item { min-height: 60px; }
+}
