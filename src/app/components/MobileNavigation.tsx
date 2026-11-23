@@ -15,14 +15,42 @@ const navigationGlyphs: Record<string, string> = {
 export default function MobileNavigation({ active, enabledModules }: { active: string; enabledModules?: string[] }) {
   const [open, setOpen] = useState(false);
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [workspaceName, setWorkspaceName] = useState('Workspace');
   const visibleItems = navigationForModules(crmNavigation, enabledModules ?? null);
 
   useEffect(() => {
     let active = true;
+    const readSelectedWorkspace = () => {
+      try {
+        const stored = sessionStorage.getItem('myr.organization');
+        if (!stored) return;
+        const organization = JSON.parse(stored) as { id?: unknown; name?: unknown };
+        if (typeof organization.id === 'string' && typeof organization.name === 'string') {
+          setWorkspaceName(organization.name);
+        }
+      } catch { /* Keep the neutral label when saved workspace data is invalid. */ }
+    };
+    readSelectedWorkspace();
+    window.addEventListener('myr:organization-changed', readSelectedWorkspace);
     void crmApiFetch('/auth/me')
       .then(async (response) => response.ok ? response.json() : null)
       .then((payload: unknown) => {
-        if (!active || typeof payload !== 'object' || payload === null || !('user' in payload)) return;
+        if (!active || typeof payload !== 'object' || payload === null) return;
+        if ('organizations' in payload && Array.isArray(payload.organizations)) {
+          const organizations = payload.organizations.filter((organization): organization is { id: string; name: string } =>
+            typeof organization === 'object' && organization !== null &&
+            typeof (organization as { id?: unknown }).id === 'string' &&
+            typeof (organization as { name?: unknown }).name === 'string',
+          );
+          let selectedId = '';
+          try {
+            const stored = sessionStorage.getItem('myr.organization');
+            if (stored) selectedId = (JSON.parse(stored) as { id?: string }).id ?? '';
+          } catch { /* Use the first accessible workspace below. */ }
+          const selected = organizations.find((organization) => organization.id === selectedId) ?? organizations[0];
+          if (selected) setWorkspaceName(selected.name);
+        }
+        if (!('user' in payload)) return;
         const signedInUser = payload.user;
         if (
           typeof signedInUser === 'object' &&
@@ -36,7 +64,10 @@ export default function MobileNavigation({ active, enabledModules }: { active: s
         }
       })
       .catch(() => undefined);
-    return () => { active = false; };
+    return () => {
+      active = false;
+      window.removeEventListener('myr:organization-changed', readSelectedWorkspace);
+    };
   }, []);
 
   useEffect(() => {
@@ -60,7 +91,7 @@ export default function MobileNavigation({ active, enabledModules }: { active: s
           <img className="mobile-nav-partner-logo" src="/leadpilot-advance-solution.svg" alt="LeadPilot by Advance Solution" />
           <button type="button" aria-label="Close menu" onClick={() => setOpen(false)}>×</button>
         </div>
-        <p className="mobile-nav-workspace">STUDIO NORTH <span>·</span> WORKSPACE</p>
+        <p className="mobile-nav-workspace">{workspaceName} <span>·</span> WORKSPACE</p>
         <div className="mobile-nav-links">
           {visibleItems.map((item) => (
             <Link
