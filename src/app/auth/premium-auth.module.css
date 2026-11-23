@@ -56,3 +56,19 @@
 @media(max-width: 720px) { .page { grid-template-columns: 1fr; }.story { min-height: auto; padding: 22px 22px 18px; }.brand img { width: 172px; }.storyContent { padding: 35px 0 12px; }.story h1 { margin: 12px 0 8px; font-size: clamp(31px, 9vw, 43px); }.storyContent > p { max-width: 540px; font-size: 12px; }.visual { height: 195px; margin-top: 14px; }.dashboard { width: min(80%, 410px); padding: 12px; }.chart { height: 47px; margin-top: 8px; }.chartLabels,.pipeline { display: none; }.floatCard { top: 5%; right: 0; }.floatNote { bottom: 0; left: 0; }.benefits { gap: 8px 13px; }.benefits > span { font-size: 9px; }.benefits i { width: 18px; height: 18px; }.formSide { min-height: auto; padding: 32px 22px 18px; }.formCard { max-width: 470px; }.formFooter { margin-top: 25px; } }
 @media(max-width: 420px) { .story { padding-inline: 17px; }.visual { height: 174px; }.dashboard { width: 84%; padding: 11px 12px; }.floatCard,.floatNote { scale: 1; }.formSide { padding-inline: 18px; }.benefits { justify-content: space-between; gap: 6px; }.benefits > span { gap: 5px; font-size: 8px; } }
 @media(prefers-reduced-motion: reduce) { .formCard,.dashboard,.floatCard,.floatNote,.chart span { animation: none !important; transition: none !important; } }
+
+/* On phones, keep the brand visible while giving the sign-in form the screen. */
+@media(max-width: 720px) {
+  .story { min-height: 88px; padding: 18px 22px; }
+  .brand img { width: 164px; }
+  .storyContent,.benefits { display: none; }
+  .formSide { min-height: calc(100svh - 88px); padding: 24px 22px 18px; }
+  .formCard { margin: auto 0; }
+  .formFooter { margin-top: 16px; }
+}
+
+@media(max-width: 420px) {
+  .story { min-height: 78px; padding: 15px 18px; }
+  .brand img { width: 152px; }
+  .formSide { min-height: calc(100svh - 78px); padding: 20px 18px 16px; }
+}
