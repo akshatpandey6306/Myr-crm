@@ -8883,3 +8883,29 @@ span[class*="type-pill"] { font-size: var(--type-meta) !important; }
   outline: 3px solid rgb(102 83 215 / 42%);
   outline-offset: 3px;
 }
+
+/* Keep the active page name visible beside the compact mobile toolbar. */
+@media (max-width: 600px) {
+  .app-shell .topbar .breadcrumbs {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 0;
+  }
+
+  .app-shell .topbar .breadcrumbs > span:first-child,
+  .app-shell .topbar .breadcrumbs > span[aria-hidden="true"],
+  .app-shell .topbar .breadcrumbs > .icon {
+    display: none;
+  }
+
+  .app-shell .topbar .breadcrumbs > strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-shell .topbar .preview-chip {
+    display: none !important;
+  }
+}
