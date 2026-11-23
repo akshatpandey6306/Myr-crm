@@ -8759,3 +8759,68 @@ body {
 }
 .subscription-seat-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0}.subscription-seat-summary article{display:grid;gap:8px;min-width:0;padding:16px;border:1px solid var(--border,#e7e3f3);border-radius:12px;background:var(--surface,#fff)}.subscription-seat-summary article span{color:var(--muted,#697771);font-size:13px}.subscription-seat-summary article strong{font-size:22px;color:var(--foreground,#293730)}.subscription-seat-checkout{margin:16px 0}.subscription-seat-checkout h3{margin:0 0 8px}.subscription-seat-checkout>p{margin:8px 0}
 @media(max-width:640px){.subscription-seat-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.subscription-seat-summary article{padding:12px}.subscription-seat-summary article strong{font-size:19px}}
+
+/* Shared responsive type scale for workspace pages and sign-in flows. */
+:root {
+  --type-dashboard: clamp(24px, 1.2vw + 16px, 30px);
+  --type-section: clamp(18px, .55vw + 13px, 20px);
+  --type-card: clamp(14px, .35vw + 11px, 16px);
+  --type-body: 14px;
+  --type-label: clamp(12px, .2vw + 10px, 13px);
+  --type-button: 14px;
+  --type-meta: clamp(11px, .2vw + 9px, 12px);
+}
+
+body { font-size: var(--type-body); }
+h1 { font-size: var(--type-dashboard) !important; }
+h2 { font-size: var(--type-section) !important; }
+h3 { font-size: var(--type-card) !important; }
+p { font-size: var(--type-body) !important; }
+label { font-size: var(--type-label) !important; }
+small,
+.date-label,
+.auth-step,
+.metric-top,
+.metric-foot,
+.chart-kind-label,
+.page-footer,
+.premium-auth-eyebrow,
+.premium-auth-footnote,
+.premium-auth-security strong,
+.premium-auth-security small { font-size: var(--type-meta) !important; }
+.button,
+button:not([aria-label]),
+[role="button"] { font-size: var(--type-button) !important; }
+.panel h2,
+.metric-card h2,
+.distribution-card h2,
+.module-chart-card h2,
+.pie-bar-card h2,
+.report-panel h2 { font-size: var(--type-card) !important; }
+
+/* Login and account recovery use the same scale while remaining fluid on phones. */
+.premium-auth-heading { font-size: var(--type-dashboard) !important; }
+.premium-auth-copy,
+.premium-auth-switch { font-size: var(--type-body) !important; }
+.premium-auth-form > label,
+.premium-auth-password-label label { font-size: var(--type-label) !important; }
+.premium-auth-form > input,
+.premium-auth-password-wrap input,
+.premium-auth-form select { font-size: var(--type-body) !important; }
+.premium-auth-submit { font-size: var(--type-button) !important; }
+.premium-auth-security small,
+.premium-auth-copyright { font-size: var(--type-meta) !important; }
+
+@media (max-width: 600px) {
+  :root {
+    --type-dashboard: clamp(24px, 7vw, 28px);
+    --type-section: 18px;
+    --type-card: 14px;
+    --type-label: 12px;
+    --type-meta: 11px;
+  }
+  .button,
+  button:not([aria-label]),
+  [role="button"] { min-height: 40px; }
+  .premium-auth-page { padding: 24px 20px; }
+}
