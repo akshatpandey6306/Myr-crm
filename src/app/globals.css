@@ -8869,3 +8869,8 @@ span[class*="type-pill"] { font-size: var(--type-meta) !important; }
   .activities-screen .work-item { min-height: 82px; }
   .task-item { min-height: 60px; }
 }
+
+.premium-auth-story h1 { font-size: clamp(36px, 4.2vw, 62px) !important; }
+@media (max-width: 720px) {
+  .premium-auth-story h1 { font-size: clamp(31px, 9vw, 43px) !important; }
+}
