@@ -21,7 +21,10 @@ export function proxy(request: NextRequest) {
     "connect-src 'self' wss:",
     "object-src 'none'",
     "base-uri 'self'",
-    "form-action 'self' https://secure.payu.in https://test.payu.in",
+    // The checkout helper validates the action against PayU's exact production
+    // and test endpoints before creating a form. Allow HTTPS here so browsers
+    // and host-level CSP normalization do not reject PayU's POST handoff.
+    "form-action 'self' https:",
     "frame-ancestors 'none'",
   ].join("; ");
 
