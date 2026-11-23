@@ -79,6 +79,7 @@ export default function DealsManager() {
   const [pipelineId, setPipelineId] = useState('');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('');
+  const [statusReady, setStatusReady] = useState(false);
   const [sort, setSort] = useState('createdAt:desc');
   const [view, setView] = useState<ViewMode>('board');
   const [loading, setLoading] = useState(true);
@@ -91,6 +92,12 @@ export default function DealsManager() {
   const [pipelineFormOpen, setPipelineFormOpen] = useState(false);
   const [pipelineName, setPipelineName] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const requestedStatus = new URLSearchParams(window.location.search).get('status') ?? '';
+    setStatus(['open', 'won', 'lost'].includes(requestedStatus) ? requestedStatus : '');
+    setStatusReady(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +128,7 @@ export default function DealsManager() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!pipelineId) return;
+    if (!statusReady || !pipelineId) return;
     let cancelled = false;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -141,7 +148,7 @@ export default function DealsManager() {
       } finally { if (!cancelled) setLoading(false); }
     }, query ? 220 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); controller.abort(); };
-  }, [pipelineId, query, status, sort, refresh]);
+  }, [pipelineId, query, status, statusReady, sort, refresh]);
 
   const selectedPipeline = pipelines.find((pipeline) => pipeline.id === pipelineId);
   const stageSummary = useMemo(() => selectedPipeline?.stages.map((stage) => ({

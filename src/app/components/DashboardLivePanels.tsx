@@ -141,12 +141,12 @@ export default function DashboardLivePanels() {
   const outcomeColors: Record<string, string> = { open: '#3678D4', won: '#24936F', lost: '#E56F4A' };
   const metricCards = [
     ...(leadsEnabled ? [
-    { label: 'Total leads', value: loading ? '…' : String(metrics?.totalLeads ?? 0), note: 'Active workspace leads', icon: 'users', tone: 'mint' },
+    { label: 'Total leads', value: loading ? '…' : String(metrics?.totalLeads ?? 0), note: 'Active workspace leads', icon: 'users', tone: 'mint', href: '/leads' },
     ] : []),
     ...(dealsEnabled ? [
-    { label: 'Open deals', value: loading ? '…' : String(metrics?.openDeals ?? 0), note: 'Active opportunities', icon: 'briefcase', tone: 'peach' },
-    { label: 'Pipeline value', value: loading ? '…' : currency(metrics?.openPipelineValue ?? 0), note: 'Value of open deals', icon: 'coins', tone: 'lavender' },
-    { label: 'Won revenue', value: loading ? '…' : currency(metrics?.wonRevenue ?? 0), note: 'Value of won deals', icon: 'trophy', tone: 'yellow' },
+    { label: 'Open deals', value: loading ? '…' : String(metrics?.openDeals ?? 0), note: 'Active opportunities', icon: 'briefcase', tone: 'peach', href: '/deals?status=open' },
+    { label: 'Pipeline value', value: loading ? '…' : currency(metrics?.openPipelineValue ?? 0), note: 'Value of open deals', icon: 'coins', tone: 'lavender', href: '/deals?status=open' },
+    { label: 'Won revenue', value: loading ? '…' : currency(metrics?.wonRevenue ?? 0), note: 'Value of won deals', icon: 'trophy', tone: 'yellow', href: '/deals?status=won' },
     ] : []),
   ];
 
@@ -158,11 +158,11 @@ export default function DashboardLivePanels() {
     {error && <div className="leads-error" role="alert"><span>{error}</span>{error.toLowerCase().includes('authenticated') || error.toLowerCase().includes('token') ? <Link href="/sign-in">Sign in</Link> : <button type="button" onClick={() => setRefresh((value) => value + 1)}>Retry</button>}</div>}
 
     {metricCards.length > 0 && <section className="metric-grid" aria-label="CRM summary" aria-busy={loading}>
-      {metricCards.map((metric) => <article className="metric-card" key={metric.label}>
+      {metricCards.map((metric) => <Link className="metric-card metric-card-link" key={metric.label} href={metric.href} aria-label={`View ${metric.label.toLowerCase()} in ${metric.href === '/leads' ? 'Leads' : 'Deals'}`}>
         <div className="metric-top"><span>{metric.label}</span><span className={`metric-icon ${metric.tone}`} aria-hidden="true">{metric.icon === 'users' ? '♙' : metric.icon === 'briefcase' ? '▣' : metric.icon === 'coins' ? '$' : '★'}</span></div>
         <div className="metric-value">{metric.value}</div>
         <div className="metric-foot"><span>{metric.note}</span></div>
-      </article>)}
+      </Link>)}
     </section>}
 
     {(showDealPanels || showActivityPanel) && <section className={`dashboard-grid${showDealPanels && showActivityPanel ? '' : ' dashboard-grid-single-panel'}`}>

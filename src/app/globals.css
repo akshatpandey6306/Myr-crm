@@ -8872,3 +8872,14 @@ span[class*="type-pill"] { font-size: var(--type-meta) !important; }
 @media (max-width: 720px) {
   .premium-auth-story h1 { font-size: clamp(31px, 9vw, 43px) !important; }
 }
+
+.workspace-overview .metric-card-link {
+  display: block;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.workspace-overview .metric-card-link:focus-visible {
+  outline: 3px solid rgb(102 83 215 / 42%);
+  outline-offset: 3px;
+}
