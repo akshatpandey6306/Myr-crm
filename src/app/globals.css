@@ -5419,6 +5419,7 @@ td:first-child strong {
 .sidebar {
   height: 100vh;
   height: 100dvh;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -5426,9 +5427,11 @@ td:first-child strong {
 
 .sidebar-brand-row,
 .sidebar-bottom,
-.workspace-switcher { flex-shrink: 0; }
+.workspace-switcher { flex: 0 0 auto; }
 
-.sidebar-brand-row .brand { margin: 0 0 0 8px; }
+.sidebar-brand-row { min-width: 0; gap: 8px; }
+.sidebar-brand-row .brand { min-width: 0; flex: 1 1 auto; margin: 0; }
+.sidebar-brand-row .brand-partner-logo { width: min(100%, 158px); }
 
 .sidebar-toggle {
   display: grid;
@@ -5446,6 +5449,23 @@ td:first-child strong {
 }
 
 .sidebar-toggle:hover { background: #f7f5ff; }
+.sidebar-toggle:focus-visible { outline: 3px solid rgb(102 83 215 / 38%); outline-offset: 2px; }
+
+.app-shell .sidebar .primary-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-shell .sidebar .sidebar-bottom {
+  flex: 0 0 auto;
+  margin-top: 12px;
+  padding-top: 12px;
+}
 
 @media (min-width: 601px) {
   .app-shell.sidebar-collapsed .sidebar {
@@ -5465,6 +5485,9 @@ td:first-child strong {
     gap: 12px;
     margin-bottom: 20px;
   }
+
+  .app-shell.sidebar-collapsed .sidebar-brand-row .brand { flex: 0 0 auto; }
+  .app-shell.sidebar-collapsed .sidebar-brand-row .sidebar-toggle { width: 34px; height: 34px; }
 
   .app-shell.sidebar-collapsed .sidebar-brand-row .brand { margin: 0; }
   .app-shell.sidebar-collapsed .sidebar-brand-row .brand-partner-logo { display: none; }
