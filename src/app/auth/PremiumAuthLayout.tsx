@@ -16,7 +16,11 @@ export default function PremiumAuthLayout({
     <main className={`${styles.page}${compact ? ` ${styles.compact}` : ''}`}>
       <section className={`${styles.story} premium-auth-story`} aria-label="LeadPilot CRM">
         <a className={styles.brand} href="/sign-in" aria-label="LeadPilot Advance Solution sign in">
-          <img src="/leadpilot-advance-solution-white.svg" alt="LeadPilot Advance Solution" />
+          <img src="/advance-solution-logo.svg" alt="" />
+          <span className={styles.brandCopy}>
+            <strong>LeadPilot</strong>
+            <small>ADVANCE SOLUTION</small>
+          </span>
         </a>
 
         <div className={styles.storyContent}>

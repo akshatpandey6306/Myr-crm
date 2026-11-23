@@ -1,10 +1,10 @@
 .page { --navy: #191848; display: grid; min-height: 100svh; grid-template-columns: minmax(0, 1.08fr) minmax(390px, .92fr); background: #fff; color: #252543; }
 .story { position: relative; display: flex; min-width: 0; min-height: 100svh; flex-direction: column; overflow: hidden; padding: clamp(26px, 4.3vw, 68px) clamp(26px, 5vw, 78px) 30px; background: radial-gradient(ellipse at 73% 22%, rgb(117 84 231 / 42%), transparent 32%), radial-gradient(ellipse at 14% 87%, rgb(50 78 214 / 34%), transparent 44%), linear-gradient(142deg, #17153f, #29215d 55%, #171e52); color: #fff; }
 .brand { display: inline-flex; width: max-content; align-items: center; gap: 12px; color: #fff; text-decoration: none; }
-.brand img { display: block; width: clamp(160px, 18vw, 210px); height: auto; object-fit: contain; filter: drop-shadow(0 8px 18px rgb(4 3 30 / 24%)); }
-.brand span { display: grid; gap: 3px; line-height: 1.1; }
-.brand strong { font-size: 20px; font-weight: 760; letter-spacing: -.6px; }
-.brand small { color: #dfdcff; font-size: 12px; font-weight: 550; }
+.brand img { display: block; width: 46px; height: 46px; flex: 0 0 46px; border-radius: 9px; object-fit: contain; filter: drop-shadow(0 8px 18px rgb(4 3 30 / 24%)); }
+.brandCopy { display: grid; gap: 3px; line-height: 1.1; }
+.brandCopy strong { color: #fff; font-size: 21px; font-weight: 760; letter-spacing: -.6px; }
+.brandCopy small { color: #d7d2ff; font-size: 9px; font-weight: 700; letter-spacing: .17em; }
 .storyContent { position: relative; z-index: 1; width: min(100%, 700px); margin: auto 0; padding: 64px 0 36px; }
 .eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #c0aeff; font-size: 10px; font-weight: 800; letter-spacing: .19em; }
 .eyebrow::before { width: 19px; height: 2px; border-radius: 2px; background: #aa8bff; content: ''; }
@@ -60,7 +60,9 @@
 /* On phones, keep the brand visible while giving the sign-in form the screen. */
 @media(max-width: 720px) {
   .story { min-height: 88px; padding: 18px 22px; }
-  .brand img { width: 164px; }
+  .brand img { width: 42px; height: 42px; flex-basis: 42px; }
+  .brandCopy strong { font-size: 19px; }
+  .brandCopy small { font-size: 8px; }
   .storyContent,.benefits { display: none; }
   .formSide { min-height: calc(100svh - 88px); padding: 24px 22px 18px; }
   .formCard { margin: auto 0; }
@@ -69,6 +71,8 @@
 
 @media(max-width: 420px) {
   .story { min-height: 78px; padding: 15px 18px; }
-  .brand img { width: 152px; }
+  .brand { gap: 9px; }
+  .brand img { width: 40px; height: 40px; flex-basis: 40px; }
+  .brandCopy strong { font-size: 18px; }
   .formSide { min-height: calc(100svh - 78px); padding: 20px 18px 16px; }
 }
