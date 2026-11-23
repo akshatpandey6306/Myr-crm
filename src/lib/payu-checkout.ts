@@ -1,6 +1,7 @@
 const PAYU_CHECKOUT_HOSTS = new Set(["secure.payu.in", "test.payu.in"]);
+const PAYU_NAVIGATION_TIMEOUT_MS = 15_000;
 
-export function postPayUCheckout(checkoutUrl: string, fields: Record<string, unknown>) {
+export function postPayUCheckout(checkoutUrl: string, fields: Record<string, unknown>): Promise<void> {
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
     throw new Error("PayU returned invalid checkout fields.");
   }
@@ -31,7 +32,30 @@ export function postPayUCheckout(checkoutUrl: string, fields: Record<string, unk
   }
 
   document.body.appendChild(form);
-  const nativeForm = HTMLFormElement.prototype;
-  if (typeof nativeForm.requestSubmit === "function") nativeForm.requestSubmit.call(form);
-  else nativeForm.submit.call(form);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+    const onPageHide = () => {
+      cleanup();
+      resolve();
+    };
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      form.remove();
+      reject(new Error("PayU did not open. Check your connection and browser settings, then try again."));
+    }, PAYU_NAVIGATION_TIMEOUT_MS);
+
+    window.addEventListener("pagehide", onPageHide, { once: true });
+    try {
+      const nativeForm = HTMLFormElement.prototype;
+      if (typeof nativeForm.requestSubmit === "function") nativeForm.requestSubmit.call(form);
+      else nativeForm.submit.call(form);
+    } catch (error) {
+      cleanup();
+      form.remove();
+      reject(error instanceof Error ? error : new Error("Could not submit the PayU checkout form."));
+    }
+  });
 }

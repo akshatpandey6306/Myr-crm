@@ -7,7 +7,10 @@ import { subscriptionDaysRemaining, SubscriptionExpiryBanner, WorkspaceAccessGat
 vi.mock('../../lib/api-client', () => ({ crmApiFetch: vi.fn() }));
 vi.mock('next/navigation', () => ({ usePathname: () => '/leads' }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const apiFetchMock = vi.mocked(crmApiFetch);
 
@@ -81,5 +84,48 @@ describe('subscription expiry', () => {
       method: 'POST',
       body: JSON.stringify({ planCode: 'growth' }),
     }));
+  });
+
+  it('posts the renewal checkout and reports that it is redirecting to PayU', async () => {
+    const requestSubmit = vi.spyOn(HTMLFormElement.prototype, 'requestSubmit').mockImplementation(() => {});
+    apiFetchMock.mockImplementation(async (path) => {
+      if (path === '/control-panel/access') return jsonResponse({ error: { message: 'forbidden' } }, 403);
+      if (path === '/billing/current') {
+        return jsonResponse({ data: {
+          organization: { id: 'org-a', name: 'Acme', status: 'active' },
+          subscription: { planCode: 'growth', status: 'expired', startsAt: null, endsAt: '2026-11-14T12:00:00.000Z', provider: 'payu' },
+          activationRequest: null,
+          plans: [{ code: 'growth', name: 'Growth', monthlyPrice: 999, currency: 'INR', billingInterval: 30, features: ['CRM access'] }],
+          canManageBilling: true,
+          payuEnabled: true,
+        } });
+      }
+      if (path === '/billing/checkout') {
+        return jsonResponse({ data: {
+          checkoutUrl: 'https://test.payu.in/_payment',
+          fields: {
+            key: 'merchant-key', txnid: 'transaction-id', amount: '999.00', productinfo: 'LeadPilot Growth',
+            firstname: 'Aditya', email: 'aditya@example.com', phone: '6306443348',
+            surl: 'https://crm.example.com/api/v1/billing/payu/return',
+            furl: 'https://crm.example.com/api/v1/billing/payu/return', hash: 'signed-hash',
+          },
+        } });
+      }
+      return jsonResponse({ error: { message: 'Unexpected request' } }, 404);
+    });
+
+    const user = userEvent.setup();
+    render(<WorkspaceAccessGate><div>CRM</div></WorkspaceAccessGate>);
+    await screen.findByRole('dialog', { name: 'Acme is paused' });
+    await user.type(screen.getByLabelText('Phone number for PayU'), '6306443348');
+    await user.click(screen.getByRole('button', { name: 'Pay INR 999 with PayU' }));
+
+    expect(await screen.findByRole('button', { name: 'Redirecting to PayU…' })).toBeDisabled();
+    expect(requestSubmit).toHaveBeenCalledOnce();
+    expect(apiFetchMock).toHaveBeenCalledWith('/billing/checkout', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ planCode: 'growth', purchaseType: 'plan', phone: '6306443348' }),
+    }));
+    window.dispatchEvent(new Event('pagehide'));
   });
 });

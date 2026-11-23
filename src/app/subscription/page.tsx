@@ -181,6 +181,7 @@ export default function SubscriptionPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planCode, purchaseType, phone: checkoutPhone.trim(), ...(seatQuantity ? { seatQuantity } : {}) }),
+        signal: AbortSignal.timeout(60_000),
       });
       const responseText = await response.text();
       let payload: { error?: { message?: unknown }; data?: unknown } | null = null;
@@ -193,9 +194,10 @@ export default function SubscriptionPage() {
       if (!payload) throw new Error('The API returned an invalid checkout response.');
       const result = payload?.data as { checkoutUrl?: unknown; fields?: unknown } | undefined;
       if (typeof result?.checkoutUrl !== 'string' || typeof result.fields !== 'object' || result.fields === null) throw new Error('PayU returned an invalid checkout response.');
-      postPayUCheckout(result.checkoutUrl, result.fields as Record<string, unknown>);
+      await postPayUCheckout(result.checkoutUrl, result.fields as Record<string, unknown>);
     } catch (caught) {
-      setCheckoutError(caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
+      const timedOut = caught instanceof DOMException && caught.name === 'TimeoutError';
+      setCheckoutError(timedOut ? 'The billing service did not respond in time. Check your connection and retry.' : caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
       setCheckoutBusyPlanCode('');
     }
   }

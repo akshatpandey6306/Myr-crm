@@ -239,6 +239,7 @@ export function WorkspaceAccessGate({ children }: { children: ReactNode }) {
 
 function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, onSignOut, onRequest }: { access: WorkspaceAccess; accessCheckResult: 'idle' | 'checking' | 'still-paused'; onCheckAccess: () => void; onSignOut: () => Promise<void>; onRequest: (request: ActivationRequest) => void }) {
   const [busyPlan, setBusyPlan] = useState('');
+  const [checkoutStage, setCheckoutStage] = useState<'connecting' | 'redirecting' | ''>('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -277,6 +278,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
       return;
     }
     setBusyPlan(plan.code);
+    setCheckoutStage('connecting');
     setError('');
     setMessage('');
     try {
@@ -284,6 +286,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planCode: plan.code, purchaseType: 'plan', phone: normalizedPhone }),
+        signal: AbortSignal.timeout(60_000),
       });
       const responseText = await response.text();
       let payload: { error?: { message?: unknown }; data?: unknown } | null = null;
@@ -297,10 +300,15 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
       if (!checkout || typeof checkout.checkoutUrl !== 'string' || !isRecord(checkout.fields)) {
         throw new Error('PayU returned an invalid checkout response.');
       }
-      postPayUCheckout(checkout.checkoutUrl, checkout.fields);
+      setCheckoutStage('redirecting');
+      await postPayUCheckout(checkout.checkoutUrl, checkout.fields);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
+      const timedOut = caught instanceof DOMException && caught.name === 'TimeoutError';
+      setError(timedOut
+        ? 'The billing service did not respond in time. Check your connection and retry.'
+        : caught instanceof Error ? caught.message : 'Could not start PayU checkout.');
       setBusyPlan('');
+      setCheckoutStage('');
     }
   }
 
@@ -328,7 +336,7 @@ function ExpiredSubscriptionOverlay({ access, accessCheckResult, onCheckAccess, 
               <ul>{plan.features.slice(0, 3).map((feature) => <li key={feature}>{feature}</li>)}</ul>
               {canPayWithPayU ? (
                 <button className="button button-primary" type="button" disabled={Boolean(busyPlan)} onClick={() => void payForPlan(plan)}>
-                  {busyPlan === plan.code ? 'Opening PayU…' : `Pay ${plan.currency} ${plan.monthlyPrice.toLocaleString('en-IN')} with PayU`}
+                  {busyPlan === plan.code ? checkoutStage === 'connecting' ? 'Connecting to billing…' : 'Redirecting to PayU…' : `Pay ${plan.currency} ${plan.monthlyPrice.toLocaleString('en-IN')} with PayU`}
                 </button>
               ) : access.canManageBilling && !access.partnerPlansUrl ? (
                 <button className="button button-primary" type="button" disabled={Boolean(busyPlan) || Boolean(access.activationRequest)} onClick={() => void requestRenewal(plan)}>
